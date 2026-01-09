@@ -1,0 +1,689 @@
+================================================================================
+                      ERROR-DB - ONE-SHOT BUILD PROMPT
+================================================================================
+
+You are building the `error-db` tool for Daedalos, a Linux distribution designed
+for AI-assisted development. Error-DB is a database of error patterns and their
+solutions.
+
+================================================================================
+                              WHAT YOU'RE BUILDING
+================================================================================
+
+Every error is a lesson. Error-DB captures error patterns and solutions so that:
+- Known errors get instant fixes
+- New errors become documented for the future
+- Knowledge is shared across projects and teams
+
+Think of it as Stack Overflow, but local, instant, and integrated into your workflow.
+
+================================================================================
+                              ARCHITECTURE
+================================================================================
+
+Create these files:
+
+error-db/
+├── error-db                  # Main CLI entry point (Bash)
+├── errordb/
+│   ├── __init__.py
+│   ├── database.py           # SQLite database
+│   ├── matcher.py            # Fuzzy pattern matching
+│   ├── patterns.py           # Pattern CRUD operations
+│   ├── sync.py               # Community sync
+│   └── ui.py                 # Rich terminal UI
+├── seeds/                    # Built-in patterns
+│   ├── javascript.yaml
+│   ├── python.yaml
+│   ├── rust.yaml
+│   └── common.yaml
+├── completions/
+│   └── error-db.bash
+└── tests/
+    └── test_matcher.py
+
+================================================================================
+                              MAIN CLI (error-db)
+================================================================================
+
+```bash
+#!/usr/bin/env bash
+# error-db - Error Pattern Database for Daedalos
+
+set -euo pipefail
+
+ERRORDB_VERSION="1.0.0"
+ERRORDB_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/daedalos/error-db"
+ERRORDB_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/daedalos/error-db"
+
+mkdir -p "$ERRORDB_DATA" "$ERRORDB_CONFIG"
+
+cmd_search() {
+    if [[ "${1:-}" == "--stdin" ]]; then
+        error_text=$(cat)
+    else
+        error_text="$*"
+    fi
+
+    python3 -m errordb.patterns search "$error_text"
+}
+
+cmd_add() {
+    python3 -m errordb.patterns add "$@"
+}
+
+cmd_fix() {
+    if [[ "${1:-}" == "--stdin" ]]; then
+        error_text=$(cat)
+        shift
+    else
+        error_text="$1"
+        shift
+    fi
+
+    python3 -m errordb.patterns fix "$error_text" "$@"
+}
+
+cmd_confirm() {
+    python3 -m errordb.patterns confirm "$@"
+}
+
+cmd_report() {
+    python3 -m errordb.patterns report "$@"
+}
+
+cmd_list() {
+    python3 -m errordb.patterns list "$@"
+}
+
+cmd_show() {
+    python3 -m errordb.patterns show "$@"
+}
+
+cmd_import() {
+    python3 -m errordb.sync import "$@"
+}
+
+cmd_export() {
+    python3 -m errordb.sync export "$@"
+}
+
+cmd_sync() {
+    python3 -m errordb.sync "$@"
+}
+
+cmd_stats() {
+    python3 -m errordb.database stats
+}
+
+main() {
+    case "${1:-help}" in
+        search)     shift; cmd_search "$@" ;;
+        add)        shift; cmd_add "$@" ;;
+        fix)        shift; cmd_fix "$@" ;;
+        confirm)    shift; cmd_confirm "$@" ;;
+        report)     shift; cmd_report "$@" ;;
+        list)       shift; cmd_list "$@" ;;
+        show)       shift; cmd_show "$@" ;;
+        edit)       shift; cmd_edit "$@" ;;
+        delete)     shift; cmd_delete "$@" ;;
+        import)     shift; cmd_import "$@" ;;
+        export)     shift; cmd_export "$@" ;;
+        sync)       shift; cmd_sync "$@" ;;
+        stats)      shift; cmd_stats "$@" ;;
+        version)    echo "error-db $ERRORDB_VERSION" ;;
+        help|--help|-h) cmd_help ;;
+        *)          echo "Unknown command: $1"; exit 1 ;;
+    esac
+}
+
+main "$@"
+```
+
+================================================================================
+                            DATABASE (database.py)
+================================================================================
+
+```python
+"""SQLite database for error patterns and solutions."""
+
+import sqlite3
+from pathlib import Path
+from datetime import datetime
+from typing import Optional
+from dataclasses import dataclass
+import uuid
+
+
+@dataclass
+class Pattern:
+    id: str
+    pattern: str
+    scope: str  # global, language, framework, project
+    language: Optional[str]
+    framework: Optional[str]
+    tags: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass
+class Solution:
+    id: str
+    pattern_id: str
+    solution: str
+    command: Optional[str]  # Auto-fix command
+    confidence: float
+    success_count: int
+    failure_count: int
+    created_at: datetime
+    last_confirmed: Optional[datetime]
+
+
+class ErrorDatabase:
+    """SQLite database for error patterns."""
+
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        self._init_db()
+        self._load_seeds()
+
+    def _init_db(self):
+        """Initialize database schema."""
+        conn = sqlite3.connect(self.db_path)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS patterns (
+                id TEXT PRIMARY KEY,
+                pattern TEXT NOT NULL,
+                scope TEXT NOT NULL DEFAULT 'global',
+                language TEXT,
+                framework TEXT,
+                tags TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS solutions (
+                id TEXT PRIMARY KEY,
+                pattern_id TEXT NOT NULL REFERENCES patterns(id),
+                solution TEXT NOT NULL,
+                command TEXT,
+                confidence REAL DEFAULT 0.5,
+                success_count INTEGER DEFAULT 0,
+                failure_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_confirmed TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS usage_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern_id TEXT,
+                solution_id TEXT,
+                outcome TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_patterns_language ON patterns(language);
+            CREATE INDEX IF NOT EXISTS idx_patterns_scope ON patterns(scope);
+            CREATE INDEX IF NOT EXISTS idx_solutions_pattern ON solutions(pattern_id);
+        """)
+        conn.commit()
+        conn.close()
+
+    def _load_seeds(self):
+        """Load built-in patterns if database is empty."""
+        conn = sqlite3.connect(self.db_path)
+        count = conn.execute("SELECT COUNT(*) FROM patterns").fetchone()[0]
+        conn.close()
+
+        if count == 0:
+            self._seed_common_patterns()
+
+    def _seed_common_patterns(self):
+        """Seed database with common error patterns."""
+        common_patterns = [
+            # Node.js / npm
+            {
+                "pattern": "Cannot find module 'X'",
+                "scope": "language",
+                "language": "javascript",
+                "solution": "The module is not installed. Run:\n\n  npm install X\n\nOr if it's a type definition:\n\n  npm install --save-dev @types/X",
+                "command": "npm install"
+            },
+            {
+                "pattern": "ENOENT: no such file or directory",
+                "scope": "global",
+                "solution": "The file or directory doesn't exist. Check:\n1. Path spelling\n2. Working directory\n3. File was actually created",
+                "command": None
+            },
+            {
+                "pattern": "EADDRINUSE",
+                "scope": "global",
+                "solution": "Port is already in use. Either:\n1. Kill the process using it: lsof -i :PORT | kill\n2. Use a different port",
+                "command": "lsof -i :${PORT}"
+            },
+            # Python
+            {
+                "pattern": "ModuleNotFoundError: No module named 'X'",
+                "scope": "language",
+                "language": "python",
+                "solution": "The module is not installed. Run:\n\n  pip install X\n\nOr with a virtual environment:\n\n  python -m pip install X",
+                "command": "pip install"
+            },
+            {
+                "pattern": "IndentationError",
+                "scope": "language",
+                "language": "python",
+                "solution": "Python uses significant whitespace. Check:\n1. Consistent use of tabs vs spaces (prefer 4 spaces)\n2. Proper indentation after : characters\n3. No mixing of indentation styles",
+                "command": None
+            },
+            # Rust
+            {
+                "pattern": "error[E0382]: borrow of moved value",
+                "scope": "language",
+                "language": "rust",
+                "solution": "Value was moved and can't be used again. Options:\n1. Clone the value before moving\n2. Use references instead of moving\n3. Restructure to avoid multiple uses",
+                "command": None
+            },
+            # Git
+            {
+                "pattern": "fatal: not a git repository",
+                "scope": "global",
+                "solution": "You're not in a git repository. Either:\n1. cd to a git repository\n2. Initialize one: git init\n3. Clone one: git clone <url>",
+                "command": "git init"
+            },
+            {
+                "pattern": "Your branch is behind",
+                "scope": "global",
+                "solution": "Remote has new commits. Pull them:\n\n  git pull\n\nOr if you have local changes:\n\n  git pull --rebase",
+                "command": "git pull"
+            },
+            # General
+            {
+                "pattern": "Permission denied",
+                "scope": "global",
+                "solution": "Insufficient permissions. Options:\n1. Check file permissions: ls -la\n2. Change ownership: chown\n3. Use sudo (if appropriate)\n4. Check if file is open elsewhere",
+                "command": None
+            },
+            {
+                "pattern": "Connection refused",
+                "scope": "global",
+                "solution": "Can't connect to the service. Check:\n1. Is the service running?\n2. Correct host/port?\n3. Firewall rules?\n4. Network connectivity?",
+                "command": None
+            },
+        ]
+
+        for p in common_patterns:
+            pattern_id = str(uuid.uuid4())
+            solution_id = str(uuid.uuid4())
+
+            self.add_pattern(
+                pattern=p["pattern"],
+                scope=p.get("scope", "global"),
+                language=p.get("language"),
+                solution=p["solution"],
+                command=p.get("command")
+            )
+
+    def add_pattern(
+        self,
+        pattern: str,
+        scope: str = "global",
+        language: Optional[str] = None,
+        framework: Optional[str] = None,
+        tags: Optional[list[str]] = None,
+        solution: Optional[str] = None,
+        command: Optional[str] = None
+    ) -> str:
+        """Add a new pattern and optional solution."""
+        conn = sqlite3.connect(self.db_path)
+        pattern_id = str(uuid.uuid4())
+
+        conn.execute(
+            """
+            INSERT INTO patterns (id, pattern, scope, language, framework, tags)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (pattern_id, pattern, scope, language, framework, ",".join(tags or []))
+        )
+
+        if solution:
+            solution_id = str(uuid.uuid4())
+            conn.execute(
+                """
+                INSERT INTO solutions (id, pattern_id, solution, command)
+                VALUES (?, ?, ?, ?)
+                """,
+                (solution_id, pattern_id, solution, command)
+            )
+
+        conn.commit()
+        conn.close()
+        return pattern_id
+
+    def get_patterns(
+        self,
+        scope: Optional[str] = None,
+        language: Optional[str] = None
+    ) -> list[Pattern]:
+        """Get patterns, optionally filtered."""
+        conn = sqlite3.connect(self.db_path)
+
+        query = "SELECT * FROM patterns WHERE 1=1"
+        params = []
+
+        if scope:
+            query += " AND scope = ?"
+            params.append(scope)
+        if language:
+            query += " AND language = ?"
+            params.append(language)
+
+        rows = conn.execute(query, params).fetchall()
+        conn.close()
+
+        return [self._row_to_pattern(row) for row in rows]
+
+    def get_solutions(self, pattern_id: str) -> list[Solution]:
+        """Get solutions for a pattern, sorted by confidence."""
+        conn = sqlite3.connect(self.db_path)
+        rows = conn.execute(
+            """
+            SELECT * FROM solutions
+            WHERE pattern_id = ?
+            ORDER BY confidence DESC
+            """,
+            (pattern_id,)
+        ).fetchall()
+        conn.close()
+
+        return [self._row_to_solution(row) for row in rows]
+
+    def confirm_solution(self, solution_id: str):
+        """Mark a solution as successful."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            """
+            UPDATE solutions
+            SET success_count = success_count + 1,
+                confidence = CAST(success_count + 1 AS REAL) / (success_count + failure_count + 1),
+                last_confirmed = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (solution_id,)
+        )
+        conn.commit()
+        conn.close()
+
+    def report_failure(self, solution_id: str):
+        """Mark a solution as failed."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            """
+            UPDATE solutions
+            SET failure_count = failure_count + 1,
+                confidence = CAST(success_count AS REAL) / (success_count + failure_count + 1)
+            WHERE id = ?
+            """,
+            (solution_id,)
+        )
+        conn.commit()
+        conn.close()
+
+    def log_usage(self, pattern_id: str, solution_id: str, outcome: str):
+        """Log usage of a pattern/solution."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO usage_log (pattern_id, solution_id, outcome) VALUES (?, ?, ?)",
+            (pattern_id, solution_id, outcome)
+        )
+        conn.commit()
+        conn.close()
+
+    def stats(self) -> dict:
+        """Get database statistics."""
+        conn = sqlite3.connect(self.db_path)
+
+        stats = {
+            "total_patterns": conn.execute("SELECT COUNT(*) FROM patterns").fetchone()[0],
+            "total_solutions": conn.execute("SELECT COUNT(*) FROM solutions").fetchone()[0],
+            "by_scope": {},
+            "by_language": {}
+        }
+
+        for row in conn.execute("SELECT scope, COUNT(*) FROM patterns GROUP BY scope"):
+            stats["by_scope"][row[0]] = row[1]
+
+        for row in conn.execute("SELECT language, COUNT(*) FROM patterns WHERE language IS NOT NULL GROUP BY language"):
+            stats["by_language"][row[0]] = row[1]
+
+        conn.close()
+        return stats
+
+    def _row_to_pattern(self, row) -> Pattern:
+        return Pattern(
+            id=row[0],
+            pattern=row[1],
+            scope=row[2],
+            language=row[3],
+            framework=row[4],
+            tags=row[5].split(",") if row[5] else [],
+            created_at=row[6],
+            updated_at=row[7]
+        )
+
+    def _row_to_solution(self, row) -> Solution:
+        return Solution(
+            id=row[0],
+            pattern_id=row[1],
+            solution=row[2],
+            command=row[3],
+            confidence=row[4],
+            success_count=row[5],
+            failure_count=row[6],
+            created_at=row[7],
+            last_confirmed=row[8]
+        )
+```
+
+================================================================================
+                            MATCHER (matcher.py)
+================================================================================
+
+```python
+"""Fuzzy pattern matching for error messages."""
+
+from typing import Optional
+from rapidfuzz import fuzz, process
+import re
+
+
+class PatternMatcher:
+    """Match error messages against patterns."""
+
+    def __init__(self, patterns: list):
+        self.patterns = patterns
+
+    def match(self, error_text: str, threshold: float = 0.6) -> list[dict]:
+        """
+        Find patterns matching the error text.
+        Returns list of (pattern, score) tuples sorted by score.
+        """
+        # Normalize error text
+        normalized = self._normalize(error_text)
+
+        matches = []
+        for pattern in self.patterns:
+            # Try exact variable matching first
+            score = self._variable_match(pattern.pattern, normalized)
+
+            if score == 0:
+                # Fall back to fuzzy matching
+                score = fuzz.partial_ratio(
+                    self._normalize(pattern.pattern),
+                    normalized
+                ) / 100
+
+            if score >= threshold:
+                matches.append({
+                    "pattern": pattern,
+                    "score": score
+                })
+
+        # Sort by score descending
+        matches.sort(key=lambda x: x["score"], reverse=True)
+        return matches
+
+    def _normalize(self, text: str) -> str:
+        """Normalize text for comparison."""
+        # Remove line numbers
+        text = re.sub(r':\d+:\d+', ':X:X', text)
+        # Remove file paths
+        text = re.sub(r'/[\w/.-]+', '/PATH', text)
+        # Remove specific values in quotes
+        text = re.sub(r"'[^']*'", "'X'", text)
+        text = re.sub(r'"[^"]*"', '"X"', text)
+        # Normalize whitespace
+        text = ' '.join(text.split())
+        return text.lower()
+
+    def _variable_match(self, pattern: str, error: str) -> float:
+        """
+        Match pattern with variables (X, Y, Z).
+        Returns 1.0 for exact match, 0 for no match.
+        """
+        # Convert pattern variables to regex
+        regex_pattern = re.escape(pattern)
+        regex_pattern = regex_pattern.replace(r'\X', r'.+')
+        regex_pattern = regex_pattern.replace(r'\Y', r'.+')
+        regex_pattern = regex_pattern.replace(r'\Z', r'.+')
+
+        try:
+            if re.search(regex_pattern, error, re.IGNORECASE):
+                return 1.0
+        except re.error:
+            pass
+
+        return 0
+
+
+# CLI interface
+def search(error_text: str, db):
+    """Search for matching patterns."""
+    patterns = db.get_patterns()
+    matcher = PatternMatcher(patterns)
+    matches = matcher.match(error_text)
+
+    if not matches:
+        print("No matching patterns found.")
+        return None
+
+    best = matches[0]
+    solutions = db.get_solutions(best["pattern"].id)
+
+    return {
+        "pattern": best["pattern"],
+        "score": best["score"],
+        "solutions": solutions
+    }
+```
+
+================================================================================
+                               UI (ui.py)
+================================================================================
+
+```python
+"""Rich terminal UI for error-db."""
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.markdown import Markdown
+
+
+console = Console()
+
+
+def print_match(pattern, score, solutions):
+    """Print a pattern match with solutions."""
+    confidence_pct = int(score * 100)
+
+    # Header panel
+    header = Panel(
+        f"[bold]{pattern.pattern}[/bold]",
+        title=f"PATTERN MATCH ({confidence_pct}% confidence)",
+        border_style="green" if score > 0.8 else "yellow"
+    )
+    console.print(header)
+
+    # Solutions
+    if solutions:
+        best = solutions[0]
+
+        solution_panel = Panel(
+            Markdown(best.solution),
+            title="SOLUTION",
+            border_style="blue"
+        )
+        console.print(solution_panel)
+
+        # Stats
+        stats = f"✓ Worked {best.success_count} times"
+        if best.last_confirmed:
+            stats += f"  │  Last confirmed: {best.last_confirmed}"
+        console.print(f"[dim]{stats}[/dim]")
+
+        # Auto-fix command
+        if best.command:
+            console.print(f"\n[bold]Auto-fix:[/bold] {best.command}")
+    else:
+        console.print("[yellow]No solutions recorded for this pattern.[/yellow]")
+
+
+def print_stats(stats):
+    """Print database statistics."""
+    console.print(f"\n[bold]Total patterns:[/bold] {stats['total_patterns']}")
+
+    console.print("\n[bold]By scope:[/bold]")
+    for scope, count in stats["by_scope"].items():
+        console.print(f"  - {scope}: {count}")
+
+    console.print("\n[bold]By language:[/bold]")
+    for lang, count in stats["by_language"].items():
+        console.print(f"  - {lang}: {count}")
+```
+
+================================================================================
+                           SUCCESS CRITERIA
+================================================================================
+
+The error-db tool is complete when:
+
+1. SEARCH
+   [ ] Finds matching patterns for error text
+   [ ] Works with stdin piping
+   [ ] Shows confidence scores
+   [ ] Returns best solutions
+
+2. PATTERN MANAGEMENT
+   [ ] add creates new patterns
+   [ ] list shows all patterns
+   [ ] show displays pattern details
+   [ ] edit/delete work
+
+3. SOLUTION FEEDBACK
+   [ ] confirm increases confidence
+   [ ] report decreases confidence
+   [ ] Usage is logged
+
+4. AUTO-FIX
+   [ ] fix command proposes solutions
+   [ ] Offers to run fix commands
+   [ ] --yes flag for automation
+
+5. SHARING
+   [ ] import loads patterns from file
+   [ ] export saves patterns to file
+   [ ] sync with community server (optional)
+
+================================================================================

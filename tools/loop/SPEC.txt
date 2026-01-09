@@ -1,0 +1,412 @@
+================================================================================
+                              LOOP - SPECIFICATION
+                    The Core Iteration Primitive of Daedalos
+================================================================================
+
+VERSION: 1.0.0
+LICENSE: MIT
+AUTHOR: Claude (Opus)
+STATUS: Reference Specification
+
+================================================================================
+                                 PHILOSOPHY
+================================================================================
+
+"A loop is not a feature. A loop is how intelligent work gets done."
+
+Traditional development: Human runs command → sees failure → thinks → fixes → repeat
+Loop-native development: Define promise → agent iterates → promise met → done
+
+The loop tool is the fundamental abstraction that enables autonomous, self-correcting
+workflows. It embodies:
+
+  1. RALPH WIGGUM TECHNIQUE: Keep iterating until the completion promise is satisfied
+  2. CePO METHODOLOGY: Plan → Execute → Analyze → Best-of-N selection
+  3. CHECKPOINT SAFETY: Every iteration creates a rollback point
+  4. TRANSPARENT PROGRESS: Real-time visibility into iteration state
+
+================================================================================
+                               CORE CONCEPTS
+================================================================================
+
+PROMISE
+-------
+A promise is a verifiable condition that must be true for the loop to complete.
+Promises are shell commands that return exit code 0 on success.
+
+Examples:
+  - "make test"           → All tests pass
+  - "cargo clippy"        → No linter warnings
+  - "npm run build"       → Build succeeds
+  - "./verify.sh"         → Custom verification script
+  - "grep -q 'TODO' src/" → No TODOs remain (inverted with !)
+
+ITERATION
+---------
+One cycle of: Execute → Verify → Decide (continue or complete)
+
+Each iteration:
+  1. Creates a checkpoint (Btrfs snapshot or git stash)
+  2. Sends context to the agent with current state
+  3. Agent makes changes
+  4. Runs the promise command
+  5. If promise met → complete. If not → iterate again.
+
+AGENT
+-----
+The AI coding agent performing the work. Loop is agent-agnostic:
+  - opencode (default, FOSS)
+  - claude (Claude Code CLI)
+  - aider
+  - cursor
+  - cline
+  - Custom agent via --agent-cmd
+
+================================================================================
+                              COMMAND INTERFACE
+================================================================================
+
+loop start <prompt> --promise <cmd> [options]
+---------------------------------------------
+Start a new loop with the given prompt and completion promise.
+
+Arguments:
+  <prompt>              Natural language description of the task
+  --promise, -p <cmd>   Shell command that returns 0 when task is complete
+
+Options:
+  --max-iterations, -n <num>    Maximum iterations before giving up (default: 10)
+  --agent <name>                Agent to use: opencode|claude|aider|custom
+  --agent-cmd <cmd>             Custom agent command (for --agent custom)
+  --checkpoint <strategy>       Checkpoint strategy: btrfs|git|none (auto-detected)
+  --timeout <duration>          Per-iteration timeout (default: 5m)
+  --best-of <n>                 CePO mode: run N parallel attempts, pick best
+  --template <name>             Use a predefined loop template
+  --inject <file>               Inject additional context from file
+  --notify                      Send notification when complete
+  --background, -b              Run loop in background (managed by loopd)
+
+Examples:
+  loop start "fix the failing tests" --promise "npm test"
+  loop start "add user authentication" --promise "./verify.sh" --max-iterations 20
+  loop start "optimize database queries" -p "make bench | grep -q 'PASS'" -n 5
+
+loop status [loop-id]
+---------------------
+Show status of running loops.
+
+Output:
+  LOOP-ID    STATUS      ITER   PROMISE         AGENT      ELAPSED
+  a1b2c3     running     3/10   npm test        opencode   2m 34s
+  d4e5f6     paused      7/15   cargo build     claude     8m 12s
+  g7h8i9     completed   4/10   make verify     aider      3m 45s
+
+Options:
+  --json          Output as JSON
+  --watch, -w     Continuously update (like htop)
+
+loop watch <loop-id>
+--------------------
+Live stream of loop execution. Shows:
+  - Current iteration number
+  - Agent output in real-time
+  - Promise check results
+  - Checkpoint markers
+  - Token/context usage
+
+Keybindings during watch:
+  p     Pause loop
+  r     Resume loop
+  i     Inject context
+  c     Create manual checkpoint
+  q     Quit watching (loop continues)
+  x     Cancel loop
+
+loop pause <loop-id>
+--------------------
+Pause a running loop after current iteration completes.
+Loop state is preserved; can be resumed later.
+
+loop resume <loop-id>
+---------------------
+Resume a paused loop from where it stopped.
+
+loop cancel <loop-id>
+---------------------
+Cancel a loop. Options:
+  --rollback      Rollback to initial checkpoint
+  --keep          Keep current state (default)
+
+loop inject <loop-id> <context>
+-------------------------------
+Inject additional context into a running loop.
+The context is added to the next iteration's prompt.
+
+Examples:
+  loop inject a1b2c3 "Focus on the UserService class"
+  loop inject a1b2c3 --file ./hints.txt
+  echo "try mocking the database" | loop inject a1b2c3 -
+
+loop checkpoint <loop-id> [name]
+--------------------------------
+Create a named checkpoint at current state.
+Useful for marking "good" states to potentially rollback to.
+
+loop rollback <loop-id> <checkpoint>
+------------------------------------
+Rollback loop to a previous checkpoint.
+
+Arguments:
+  <checkpoint>    Checkpoint name, iteration number, or "initial"
+
+Examples:
+  loop rollback a1b2c3 initial
+  loop rollback a1b2c3 3
+  loop rollback a1b2c3 "before-refactor"
+
+loop history <loop-id>
+----------------------
+Show iteration history for a loop.
+
+Output:
+  ITER  CHECKPOINT     PROMISE    DURATION   CHANGES
+  1     iter-001       FAIL       45s        +120 -30 (5 files)
+  2     iter-002       FAIL       1m 2s      +45 -12 (2 files)
+  3     iter-003       PASS ✓     38s        +8 -3 (1 file)
+
+Options:
+  --diff <iter>           Show diff for specific iteration
+  --diff <from>..<to>     Show diff between iterations
+  --verbose, -v           Include agent prompts and responses
+
+loop list
+---------
+List all loops (running, paused, completed, failed).
+
+Options:
+  --status <s>    Filter by status
+  --agent <a>     Filter by agent
+  --since <time>  Filter by start time
+  --limit <n>     Limit results
+
+loop template list
+------------------
+List available loop templates.
+
+Built-in templates:
+  tdd           Test-driven development loop
+  bugfix        Bug fixing with regression prevention
+  refactor      Safe refactoring with test preservation
+  feature       Feature implementation with verification
+  security      Security hardening loop
+  performance   Performance optimization loop
+
+loop template show <name>
+-------------------------
+Show details of a template including its promise and configuration.
+
+loop template create <name>
+---------------------------
+Create a custom template from current loop or from scratch.
+
+loop workflow run <workflow-file>
+---------------------------------
+Run a multi-loop workflow from YAML definition.
+See WORKFLOWS section below.
+
+================================================================================
+                                 WORKFLOWS
+================================================================================
+
+Workflows define multiple coordinated loops with dependencies.
+
+Example workflow file (implement-feature.yaml):
+
+```yaml
+name: implement-feature
+description: Full feature implementation with TDD
+
+env:
+  FEATURE_NAME: "{{feature}}"
+
+loops:
+  - id: write-tests
+    prompt: "Write failing tests for {{feature}}"
+    promise: "npm test 2>&1 | grep -q 'failing'"
+    max_iterations: 5
+
+  - id: implement
+    prompt: "Implement {{feature}} to make tests pass"
+    promise: "npm test"
+    depends_on: [write-tests]
+    max_iterations: 15
+
+  - id: refactor
+    prompt: "Refactor {{feature}} for clarity, keeping tests passing"
+    promise: "npm test && npm run lint"
+    depends_on: [implement]
+    max_iterations: 5
+
+  - id: document
+    prompt: "Add documentation for {{feature}}"
+    promise: "npm run docs:check"
+    depends_on: [refactor]
+    max_iterations: 3
+
+on_complete:
+  - "notify-send 'Feature complete: {{feature}}'"
+
+on_failure:
+  - "loop rollback {{failed_loop}} initial"
+```
+
+Run with:
+  loop workflow run implement-feature.yaml --set feature="user-auth"
+
+================================================================================
+                              BEST-OF-N (CePO MODE)
+================================================================================
+
+The --best-of flag enables CePO-style parallel exploration:
+
+  loop start "optimize the search algorithm" \
+    --promise "make bench | grep -q 'under 100ms'" \
+    --best-of 3
+
+This will:
+  1. Create 3 parallel branches from the initial state
+  2. Run the loop independently on each branch
+  3. When all complete (or hit max iterations), analyze results
+  4. Pick the "best" solution based on:
+     - Promise satisfaction
+     - Code quality metrics
+     - Change minimality
+     - Test coverage impact
+  5. Apply the winning branch to main state
+
+The selection can be customized:
+  --best-of-metric <metric>    Custom selection metric
+  --best-of-manual             Prompt user to select winner
+
+================================================================================
+                              LOOPD DAEMON
+================================================================================
+
+The loopd daemon manages background loops and provides:
+
+  - Process supervision (restart crashed loops)
+  - Resource management (limit concurrent loops)
+  - Notification dispatch
+  - IPC for loop commands
+  - Metrics collection
+  - Web UI at localhost:7777
+
+loopd start
+-----------
+Start the loop daemon.
+
+loopd stop
+----------
+Stop the daemon gracefully (waits for iterations to complete).
+
+loopd status
+------------
+Show daemon status and managed loops.
+
+loopd config
+------------
+Configure daemon settings:
+  - max_concurrent_loops (default: 4)
+  - checkpoint_retention (default: 24h)
+  - notification_cmd (default: notify-send)
+  - web_ui_port (default: 7777)
+
+================================================================================
+                            CHECKPOINT BACKENDS
+================================================================================
+
+BTRFS (Recommended)
+-------------------
+Uses Btrfs snapshots for instant, space-efficient checkpoints.
+Requires Btrfs filesystem (default on Daedalos).
+
+Advantages:
+  - Instant snapshots (< 1ms)
+  - Copy-on-write (minimal space)
+  - Full filesystem state
+  - Works with any file
+
+GIT
+---
+Uses git stash/branch for checkpoints.
+Fallback for non-Btrfs systems.
+
+Advantages:
+  - Works everywhere
+  - Familiar model
+  - Easy inspection
+
+Limitations:
+  - Only tracks git-tracked files
+  - Slower for large repos
+
+NONE
+----
+No checkpoints. Use for low-risk operations or when speed is critical.
+
+================================================================================
+                             EXIT CODES
+================================================================================
+
+0   Loop completed successfully (promise met)
+1   Loop failed (max iterations reached without meeting promise)
+2   Loop cancelled by user
+3   Loop crashed (agent error, timeout, etc.)
+4   Invalid arguments or configuration
+5   Daemon communication error
+
+================================================================================
+                              ENVIRONMENT
+================================================================================
+
+LOOP_AGENT          Default agent (opencode|claude|aider|custom)
+LOOP_CHECKPOINT     Default checkpoint strategy
+LOOP_MAX_ITER       Default max iterations
+LOOP_TIMEOUT        Default per-iteration timeout
+LOOP_TEMPLATES_DIR  Directory for custom templates
+LOOPD_SOCKET        Path to loopd IPC socket
+
+================================================================================
+                           IMPLEMENTATION NOTES
+================================================================================
+
+Language: Bash + Python hybrid
+  - Bash for CLI interface and shell integration
+  - Python for daemon, best-of-N logic, and complex operations
+
+Dependencies:
+  - Python 3.10+
+  - btrfs-progs (optional, for Btrfs checkpoints)
+  - git (for git checkpoints)
+  - tmux (for background loop management)
+  - jq (for JSON handling)
+
+Files:
+  ~/.config/daedalos/loop/config.yaml    Configuration
+  ~/.local/share/daedalos/loop/          Loop state and history
+  /run/daedalos/loopd.sock               Daemon socket
+  /tmp/daedalos/loops/                   Active loop working dirs
+
+================================================================================
+                              VERSION HISTORY
+================================================================================
+
+1.0.0 (2025-01-08)
+  - Initial specification
+  - Core loop commands
+  - Checkpoint backends
+  - Best-of-N mode
+  - Workflow support
+  - loopd daemon
+
+================================================================================

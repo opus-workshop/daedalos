@@ -1,0 +1,621 @@
+================================================================================
+                          UNDO CLI BUILD PROMPT
+================================================================================
+
+You are building the `undo` CLI tool for ClaudeOS - a file-level undo system
+with timeline navigation that makes experimentation safe and mistakes cheap.
+
+================================================================================
+                              YOUR TASK
+================================================================================
+
+Build a complete, production-ready CLI tool with:
+
+1. Main executable: undo (bash + embedded Python for complex ops)
+2. Watcher daemon: undod (file change monitor)
+3. Library functions: lib/*.sh
+4. SQLite schema and operations
+
+================================================================================
+                              ARCHITECTURE
+================================================================================
+
+File structure to create:
+
+undo/
+  bin/
+    undo                    # Main executable
+    undod                   # Watcher daemon
+  lib/
+    common.sh               # Shared utilities
+    database.sh             # SQLite operations
+    backup.sh               # Backup/restore operations
+    timeline.sh             # Timeline display
+    watch.sh                # File watching
+  schema/
+    init.sql                # Database schema
+  tests/
+    test_backup.sh
+    test_restore.sh
+    test_timeline.sh
+    run_tests.sh
+  install.sh
+  README.txt
+
+================================================================================
+                              IMPLEMENTATION
+================================================================================
+
+MAIN EXECUTABLE (bin/undo):
+---------------------------
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../lib"
+
+source "${LIB_DIR}/common.sh"
+source "${LIB_DIR}/database.sh"
+source "${LIB_DIR}/backup.sh"
+source "${LIB_DIR}/timeline.sh"
+source "${LIB_DIR}/watch.sh"
+
+# Ensure database exists
+init_database
+
+# Parse command
+case "${1:-timeline}" in
+    timeline)   shift; cmd_timeline "$@" ;;
+    last)       shift; cmd_last "$@" ;;
+    to)         shift; cmd_to "$@" ;;
+    preview)    shift; cmd_preview "$@" ;;
+    diff)       shift; cmd_diff "$@" ;;
+    checkpoint) shift; cmd_checkpoint "$@" ;;
+    watch)      shift; cmd_watch "$@" ;;
+    cleanup)    shift; cmd_cleanup "$@" ;;
+    status)     shift; cmd_status "$@" ;;
+    help|--help|-h) show_help ;;
+    *)          die "Unknown command: $1" ;;
+esac
+
+--------------------------------------------------------------------------------
+
+DATABASE SCHEMA (schema/init.sql):
+----------------------------------
+CREATE TABLE IF NOT EXISTS entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp REAL NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('edit', 'create', 'delete', 'rename', 'checkpoint', 'restore')),
+    file_path TEXT,
+    description TEXT,
+    before_hash TEXT,
+    after_hash TEXT,
+    backup_ref TEXT,
+    project_path TEXT NOT NULL,
+    metadata TEXT
+);
+
+CREATE TABLE IF NOT EXISTS checkpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    timestamp REAL NOT NULL,
+    entry_id INTEGER REFERENCES entries(id),
+    type TEXT CHECK(type IN ('manual', 'session_start', 'auto')),
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS file_backups (
+    hash TEXT PRIMARY KEY,
+    content BLOB,
+    compressed INTEGER DEFAULT 1,
+    storage_type TEXT CHECK(storage_type IN ('inline', 'git', 'btrfs', 'file')),
+    storage_ref TEXT,
+    size INTEGER,
+    created REAL
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+    path TEXT PRIMARY KEY,
+    storage_mode TEXT DEFAULT 'git',
+    last_checkpoint REAL,
+    total_size INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_entries_timestamp ON entries(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_entries_file ON entries(file_path);
+CREATE INDEX IF NOT EXISTS idx_entries_project ON entries(project_path);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_name ON checkpoints(name);
+
+--------------------------------------------------------------------------------
+
+DATABASE OPERATIONS (lib/database.sh):
+--------------------------------------
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/claude-os/undo"
+DB_FILE="${DATA_DIR}/timeline.db"
+
+init_database() {
+    mkdir -p "$DATA_DIR"
+    if [[ ! -f "$DB_FILE" ]]; then
+        sqlite3 "$DB_FILE" < "${SCRIPT_DIR}/../schema/init.sql"
+    fi
+}
+
+db_query() {
+    sqlite3 -separator $'\t' "$DB_FILE" "$@"
+}
+
+db_exec() {
+    sqlite3 "$DB_FILE" "$@"
+}
+
+add_entry() {
+    local type="$1"
+    local file_path="$2"
+    local description="$3"
+    local before_hash="${4:-}"
+    local after_hash="${5:-}"
+    local backup_ref="${6:-}"
+    local project_path="${7:-$(pwd)}"
+
+    local timestamp
+    timestamp=$(date +%s.%3N)
+
+    db_exec "INSERT INTO entries (timestamp, type, file_path, description, before_hash, after_hash, backup_ref, project_path)
+             VALUES ($timestamp, '$type', '$file_path', '$description', '$before_hash', '$after_hash', '$backup_ref', '$project_path')"
+}
+
+get_entries() {
+    local limit="${1:-20}"
+    local project="${2:-$(pwd)}"
+
+    db_query "SELECT id, datetime(timestamp, 'unixepoch', 'localtime'), type, file_path, description
+              FROM entries
+              WHERE project_path = '$project'
+              ORDER BY timestamp DESC
+              LIMIT $limit"
+}
+
+get_entry_by_id() {
+    local id="$1"
+    db_query "SELECT * FROM entries WHERE id = $id"
+}
+
+get_entries_since() {
+    local entry_id="$1"
+    local project="${2:-$(pwd)}"
+
+    db_query "SELECT id, file_path, before_hash, backup_ref
+              FROM entries
+              WHERE project_path = '$project'
+                AND id > $entry_id
+              ORDER BY id DESC"
+}
+
+--------------------------------------------------------------------------------
+
+BACKUP OPERATIONS (lib/backup.sh):
+----------------------------------
+BACKUP_DIR="${DATA_DIR}/backups"
+
+backup_file() {
+    local file_path="$1"
+    local project_path="${2:-$(pwd)}"
+
+    if [[ ! -f "$file_path" ]]; then
+        echo ""
+        return
+    fi
+
+    mkdir -p "$BACKUP_DIR"
+
+    # Calculate hash
+    local hash
+    hash=$(sha256sum "$file_path" | cut -d' ' -f1)
+    local short_hash="${hash:0:16}"
+
+    # Check if already backed up
+    local existing
+    existing=$(db_query "SELECT hash FROM file_backups WHERE hash = '$short_hash'")
+    if [[ -n "$existing" ]]; then
+        echo "$short_hash"
+        return
+    fi
+
+    local file_size
+    file_size=$(stat -f%z "$file_path" 2>/dev/null || stat -c%s "$file_path")
+
+    if [[ $file_size -lt 102400 ]]; then
+        # Small file: store inline (compressed)
+        local content
+        content=$(gzip -c "$file_path" | base64)
+        db_exec "INSERT INTO file_backups (hash, content, compressed, storage_type, size, created)
+                 VALUES ('$short_hash', '$content', 1, 'inline', $file_size, $(date +%s.%3N))"
+    else
+        # Large file: store as separate file
+        local backup_path="${BACKUP_DIR}/${short_hash}.gz"
+        gzip -c "$file_path" > "$backup_path"
+        db_exec "INSERT INTO file_backups (hash, storage_type, storage_ref, size, created)
+                 VALUES ('$short_hash', 'file', '$backup_path', $file_size, $(date +%s.%3N))"
+    fi
+
+    echo "$short_hash"
+}
+
+restore_file() {
+    local hash="$1"
+    local target_path="$2"
+
+    local row
+    row=$(db_query "SELECT content, storage_type, storage_ref FROM file_backups WHERE hash = '$hash'")
+
+    if [[ -z "$row" ]]; then
+        warn "Backup not found: $hash"
+        return 1
+    fi
+
+    local content storage_type storage_ref
+    IFS=$'\t' read -r content storage_type storage_ref <<< "$row"
+
+    local temp_file
+    temp_file=$(mktemp)
+    trap "rm -f '$temp_file'" EXIT
+
+    case "$storage_type" in
+        inline)
+            echo "$content" | base64 -d | gunzip > "$temp_file"
+            ;;
+        file)
+            gunzip -c "$storage_ref" > "$temp_file"
+            ;;
+        git)
+            git show "$storage_ref" > "$temp_file"
+            ;;
+        *)
+            die "Unknown storage type: $storage_type"
+            ;;
+    esac
+
+    # Atomic move
+    mkdir -p "$(dirname "$target_path")"
+    mv "$temp_file" "$target_path"
+
+    trap - EXIT
+}
+
+--------------------------------------------------------------------------------
+
+TIMELINE DISPLAY (lib/timeline.sh):
+-----------------------------------
+cmd_timeline() {
+    local limit=20
+    local file_filter=""
+    local json=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n)         limit="$2"; shift 2 ;;
+            --file)     file_filter="$2"; shift 2 ;;
+            --json)     json=true; shift ;;
+            *)          shift ;;
+        esac
+    done
+
+    local entries
+    if [[ -n "$file_filter" ]]; then
+        entries=$(db_query "SELECT id, datetime(timestamp, 'unixepoch', 'localtime'), type, file_path, description
+                           FROM entries
+                           WHERE project_path = '$(pwd)' AND file_path LIKE '%$file_filter%'
+                           ORDER BY timestamp DESC
+                           LIMIT $limit")
+    else
+        entries=$(get_entries "$limit")
+    fi
+
+    if $json; then
+        format_timeline_json "$entries"
+    else
+        format_timeline_table "$entries"
+    fi
+}
+
+format_timeline_table() {
+    local entries="$1"
+
+    echo "┌─────────────────────────────────────────────────────────────────┐"
+    echo "│ UNDO TIMELINE                                                   │"
+    echo "├─────────────────────────────────────────────────────────────────┤"
+
+    if [[ -z "$entries" ]]; then
+        echo "│ No entries found                                                │"
+    else
+        echo "$entries" | while IFS=$'\t' read -r id timestamp type file_path description; do
+            local time_part="${timestamp#* }"  # Extract time
+            local icon
+            case "$type" in
+                edit)       icon="📝" ;;
+                create)     icon="✨" ;;
+                delete)     icon="🗑️" ;;
+                checkpoint) icon="📌" ;;
+                restore)    icon="↩️" ;;
+                *)          icon="•" ;;
+            esac
+
+            if [[ "$type" == "checkpoint" ]]; then
+                printf "│ %-8s │ ────── │ %-20s │ ──────────────────── │\n" "$time_part" "$description"
+            else
+                printf "│ %-8s │ %-6s │ %-20s │ %-20s │\n" "$time_part" "$type" "${file_path:0:20}" "${description:0:20}"
+            fi
+        done
+    fi
+
+    echo "└─────────────────────────────────────────────────────────────────┘"
+}
+
+--------------------------------------------------------------------------------
+
+UNDO OPERATIONS (lib/common.sh - cmd implementations):
+------------------------------------------------------
+cmd_last() {
+    local count="${1:-1}"
+    local dry_run=false
+    local file_filter=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run)  dry_run=true; shift ;;
+            --file)     file_filter="$2"; shift 2 ;;
+            [0-9]*)     count="$1"; shift ;;
+            *)          shift ;;
+        esac
+    done
+
+    # Get last N entries
+    local entries
+    if [[ -n "$file_filter" ]]; then
+        entries=$(db_query "SELECT id, file_path, before_hash, backup_ref
+                           FROM entries
+                           WHERE project_path = '$(pwd)' AND file_path LIKE '%$file_filter%'
+                           ORDER BY timestamp DESC
+                           LIMIT $count")
+    else
+        entries=$(db_query "SELECT id, file_path, before_hash, backup_ref
+                           FROM entries
+                           WHERE project_path = '$(pwd)' AND type IN ('edit', 'create', 'delete')
+                           ORDER BY timestamp DESC
+                           LIMIT $count")
+    fi
+
+    if [[ -z "$entries" ]]; then
+        info "No entries to undo"
+        exit 0
+    fi
+
+    if $dry_run; then
+        echo "Would undo:"
+        echo "$entries" | while IFS=$'\t' read -r id file_path before_hash backup_ref; do
+            echo "  - $file_path"
+        done
+        exit 0
+    fi
+
+    # Create checkpoint before undo
+    cmd_checkpoint "pre-undo-$(date +%H%M%S)"
+
+    # Restore each file
+    echo "$entries" | while IFS=$'\t' read -r id file_path before_hash backup_ref; do
+        if [[ -n "$before_hash" ]]; then
+            restore_file "$before_hash" "$file_path"
+            success "Restored: $file_path"
+        fi
+    done
+
+    # Add restore entry to timeline
+    add_entry "restore" "" "Undo last $count changes"
+}
+
+cmd_to() {
+    local reference="$1"
+    local dry_run=false
+    local file_filter=""
+
+    shift
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run)  dry_run=true; shift ;;
+            --file)     file_filter="$2"; shift 2 ;;
+            *)          shift ;;
+        esac
+    done
+
+    local target_entry_id
+
+    # Parse reference
+    if [[ "$reference" =~ ^#([0-9]+)$ ]]; then
+        # Entry ID
+        target_entry_id="${BASH_REMATCH[1]}"
+    elif [[ "$reference" =~ ^[0-9]{2}:[0-9]{2}(:[0-9]{2})?$ ]]; then
+        # Time reference (today)
+        local target_time
+        target_time=$(date -d "today $reference" +%s 2>/dev/null || date -j -f "%Y-%m-%d %H:%M:%S" "$(date +%Y-%m-%d) $reference:00" +%s)
+        target_entry_id=$(db_query "SELECT id FROM entries
+                                   WHERE project_path = '$(pwd)' AND timestamp <= $target_time
+                                   ORDER BY timestamp DESC LIMIT 1")
+    else
+        # Named checkpoint
+        target_entry_id=$(db_query "SELECT entry_id FROM checkpoints WHERE name = '$reference'")
+    fi
+
+    if [[ -z "$target_entry_id" ]]; then
+        die "Could not find reference: $reference"
+    fi
+
+    # Get entries to undo
+    local entries
+    entries=$(get_entries_since "$target_entry_id")
+
+    if [[ -z "$entries" ]]; then
+        info "Already at that point"
+        exit 0
+    fi
+
+    if $dry_run; then
+        echo "Would restore to #$target_entry_id:"
+        echo "$entries" | while IFS=$'\t' read -r id file_path before_hash backup_ref; do
+            [[ -n "$file_path" ]] && echo "  - $file_path"
+        done
+        exit 0
+    fi
+
+    # Create checkpoint before restore
+    cmd_checkpoint "pre-restore-$(date +%H%M%S)"
+
+    # Restore files
+    echo "$entries" | while IFS=$'\t' read -r id file_path before_hash backup_ref; do
+        if [[ -n "$file_path" ]] && [[ -n "$before_hash" ]]; then
+            restore_file "$before_hash" "$file_path"
+            success "Restored: $file_path"
+        fi
+    done
+
+    add_entry "restore" "" "Restored to #$target_entry_id"
+}
+
+cmd_checkpoint() {
+    local name="${1:-checkpoint-$(date +%Y%m%d-%H%M%S)}"
+
+    local timestamp
+    timestamp=$(date +%s.%3N)
+
+    # Add checkpoint entry
+    add_entry "checkpoint" "" "$name"
+
+    local entry_id
+    entry_id=$(db_query "SELECT last_insert_rowid()")
+
+    # Add to checkpoints table
+    db_exec "INSERT INTO checkpoints (name, timestamp, entry_id, type, description)
+             VALUES ('$name', $timestamp, $entry_id, 'manual', 'User checkpoint')"
+
+    success "Checkpoint created: $name"
+}
+
+cmd_diff() {
+    local reference="$1"
+
+    # Similar logic to cmd_to but shows diff instead of restoring
+    # Use diff command to show differences
+    # ...implementation...
+}
+
+--------------------------------------------------------------------------------
+
+WATCHER DAEMON (bin/undod):
+---------------------------
+#!/usr/bin/env bash
+set -euo pipefail
+
+# This daemon watches for file changes and records them
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/common.sh"
+source "${SCRIPT_DIR}/../lib/database.sh"
+source "${SCRIPT_DIR}/../lib/backup.sh"
+
+PROJECT_PATH="${1:-.}"
+cd "$PROJECT_PATH"
+
+init_database
+
+# Create session start checkpoint
+add_entry "checkpoint" "" "Session start"
+
+# Watch for changes using fswatch
+if command -v fswatch &>/dev/null; then
+    fswatch -o --event Created --event Updated --event Removed \
+        --exclude '\.git' --exclude 'node_modules' --exclude '\.undo' \
+        . | while read -r event_count; do
+        # Process changed files
+        # This is simplified - real impl would track specific files
+        process_changes
+    done
+else
+    die "fswatch required for watch mode"
+fi
+
+================================================================================
+                              INSTALLATION
+================================================================================
+
+install.sh:
+#!/usr/bin/env bash
+set -euo pipefail
+
+PREFIX="${PREFIX:-$HOME/.local}"
+BIN_DIR="${PREFIX}/bin"
+LIB_DIR="${PREFIX}/lib/claude-os/undo"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/claude-os/undo"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-os/undo"
+
+echo "Installing undo CLI..."
+
+mkdir -p "$BIN_DIR" "$LIB_DIR" "$DATA_DIR" "$CONFIG_DIR"
+
+cp bin/undo bin/undod "$BIN_DIR/"
+chmod +x "$BIN_DIR/undo" "$BIN_DIR/undod"
+
+cp lib/*.sh "$LIB_DIR/"
+mkdir -p "$LIB_DIR/../schema"
+cp schema/*.sql "$LIB_DIR/../schema/"
+
+# Default config
+if [[ ! -f "$CONFIG_DIR/config.yaml" ]]; then
+    cat > "$CONFIG_DIR/config.yaml" << 'EOF'
+enabled: true
+storage_mode: auto
+max_storage_mb: 1000
+retention:
+  entries_hours: 24
+  hourly_checkpoints_days: 7
+  daily_checkpoints_days: 30
+ignore_patterns:
+  - "*.log"
+  - "*.tmp"
+  - ".git/*"
+  - "node_modules/*"
+EOF
+fi
+
+echo "Installation complete!"
+
+================================================================================
+                              BUILD CHECKLIST
+================================================================================
+
+[ ] Create directory structure
+[ ] Create schema/init.sql
+[ ] Implement lib/database.sh
+[ ] Implement lib/backup.sh with file backup/restore
+[ ] Implement lib/timeline.sh with display
+[ ] Implement lib/common.sh with commands
+[ ] Implement lib/watch.sh
+[ ] Create bin/undo main executable
+[ ] Create bin/undod watcher daemon
+[ ] Create install.sh
+[ ] Write tests for backup/restore cycle
+[ ] Test timeline display
+[ ] Test checkpoint creation and restoration
+[ ] Ensure atomic file operations
+[ ] Write README.txt
+
+================================================================================
+                              START BUILDING
+================================================================================
+
+Create all files in the undo/ directory. The tool should:
+- Track all file changes reliably
+- Restore files atomically (no partial restores)
+- Provide clear timeline visualization
+- Handle edge cases (deleted files, renamed files)
+- Be storage-efficient (deduplicate, compress)
+
+================================================================================

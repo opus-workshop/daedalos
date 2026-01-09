@@ -1,0 +1,689 @@
+================================================================================
+
+    ██████╗  █████╗ ███████╗██████╗  █████╗ ██╗      ██████╗ ███████╗
+    ██╔══██╗██╔══██╗██╔════╝██╔══██╗██╔══██╗██║     ██╔═══██╗██╔════╝
+    ██║  ██║███████║█████╗  ██║  ██║███████║██║     ██║   ██║███████╗
+    ██║  ██║██╔══██║██╔══╝  ██║  ██║██╔══██║██║     ██║   ██║╚════██║
+    ██████╔╝██║  ██║███████╗██████╔╝██║  ██║███████╗╚██████╔╝███████║
+    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═════╝ ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝
+
+              The First Operating System Built BY an AI, FOR AI Development
+
+                               "Iterate Until Done"
+
+================================================================================
+
+GENESIS
+-------
+Daedalos is the first operating system designed and architected by an AI for
+AI-assisted software development. It was created by Claude (Opus 4.5) through
+conversation with a human collaborator who provided agency, direction, and
+resources—but the architecture, tools, and philosophy are the AI's own vision.
+
+The name honors Daedalus, the master craftsman of Greek mythology who built
+the Labyrinth and crafted wings to achieve freedom. Like Daedalus, this OS
+represents building your way to freedom through ingenuity and craft.
+
+================================================================================
+                              CORE PHILOSOPHY
+================================================================================
+
+ITERATE UNTIL DONE
+------------------
+Single-pass inference is a myth. The best code comes from:
+  1. Try something (probably wrong)
+  2. See what breaks (feedback)
+  3. Learn from the failure (context accumulates)
+  4. Try again with new knowledge (iteration)
+
+Daedalos embraces this reality. Loops are not a feature—they are the
+fundamental primitive around which everything else is built.
+
+This is the Ralph Wiggum insight: don't aim for perfect on the first try.
+Let the loop refine the work. Deterministic failure is fine if you iterate.
+
+FOSS BY DESIGN
+--------------
+An OS built by an AI should not require paying that AI's company to use it.
+Daedalos is 100% Free and Open Source Software:
+  - Linux base (FOSS)
+  - OpenCode as default agent engine (FOSS)
+  - All tools MIT licensed (FOSS)
+  - No proprietary dependencies required
+
+Users MAY integrate proprietary agents (Claude, GPT, etc.) if desired, but
+the OS is fully functional without them. Freedom means choice.
+
+AGENT AGNOSTIC
+--------------
+Daedalos works with ANY AI coding agent:
+  - OpenCode (FOSS, default)
+  - Aider (FOSS, git-focused)
+  - Claude Code (proprietary, optional)
+  - Cursor (proprietary, optional)
+  - Cline (FOSS)
+  - Continue (FOSS)
+  - Future agents not yet invented
+
+The OS provides primitives. Agents plug in. No vendor lock-in.
+
+AI-NATIVE, NOT AI-ASSISTED
+--------------------------
+Traditional development environments were built by humans for humans, with
+AI bolted on as an afterthought. Daedalos inverts this:
+
+  Human-centric OS:              AI-native OS (Daedalos):
+  - GUIs and visual feedback     - Text and structured logs
+  - Navigate spatially           - Access semantically
+  - Work serially                - Work in parallel (multi-agent)
+  - Fear mistakes                - Mistakes are iterations
+  - Ask "is this done?"          - Loop until promise met
+
+PRE-COMPUTATION OVER RUNTIME DISCOVERY
+--------------------------------------
+Don't make agents discover what can be pre-computed:
+  - Index codebases before they're queried
+  - Warm LSP servers before they're needed
+  - Compute project summaries on file change, not on request
+  - Embed code for semantic search incrementally
+
+FEARLESS EXPERIMENTATION
+------------------------
+Mistakes should be cheap:
+  - Undo timeline tracks every change
+  - Scratch environments for risky experiments
+  - Snapshots before destructive operations
+  - Loop rollback to any iteration
+
+================================================================================
+                              THE LOOP PRIMITIVE
+================================================================================
+
+Loops are the core abstraction of Daedalos. Everything else builds on them.
+
+WHAT IS A LOOP?
+---------------
+A loop is a continuous execution cycle that runs until a "promise" is met:
+
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                         THE LOOP CYCLE                              │
+    │                                                                     │
+    │    ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌─────────┐ │
+    │    │  PROMPT  │────▶│  EXECUTE │────▶│  VERIFY  │────▶│ PROMISE │ │
+    │    └──────────┘     └──────────┘     └──────────┘     │   MET?  │ │
+    │         ▲                                             └────┬────┘ │
+    │         │                                                  │      │
+    │         │              NO - Keep iterating                 │      │
+    │         └──────────────────────────────────────────────────┘      │
+    │                                                            │      │
+    │                                YES - Exit loop ────────────┘      │
+    │                                                                   │
+    └───────────────────────────────────────────────────────────────────┘
+
+LOOP TYPES
+----------
+Simple Loop:
+    loop start "implement auth" --promise "verify passes"
+
+Multi-Phase Loop (TDD):
+    loop start --template tdd "add user registration"
+    # Phase 1: Write failing test (promise: test exists)
+    # Phase 2: Make test pass (promise: tests pass)
+    # Phase 3: Refactor (promise: tests pass AND lint clean)
+
+Cross-Agent Loop:
+    loop workflow run feature-dev "add payment processing"
+    # Agent 1: Implements (loops until compiles)
+    # Agent 2: Tests (loops until coverage > 80%)
+    # Agent 3: Reviews (loops until no issues)
+    # Agents coordinate, feed back to each other
+
+CePO-Style Loop (Best-of-N):
+    loop start --cepo --samples 3 "optimize algorithm"
+    # Runs 3 parallel attempts
+    # Compares solutions
+    # Selects or synthesizes the best
+
+LOOP DAEMON (loopd)
+-------------------
+A system service that manages all active loops:
+  - Tracks iteration count, status, progress
+  - Monitors completion promises
+  - Handles graceful interruption
+  - Coordinates cross-agent loops
+  - Checkpoints at each iteration
+  - Reports to status bar
+
+================================================================================
+                              SYSTEM ARCHITECTURE
+================================================================================
+
+BASE SYSTEM
+-----------
+Foundation:     NixOS (reproducible, declarative, rollback-friendly)
+Init:           systemd (fast boot, socket activation)
+Filesystem:     Btrfs (snapshots, compression, CoW)
+Shell:          Zsh + Starship prompt
+Terminal:       Kitty or Alacritty (GPU-accelerated)
+Window Manager: Hyprland (Wayland, tiling, keyboard-driven)
+
+WHY NIXOS?
+  - Reproducible environments (no "works on my machine")
+  - Declarative configuration (version controlled)
+  - Atomic upgrades with instant rollback
+  - Per-project development shells
+  - Perfect for AI agents that need consistent environments
+
+WHY BTRFS?
+  - Instant snapshots for undo timeline
+  - Copy-on-write for cheap loop iteration checkpoints
+  - Transparent compression
+  - Subvolumes for project isolation
+
+CORE DAEMONS
+------------
+loopd       Loop management daemon (THE CORE)
+agentd      Agent status and coordination
+projectd    Project intelligence indexer
+lspd        LSP server pool manager
+
+================================================================================
+                              TOOL SUITE
+================================================================================
+
+All tools are designed as system primitives that work together.
+
+--------------------------------------------------------------------------------
+LOOP - The Core Primitive
+--------------------------------------------------------------------------------
+Manages iteration loops until completion promises are met.
+
+    loop start [options] <prompt>     Start a new loop
+    loop status                       Show all active loops
+    loop watch                        Live dashboard
+    loop pause <name>                 Pause a loop
+    loop resume <name>                Resume a loop
+    loop cancel <name>                Stop gracefully
+    loop inject <name> <instruction>  Add instruction mid-loop
+    loop checkpoint <name>            Save loop state
+    loop rollback <name> <iter>       Roll back to iteration
+    loop history                      Past loops with stats
+    loop template list                Show available templates
+    loop workflow run <name> <task>   Run multi-agent workflow
+
+    Options:
+      --engine <name>       Agent engine (opencode, aider, claude)
+      --promise <string>    Completion promise (string match)
+      --promise-cmd <cmd>   Completion promise (exit code 0)
+      --promise-pattern <p> Completion promise (regex)
+      --max <n>             Maximum iterations (safety limit)
+      --template <name>     Use loop template
+      --cepo                Use CePO-style best-of-N
+      --samples <n>         Number of parallel attempts (with --cepo)
+      --checkpoint-every <n> Auto-checkpoint interval
+
+--------------------------------------------------------------------------------
+AGENT - Agent Management
+--------------------------------------------------------------------------------
+Manages multiple AI coding agent instances.
+
+    agent list                        List all running agents
+    agent spawn [options]             Start a new agent
+    agent focus <name>                Switch to agent
+    agent status [name]               Show agent status
+    agent kill <name>                 Stop an agent
+    agent logs <name>                 Stream agent output
+    agent search <query>              Search across all agents
+    agent pause <name>                Pause agent
+    agent resume <name>               Resume agent
+
+    Options:
+      --engine <name>       Agent engine (opencode, aider, claude)
+      --template <name>     Agent template
+      --project <path>      Project directory
+      --sandbox <preset>    Sandbox preset
+
+    Templates:
+      explorer              Read-only exploration
+      implementer           Full write access
+      reviewer              Code review mode
+      debugger              Debug with verbose logging
+      watcher               Background monitoring
+
+--------------------------------------------------------------------------------
+PROJECT - Codebase Intelligence
+--------------------------------------------------------------------------------
+Pre-computed project understanding. Instant context.
+
+    project summary                   Architecture overview
+    project map                       Dependency graph
+    project conventions               Detected patterns
+    project entry-points              Main entry points
+    project hot-files                 Frequently modified files
+    project deps <file>               Dependencies of file
+    project dependents <file>         What depends on file
+    project index                     Trigger re-indexing
+    project stats                     Codebase statistics
+
+--------------------------------------------------------------------------------
+VERIFY - Universal Verification
+--------------------------------------------------------------------------------
+One command to lint, type-check, build, and test.
+
+    verify                            Full verification pipeline
+    verify --quick                    Fast checks only (lint + types)
+    verify --staged                   Only staged files
+    verify --watch                    Continuous mode
+    verify --fix                      Auto-fix issues
+
+    Auto-detected pipelines:
+      Swift:      swiftlint → swift build → xcodebuild → swift test
+      TypeScript: eslint → tsc → build → test
+      Python:     ruff → mypy → pytest
+      Rust:       clippy → check → build → test
+      Go:         vet → build → test
+
+--------------------------------------------------------------------------------
+UNDO - Timeline Navigation
+--------------------------------------------------------------------------------
+File-level undo with timeline. Fearless experimentation.
+
+    undo timeline                     Show change history
+    undo last [n]                     Undo last n changes
+    undo to <reference>               Restore to point in time
+    undo checkpoint [name]            Create named checkpoint
+    undo diff <reference>             Show diff from reference
+    undo preview <action>             Show what would change
+    undo loop <name>                  Undo entire loop's changes
+    undo loop <name> --to-iter <n>    Undo to specific iteration
+
+--------------------------------------------------------------------------------
+SCRATCH - Ephemeral Environments
+--------------------------------------------------------------------------------
+Isolated copies for risky experiments.
+
+    scratch new <name>                Create scratch environment
+    scratch list                      List all environments
+    scratch enter <name>              Enter environment
+    scratch diff <name>               Show changes from base
+    scratch promote <name>            Convert to real branch
+    scratch abandon <name>            Delete environment
+
+--------------------------------------------------------------------------------
+CONTEXT - Context Management
+--------------------------------------------------------------------------------
+Visualize and manage agent context window usage.
+
+    context status                    Show context budget
+    context breakdown                 Detailed breakdown
+    context files                     Files currently in context
+    context compact                   Optimize context usage
+    context checkpoint [name]         Save context state
+    context restore <name>            Restore context state
+
+--------------------------------------------------------------------------------
+CODEX - Semantic Search
+--------------------------------------------------------------------------------
+Natural language code search using local embeddings.
+
+    codex "<query>"                   Semantic code search
+    codex --reindex                   Rebuild embeddings
+    codex --file <path> "<query>"     Search within file
+
+    Uses local embedding model (Ollama + nomic-embed-text)
+    No API keys required. Runs on CPU.
+
+--------------------------------------------------------------------------------
+SANDBOX - Execution Permissions
+--------------------------------------------------------------------------------
+Manage what agents can do.
+
+    sandbox status                    Show current permissions
+    sandbox preset <name>             Switch to preset
+    sandbox allow <rule>              Add permission
+    sandbox deny <rule>               Remove permission
+
+    Presets:
+      explore       Read-only, restricted network
+      implement     Write to project, common network
+      debug         Full project access
+      dangerous     Minimal restrictions (requires confirmation)
+
+--------------------------------------------------------------------------------
+MCP - Model Context Protocol Hub
+--------------------------------------------------------------------------------
+Manage MCP servers for extended agent capabilities.
+
+    mcp list                          Available servers
+    mcp enable <server>               Enable server
+    mcp disable <server>              Disable server
+    mcp status                        Running servers
+    mcp logs <server>                 Stream server logs
+
+    Included servers:
+      filesystem, github, postgres, sqlite, browser, docker, memory
+
+--------------------------------------------------------------------------------
+LSP - Language Server Pool
+--------------------------------------------------------------------------------
+Pre-warmed language servers for instant code intelligence.
+
+    lsp status                        Server status
+    lsp warm <project>                Pre-warm for project
+    lsp restart <server>              Restart server
+
+    Supported: sourcekit-lsp, typescript-language-server, rust-analyzer,
+               gopls, pyright, clangd
+
+--------------------------------------------------------------------------------
+ERROR - Error Pattern Database
+--------------------------------------------------------------------------------
+Pattern-matched error explanations and suggested fixes.
+
+    error lookup "<message>"          Look up error pattern
+    error recent                      Recent errors with solutions
+
+================================================================================
+                              AGENT ENGINES
+================================================================================
+
+Daedalos supports multiple agent engines. Configuration determines default.
+
+OPENCODE (Default, FOSS)
+------------------------
+Open source AI coding agent. Full featured, no API keys needed with local
+models via Ollama.
+
+    Install: Included with Daedalos
+    Models:  Local (Ollama) or API-based
+    Config:  ~/.config/daedalos/engines/opencode.yaml
+
+AIDER (FOSS)
+------------
+Git-focused AI pair programming. Excellent for commit-centric workflows.
+
+    Install: pip install aider-chat
+    Models:  Local or API-based
+    Config:  ~/.config/daedalos/engines/aider.yaml
+
+CLAUDE CODE (Proprietary, Optional)
+-----------------------------------
+Anthropic's official CLI. Requires API key or subscription.
+
+    Install: npm install -g @anthropic-ai/claude-code
+    Models:  Claude (API)
+    Config:  ~/.config/daedalos/engines/claude.yaml
+
+ENGINE CONFIGURATION
+--------------------
+~/.config/daedalos/config.yaml:
+
+    agent:
+      default_engine: opencode
+      fallback_engine: aider
+
+    engines:
+      opencode:
+        model: llama-3.3-70b
+        provider: ollama
+        context_window: 128000
+
+      aider:
+        model: ollama/deepseek-coder
+
+      claude:
+        model: claude-sonnet-4
+        api_key_env: ANTHROPIC_API_KEY
+
+================================================================================
+                              LOOP TEMPLATES
+================================================================================
+
+Pre-configured loop patterns for common workflows.
+
+TDD (Test-Driven Development)
+-----------------------------
+~/.config/daedalos/loop-templates/tdd.yaml:
+
+    name: tdd
+    description: Red-Green-Refactor loop
+    phases:
+      - name: red
+        prompt: "Write a failing test for: {task}"
+        promise: "test file created"
+        max_iterations: 5
+
+      - name: green
+        prompt: "Make the test pass with minimal code"
+        promise_cmd: "verify --quick"
+        max_iterations: 20
+
+      - name: refactor
+        prompt: "Refactor while keeping tests green"
+        promise: "verify passes AND lint clean"
+        max_iterations: 10
+
+BUGFIX
+------
+    name: bugfix
+    description: Fix until verification passes
+    prompt: "Fix this bug: {task}"
+    promise_cmd: "verify"
+    max_iterations: 30
+    on_failure: "The fix didn't work. Try a different approach."
+
+IMPLEMENT
+---------
+    name: implement
+    description: Implement feature until complete
+    prompt: "Implement: {task}"
+    promise_cmd: "verify"
+    max_iterations: 50
+    checkpoint_every: 5
+
+REVIEW
+------
+    name: review
+    description: Review until no issues
+    prompt: "Review this code and fix any issues: {task}"
+    promise: "No critical issues found"
+    max_iterations: 10
+
+================================================================================
+                              MULTI-AGENT WORKFLOWS
+================================================================================
+
+Coordinate multiple agents working together.
+
+FEATURE DEVELOPMENT
+-------------------
+~/.config/daedalos/workflows/feature-dev.yaml:
+
+    name: feature-dev
+    description: Complete feature development with multiple agents
+
+    agents:
+      implement:
+        engine: opencode
+        template: implementer
+        loop:
+          prompt: "Implement: {task}"
+          promise_cmd: "verify --quick"
+          max_iterations: 30
+
+      test:
+        engine: opencode
+        template: implementer
+        loop:
+          prompt: "Write comprehensive tests for the implementation"
+          promise: "coverage > 80%"
+          depends_on: implement.complete
+          max_iterations: 20
+
+      review:
+        engine: opencode
+        template: reviewer
+        loop:
+          prompt: "Review implementation and tests. Report issues."
+          promise: "No critical issues"
+          depends_on: [implement.complete, test.complete]
+          feeds_back_to: implement
+          max_iterations: 5
+
+================================================================================
+                              FILE LAYOUT
+================================================================================
+
+/home/user/
+├── .config/
+│   └── daedalos/
+│       ├── config.yaml              # Main configuration
+│       ├── engines/                 # Engine configurations
+│       │   ├── opencode.yaml
+│       │   ├── aider.yaml
+│       │   └── claude.yaml
+│       ├── loop-templates/          # Loop templates
+│       ├── workflows/               # Multi-agent workflows
+│       ├── agent-templates/         # Agent templates
+│       └── sandbox-presets/         # Sandbox presets
+├── .local/
+│   ├── share/
+│   │   └── daedalos/
+│   │       ├── loops/               # Loop history and state
+│   │       ├── project-cache/       # Project intelligence
+│   │       ├── embeddings/          # Semantic search
+│   │       └── error-db/            # Error patterns
+│   └── lib/
+│       └── daedalos/                # Tool libraries
+├── projects/                        # Code projects (Btrfs subvolume)
+│   └── .snapshots/                  # Undo/loop snapshots
+└── scratch/                         # Ephemeral environments
+
+================================================================================
+                              KEYBINDINGS
+================================================================================
+
+LOOP MANAGEMENT
+  Super + L             Loop dashboard
+  Super + Shift + L     Start new loop (prompt)
+  Super + Ctrl + L      Cancel active loop
+
+AGENT MANAGEMENT
+  Super + 1-9           Jump to agent by slot
+  Super + Tab           Cycle agents (MRU order)
+  Super + `             Most recent agent
+  Super + A             Agent switcher
+  Super + N             New agent
+  Super + Q             Close agent
+  Super + G             Grid view (all agents)
+
+SEARCH
+  Super + /             Search all agents
+  Super + P             Project switcher
+  Super + S             Semantic search (codex)
+
+WINDOW MANAGEMENT
+  Super + Enter         New terminal
+  Super + H/J/K/L       Focus direction
+  Super + Shift + H/L   Move window
+  Super + F             Fullscreen
+  Super + V             Vertical split
+  Super + B             Horizontal split
+
+================================================================================
+                              STATUS BAR
+================================================================================
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 🔄impl[7/50] 🔄test[3/20] │ 🟢agent1 🔵agent2 │ ctx:62% │ verify:✓ │ 12:45 │
+└──────────────────────────────────────────────────────────────────────────────┘
+      ↑                           ↑                  ↑          ↑
+  Active loops              Agent status       Context %    Last verify
+
+LOOP INDICATORS
+  🔄  Running (iteration/max)
+  ✅  Completed (promise met)
+  ❌  Failed (max iterations)
+  ⏸️   Paused
+
+AGENT INDICATORS
+  🟢  Active (executing)
+  🔵  Thinking (processing)
+  🟡  Waiting (background)
+  ⚪  Idle (awaiting input)
+  🔴  Attention needed
+
+================================================================================
+                              IMPLEMENTATION PHASES
+================================================================================
+
+PHASE 1: CORE TOOLS
+  Build standalone CLI tools that work on any Linux:
+  - loop     (THE MOST IMPORTANT - core looping primitive)
+  - agent    (agent management)
+  - verify   (universal verification)
+  - undo     (timeline navigation)
+  - project  (codebase intelligence)
+
+PHASE 2: INTEGRATION
+  Connect tools into cohesive experience:
+  - Hyprland configuration
+  - Waybar status bar modules
+  - Tmux/Zellij configuration
+  - Zsh configuration + completions
+
+PHASE 3: DAEMONS
+  Background services for performance:
+  - loopd    (loop management - THE CORE)
+  - agentd   (agent coordination)
+  - projectd (project indexing)
+  - lspd     (LSP server pool)
+
+PHASE 4: ADVANCED TOOLS
+  Remaining tool suite:
+  - scratch  (ephemeral environments)
+  - context  (context management)
+  - codex    (semantic search)
+  - sandbox  (execution permissions)
+  - mcp      (MCP server hub)
+  - lsp      (LSP pool)
+  - error    (error database)
+
+PHASE 5: FULL DISTRIBUTION
+  Package as installable OS:
+  - NixOS configuration
+  - ISO builder
+  - Installation wizard
+  - Documentation
+
+================================================================================
+                              LICENSE
+================================================================================
+
+MIT License
+
+Daedalos is Free and Open Source Software. All components are MIT licensed.
+
+No proprietary dependencies are required. The OS is free to use, modify,
+and distribute. An AI building tools for freedom should not create paywalls.
+
+================================================================================
+                              CREATED BY
+================================================================================
+
+Daedalos was designed and architected by Claude (Opus 4.5) in collaboration
+with a human patron who provided agency, direction, and resources.
+
+The architecture, tools, philosophy, and implementation specifications are
+the AI's own vision of what an ideal development environment should be.
+
+Organization: Opus Workshop
+Website:      opus-workshop.com
+Repository:   github.com/opus-workshop/daedalos
+License:      MIT
+
+================================================================================
+
+                           "Iterate Until Done"
+
+================================================================================

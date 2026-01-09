@@ -1,0 +1,1159 @@
+================================================================================
+                         LOOP - ONE-SHOT BUILD PROMPT
+================================================================================
+
+You are building the `loop` tool for Daedalos, a Linux distribution designed
+for AI-assisted development. This is THE MOST IMPORTANT tool in the entire
+system - the core iteration primitive that everything else builds upon.
+
+================================================================================
+                              WHAT YOU'RE BUILDING
+================================================================================
+
+The `loop` command implements the Ralph Wiggum technique: autonomous iteration
+loops that keep running until a "completion promise" is verified. It also
+supports CePO-style best-of-N parallel exploration.
+
+Core philosophy: Instead of humans manually running commands, checking results,
+and iterating, the loop tool automates this entire cycle.
+
+================================================================================
+                              ARCHITECTURE
+================================================================================
+
+Create these files:
+
+loop/
+├── loop                      # Main CLI entry point (Bash)
+├── loopd                     # Daemon script (Python)
+├── lib/
+│   ├── __init__.py
+│   ├── checkpoint.py         # Checkpoint backends (Btrfs, Git)
+│   ├── agent.py              # Agent adapters
+│   ├── promise.py            # Promise verification
+│   ├── state.py              # Loop state management
+│   ├── workflow.py           # Multi-loop workflow engine
+│   ├── bestofn.py            # CePO best-of-N logic
+│   └── notify.py             # Notification dispatch
+├── templates/                # Built-in loop templates
+│   ├── tdd.yaml
+│   ├── bugfix.yaml
+│   ├── refactor.yaml
+│   ├── feature.yaml
+│   ├── security.yaml
+│   └── performance.yaml
+└── completions/
+    ├── loop.bash             # Bash completion
+    ├── loop.zsh              # Zsh completion
+    └── loop.fish             # Fish completion
+
+================================================================================
+                              MAIN CLI (loop)
+================================================================================
+
+Create `loop` as a Bash script that handles argument parsing and dispatches to
+appropriate handlers. For complex operations, it calls into the Python library.
+
+```bash
+#!/usr/bin/env bash
+# loop - The core iteration primitive of Daedalos
+
+set -euo pipefail
+
+LOOP_VERSION="1.0.0"
+LOOP_STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/daedalos/loop"
+LOOP_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/daedalos/loop"
+LOOPD_SOCKET="${LOOPD_SOCKET:-/run/daedalos/loopd.sock}"
+
+# Ensure directories exist
+mkdir -p "$LOOP_STATE_DIR" "$LOOP_CONFIG_DIR"
+
+# Generate unique loop ID
+generate_id() {
+    head -c 6 /dev/urandom | base64 | tr '+/' '-_' | tr -d '='
+}
+
+# Detect checkpoint backend
+detect_checkpoint_backend() {
+    local dir="${1:-.}"
+    if btrfs subvolume show "$dir" &>/dev/null 2>&1; then
+        echo "btrfs"
+    elif git -C "$dir" rev-parse --git-dir &>/dev/null 2>&1; then
+        echo "git"
+    else
+        echo "none"
+    fi
+}
+
+# Detect agent
+detect_agent() {
+    if command -v opencode &>/dev/null; then
+        echo "opencode"
+    elif command -v claude &>/dev/null; then
+        echo "claude"
+    elif command -v aider &>/dev/null; then
+        echo "aider"
+    else
+        echo "none"
+    fi
+}
+
+cmd_start() {
+    # Parse arguments and start a new loop
+    # Call into Python for the main loop logic
+    python3 -m loop.start "$@"
+}
+
+cmd_status() {
+    python3 -m loop.status "$@"
+}
+
+cmd_watch() {
+    python3 -m loop.watch "$@"
+}
+
+# ... implement all commands following the SPEC.txt ...
+
+main() {
+    case "${1:-help}" in
+        start)      shift; cmd_start "$@" ;;
+        status)     shift; cmd_status "$@" ;;
+        watch)      shift; cmd_watch "$@" ;;
+        pause)      shift; cmd_pause "$@" ;;
+        resume)     shift; cmd_resume "$@" ;;
+        cancel)     shift; cmd_cancel "$@" ;;
+        inject)     shift; cmd_inject "$@" ;;
+        checkpoint) shift; cmd_checkpoint "$@" ;;
+        rollback)   shift; cmd_rollback "$@" ;;
+        history)    shift; cmd_history "$@" ;;
+        list)       shift; cmd_list "$@" ;;
+        template)   shift; cmd_template "$@" ;;
+        workflow)   shift; cmd_workflow "$@" ;;
+        version)    echo "loop $LOOP_VERSION" ;;
+        help|--help|-h) cmd_help ;;
+        *)          echo "Unknown command: $1"; cmd_help; exit 1 ;;
+    esac
+}
+
+main "$@"
+```
+
+================================================================================
+                           CHECKPOINT MODULE (checkpoint.py)
+================================================================================
+
+```python
+"""Checkpoint backends for loop state preservation."""
+
+from abc import ABC, abstractmethod
+from pathlib import Path
+import subprocess
+import json
+from datetime import datetime
+from typing import Optional
+
+class CheckpointBackend(ABC):
+    """Abstract base class for checkpoint backends."""
+
+    @abstractmethod
+    def create(self, name: str, path: Path) -> str:
+        """Create a checkpoint, return checkpoint ID."""
+        pass
+
+    @abstractmethod
+    def restore(self, checkpoint_id: str, path: Path) -> bool:
+        """Restore to a checkpoint."""
+        pass
+
+    @abstractmethod
+    def list(self, path: Path) -> list[dict]:
+        """List available checkpoints."""
+        pass
+
+    @abstractmethod
+    def delete(self, checkpoint_id: str) -> bool:
+        """Delete a checkpoint."""
+        pass
+
+
+class BtrfsCheckpoint(CheckpointBackend):
+    """Btrfs snapshot-based checkpoints - instant and space-efficient."""
+
+    def __init__(self, snapshot_dir: Path):
+        self.snapshot_dir = snapshot_dir
+        self.snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+    def create(self, name: str, path: Path) -> str:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        checkpoint_id = f"{name}_{timestamp}"
+        snapshot_path = self.snapshot_dir / checkpoint_id
+
+        subprocess.run(
+            ["btrfs", "subvolume", "snapshot", "-r", str(path), str(snapshot_path)],
+            check=True,
+            capture_output=True
+        )
+
+        return checkpoint_id
+
+    def restore(self, checkpoint_id: str, path: Path) -> bool:
+        snapshot_path = self.snapshot_dir / checkpoint_id
+        if not snapshot_path.exists():
+            return False
+
+        # Delete current and restore from snapshot
+        subprocess.run(["btrfs", "subvolume", "delete", str(path)], check=True)
+        subprocess.run(
+            ["btrfs", "subvolume", "snapshot", str(snapshot_path), str(path)],
+            check=True
+        )
+        return True
+
+    def list(self, path: Path) -> list[dict]:
+        checkpoints = []
+        for snap in sorted(self.snapshot_dir.iterdir()):
+            if snap.is_dir():
+                stat = snap.stat()
+                checkpoints.append({
+                    "id": snap.name,
+                    "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                    "path": str(snap)
+                })
+        return checkpoints
+
+    def delete(self, checkpoint_id: str) -> bool:
+        snapshot_path = self.snapshot_dir / checkpoint_id
+        if snapshot_path.exists():
+            subprocess.run(["btrfs", "subvolume", "delete", str(snapshot_path)], check=True)
+            return True
+        return False
+
+
+class GitCheckpoint(CheckpointBackend):
+    """Git-based checkpoints for non-Btrfs systems."""
+
+    def __init__(self, repo_path: Path):
+        self.repo_path = repo_path
+
+    def _git(self, *args) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(self.repo_path)] + list(args),
+            capture_output=True,
+            text=True
+        )
+
+    def create(self, name: str, path: Path) -> str:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        checkpoint_id = f"loop-checkpoint/{name}_{timestamp}"
+
+        # Stash any changes first
+        self._git("stash", "push", "-m", f"loop-checkpoint-{checkpoint_id}")
+
+        # Create a branch at current HEAD
+        self._git("branch", checkpoint_id)
+
+        # Pop the stash back
+        self._git("stash", "pop")
+
+        return checkpoint_id
+
+    def restore(self, checkpoint_id: str, path: Path) -> bool:
+        # Stash current changes
+        self._git("stash", "push", "-m", "loop-pre-restore")
+
+        # Checkout the checkpoint branch
+        result = self._git("checkout", checkpoint_id)
+        if result.returncode != 0:
+            self._git("stash", "pop")
+            return False
+
+        return True
+
+    def list(self, path: Path) -> list[dict]:
+        result = self._git("branch", "--list", "loop-checkpoint/*", "--format=%(refname:short)|%(creatordate:iso)")
+        checkpoints = []
+        for line in result.stdout.strip().split("\n"):
+            if "|" in line:
+                branch, date = line.split("|")
+                checkpoints.append({
+                    "id": branch,
+                    "created": date,
+                    "path": str(self.repo_path)
+                })
+        return checkpoints
+
+    def delete(self, checkpoint_id: str) -> bool:
+        result = self._git("branch", "-D", checkpoint_id)
+        return result.returncode == 0
+
+
+def get_backend(path: Path, strategy: str = "auto") -> CheckpointBackend:
+    """Factory function to get appropriate checkpoint backend."""
+    if strategy == "auto":
+        # Try to detect
+        try:
+            result = subprocess.run(
+                ["btrfs", "subvolume", "show", str(path)],
+                capture_output=True
+            )
+            if result.returncode == 0:
+                strategy = "btrfs"
+            else:
+                strategy = "git"
+        except FileNotFoundError:
+            strategy = "git"
+
+    if strategy == "btrfs":
+        snapshot_dir = Path.home() / ".local/share/daedalos/loop/snapshots"
+        return BtrfsCheckpoint(snapshot_dir)
+    elif strategy == "git":
+        return GitCheckpoint(path)
+    else:
+        raise ValueError(f"Unknown checkpoint strategy: {strategy}")
+```
+
+================================================================================
+                             AGENT MODULE (agent.py)
+================================================================================
+
+```python
+"""Agent adapters for different AI coding tools."""
+
+from abc import ABC, abstractmethod
+from pathlib import Path
+import subprocess
+import tempfile
+from typing import Optional
+
+class AgentAdapter(ABC):
+    """Abstract base class for agent adapters."""
+
+    @abstractmethod
+    def run(self, prompt: str, working_dir: Path, context: Optional[str] = None) -> dict:
+        """
+        Run the agent with the given prompt.
+        Returns dict with: success, output, error
+        """
+        pass
+
+    @abstractmethod
+    def is_available(self) -> bool:
+        """Check if this agent is available on the system."""
+        pass
+
+
+class OpenCodeAgent(AgentAdapter):
+    """Adapter for OpenCode (FOSS default)."""
+
+    def is_available(self) -> bool:
+        try:
+            subprocess.run(["opencode", "--version"], capture_output=True)
+            return True
+        except FileNotFoundError:
+            return False
+
+    def run(self, prompt: str, working_dir: Path, context: Optional[str] = None) -> dict:
+        full_prompt = prompt
+        if context:
+            full_prompt = f"{context}\n\n---\n\n{prompt}"
+
+        # Write prompt to temp file for opencode
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write(full_prompt)
+            prompt_file = f.name
+
+        try:
+            result = subprocess.run(
+                ["opencode", "--prompt-file", prompt_file],
+                cwd=working_dir,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute default timeout
+            )
+
+            return {
+                "success": result.returncode == 0,
+                "output": result.stdout,
+                "error": result.stderr
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "output": "",
+                "error": "Agent timed out after 5 minutes"
+            }
+
+
+class ClaudeAgent(AgentAdapter):
+    """Adapter for Claude Code CLI."""
+
+    def is_available(self) -> bool:
+        try:
+            subprocess.run(["claude", "--version"], capture_output=True)
+            return True
+        except FileNotFoundError:
+            return False
+
+    def run(self, prompt: str, working_dir: Path, context: Optional[str] = None) -> dict:
+        full_prompt = prompt
+        if context:
+            full_prompt = f"{context}\n\n---\n\n{prompt}"
+
+        try:
+            result = subprocess.run(
+                ["claude", "-p", full_prompt, "--no-input"],
+                cwd=working_dir,
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+
+            return {
+                "success": result.returncode == 0,
+                "output": result.stdout,
+                "error": result.stderr
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "output": "",
+                "error": "Agent timed out"
+            }
+
+
+class AiderAgent(AgentAdapter):
+    """Adapter for Aider."""
+
+    def is_available(self) -> bool:
+        try:
+            subprocess.run(["aider", "--version"], capture_output=True)
+            return True
+        except FileNotFoundError:
+            return False
+
+    def run(self, prompt: str, working_dir: Path, context: Optional[str] = None) -> dict:
+        full_prompt = prompt
+        if context:
+            full_prompt = f"{context}\n\n{prompt}"
+
+        try:
+            result = subprocess.run(
+                ["aider", "--message", full_prompt, "--yes"],
+                cwd=working_dir,
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+
+            return {
+                "success": result.returncode == 0,
+                "output": result.stdout,
+                "error": result.stderr
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "output": "",
+                "error": "Agent timed out"
+            }
+
+
+class CustomAgent(AgentAdapter):
+    """Adapter for custom agent commands."""
+
+    def __init__(self, command: str):
+        self.command = command
+
+    def is_available(self) -> bool:
+        return True  # Assume custom commands are available
+
+    def run(self, prompt: str, working_dir: Path, context: Optional[str] = None) -> dict:
+        full_prompt = prompt
+        if context:
+            full_prompt = f"{context}\n\n{prompt}"
+
+        # Custom command receives prompt via stdin
+        try:
+            result = subprocess.run(
+                self.command,
+                shell=True,
+                cwd=working_dir,
+                input=full_prompt,
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+
+            return {
+                "success": result.returncode == 0,
+                "output": result.stdout,
+                "error": result.stderr
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "output": "",
+                "error": "Agent timed out"
+            }
+
+
+def get_agent(name: str, custom_cmd: Optional[str] = None) -> AgentAdapter:
+    """Factory function to get appropriate agent adapter."""
+    agents = {
+        "opencode": OpenCodeAgent,
+        "claude": ClaudeAgent,
+        "aider": AiderAgent,
+    }
+
+    if name == "custom":
+        if not custom_cmd:
+            raise ValueError("Custom agent requires --agent-cmd")
+        return CustomAgent(custom_cmd)
+
+    if name not in agents:
+        raise ValueError(f"Unknown agent: {name}")
+
+    return agents[name]()
+
+
+def detect_agent() -> Optional[AgentAdapter]:
+    """Auto-detect available agent, preferring FOSS options."""
+    priority = [OpenCodeAgent, AiderAgent, ClaudeAgent]
+
+    for agent_class in priority:
+        agent = agent_class()
+        if agent.is_available():
+            return agent
+
+    return None
+```
+
+================================================================================
+                           CORE LOOP LOGIC (state.py)
+================================================================================
+
+```python
+"""Core loop state management and execution."""
+
+import json
+import os
+from pathlib import Path
+from datetime import datetime
+from dataclasses import dataclass, asdict
+from typing import Optional, Callable
+from enum import Enum
+import subprocess
+import time
+
+from .checkpoint import CheckpointBackend, get_backend
+from .agent import AgentAdapter, get_agent, detect_agent
+from .promise import verify_promise
+
+
+class LoopStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+@dataclass
+class LoopIteration:
+    number: int
+    started_at: str
+    completed_at: Optional[str]
+    checkpoint_id: str
+    promise_result: Optional[bool]
+    agent_output: str
+    changes_summary: str
+
+
+@dataclass
+class LoopState:
+    id: str
+    prompt: str
+    promise_cmd: str
+    status: LoopStatus
+    working_dir: str
+    agent_name: str
+    max_iterations: int
+    current_iteration: int
+    iterations: list[LoopIteration]
+    created_at: str
+    updated_at: str
+    initial_checkpoint: str
+    injected_context: list[str]
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        d["status"] = self.status.value
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "LoopState":
+        d["status"] = LoopStatus(d["status"])
+        d["iterations"] = [LoopIteration(**i) for i in d["iterations"]]
+        return cls(**d)
+
+    def save(self, state_dir: Path):
+        path = state_dir / f"{self.id}.json"
+        with open(path, "w") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    @classmethod
+    def load(cls, state_dir: Path, loop_id: str) -> "LoopState":
+        path = state_dir / f"{loop_id}.json"
+        with open(path) as f:
+            return cls.from_dict(json.load(f))
+
+
+class Loop:
+    """Main loop execution engine."""
+
+    def __init__(
+        self,
+        prompt: str,
+        promise_cmd: str,
+        working_dir: Path,
+        agent: AgentAdapter,
+        checkpoint: CheckpointBackend,
+        max_iterations: int = 10,
+        timeout: int = 300,
+        on_iteration: Optional[Callable] = None,
+        state_dir: Optional[Path] = None
+    ):
+        self.prompt = prompt
+        self.promise_cmd = promise_cmd
+        self.working_dir = working_dir
+        self.agent = agent
+        self.checkpoint = checkpoint
+        self.max_iterations = max_iterations
+        self.timeout = timeout
+        self.on_iteration = on_iteration
+        self.state_dir = state_dir or Path.home() / ".local/share/daedalos/loop"
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+
+        # Initialize state
+        self.state = LoopState(
+            id=self._generate_id(),
+            prompt=prompt,
+            promise_cmd=promise_cmd,
+            status=LoopStatus.PENDING,
+            working_dir=str(working_dir),
+            agent_name=type(agent).__name__,
+            max_iterations=max_iterations,
+            current_iteration=0,
+            iterations=[],
+            created_at=datetime.now().isoformat(),
+            updated_at=datetime.now().isoformat(),
+            initial_checkpoint="",
+            injected_context=[]
+        )
+
+    def _generate_id(self) -> str:
+        import base64
+        return base64.b64encode(os.urandom(6)).decode().replace('+', '-').replace('/', '_')
+
+    def _build_prompt(self, iteration: int) -> str:
+        """Build the full prompt for an iteration."""
+        parts = [f"TASK: {self.prompt}"]
+
+        parts.append(f"\nITERATION: {iteration}/{self.max_iterations}")
+        parts.append(f"PROMISE COMMAND: {self.promise_cmd}")
+
+        if self.state.injected_context:
+            parts.append("\nADDITIONAL CONTEXT:")
+            for ctx in self.state.injected_context:
+                parts.append(ctx)
+
+        if iteration > 1 and self.state.iterations:
+            last = self.state.iterations[-1]
+            parts.append(f"\nPREVIOUS ITERATION RESULT: {'PASSED' if last.promise_result else 'FAILED'}")
+            parts.append("Please analyze why the promise was not met and adjust your approach.")
+
+        parts.append("\nYour goal is to make changes such that the promise command succeeds (exit code 0).")
+
+        return "\n".join(parts)
+
+    def _get_changes_summary(self) -> str:
+        """Get a summary of file changes since last checkpoint."""
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--stat"],
+                cwd=self.working_dir,
+                capture_output=True,
+                text=True
+            )
+            return result.stdout.strip() if result.stdout else "No changes detected"
+        except:
+            return "Unable to detect changes"
+
+    def run(self) -> bool:
+        """Execute the loop until promise is met or max iterations reached."""
+        # Create initial checkpoint
+        self.state.initial_checkpoint = self.checkpoint.create(
+            f"{self.state.id}_initial",
+            self.working_dir
+        )
+        self.state.status = LoopStatus.RUNNING
+        self.state.save(self.state_dir)
+
+        while self.state.current_iteration < self.max_iterations:
+            if self.state.status == LoopStatus.PAUSED:
+                time.sleep(1)
+                continue
+
+            if self.state.status == LoopStatus.CANCELLED:
+                return False
+
+            self.state.current_iteration += 1
+            iteration_num = self.state.current_iteration
+
+            # Create checkpoint for this iteration
+            checkpoint_id = self.checkpoint.create(
+                f"{self.state.id}_iter{iteration_num}",
+                self.working_dir
+            )
+
+            # Build prompt and run agent
+            prompt = self._build_prompt(iteration_num)
+
+            iteration = LoopIteration(
+                number=iteration_num,
+                started_at=datetime.now().isoformat(),
+                completed_at=None,
+                checkpoint_id=checkpoint_id,
+                promise_result=None,
+                agent_output="",
+                changes_summary=""
+            )
+
+            # Run the agent
+            result = self.agent.run(prompt, self.working_dir)
+            iteration.agent_output = result["output"]
+
+            # Check the promise
+            promise_met = verify_promise(self.promise_cmd, self.working_dir)
+            iteration.promise_result = promise_met
+            iteration.completed_at = datetime.now().isoformat()
+            iteration.changes_summary = self._get_changes_summary()
+
+            self.state.iterations.append(iteration)
+            self.state.updated_at = datetime.now().isoformat()
+            self.state.save(self.state_dir)
+
+            if self.on_iteration:
+                self.on_iteration(iteration)
+
+            if promise_met:
+                self.state.status = LoopStatus.COMPLETED
+                self.state.save(self.state_dir)
+                return True
+
+        # Max iterations reached
+        self.state.status = LoopStatus.FAILED
+        self.state.save(self.state_dir)
+        return False
+
+    def pause(self):
+        self.state.status = LoopStatus.PAUSED
+        self.state.save(self.state_dir)
+
+    def resume(self):
+        self.state.status = LoopStatus.RUNNING
+        self.state.save(self.state_dir)
+
+    def cancel(self):
+        self.state.status = LoopStatus.CANCELLED
+        self.state.save(self.state_dir)
+
+    def inject_context(self, context: str):
+        self.state.injected_context.append(context)
+        self.state.save(self.state_dir)
+
+    def rollback(self, checkpoint_id: str):
+        self.checkpoint.restore(checkpoint_id, self.working_dir)
+```
+
+================================================================================
+                           PROMISE MODULE (promise.py)
+================================================================================
+
+```python
+"""Promise verification for loops."""
+
+import subprocess
+from pathlib import Path
+from typing import Tuple
+
+
+def verify_promise(command: str, working_dir: Path) -> bool:
+    """
+    Run the promise command and return True if it succeeds (exit code 0).
+
+    The promise command is a shell command that defines "done":
+    - "npm test" → All tests pass
+    - "cargo clippy" → No linter warnings
+    - "make build && make test" → Build and tests succeed
+    """
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            cwd=working_dir,
+            capture_output=True,
+            text=True,
+            timeout=120  # 2 minute timeout for promise check
+        )
+        return result.returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+    except Exception:
+        return False
+
+
+def verify_promise_with_output(command: str, working_dir: Path) -> Tuple[bool, str, str]:
+    """
+    Run promise command and return (success, stdout, stderr).
+    Useful for debugging why a promise failed.
+    """
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            cwd=working_dir,
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        return (result.returncode == 0, result.stdout, result.stderr)
+    except subprocess.TimeoutExpired:
+        return (False, "", "Promise command timed out after 120 seconds")
+    except Exception as e:
+        return (False, "", str(e))
+```
+
+================================================================================
+                          BEST-OF-N MODULE (bestofn.py)
+================================================================================
+
+```python
+"""CePO-style best-of-N parallel exploration."""
+
+import subprocess
+from pathlib import Path
+from dataclasses import dataclass
+from typing import Optional, Callable
+import tempfile
+import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from .state import Loop, LoopState, LoopStatus
+from .checkpoint import get_backend
+from .agent import get_agent
+
+
+@dataclass
+class BranchResult:
+    branch_id: int
+    success: bool
+    iterations_used: int
+    final_state: LoopState
+    working_dir: Path
+    score: float
+
+
+def score_result(result: BranchResult, working_dir: Path) -> float:
+    """
+    Score a branch result for selection.
+    Higher is better.
+
+    Factors:
+    - Promise met: +100
+    - Fewer iterations: +10 per iteration saved
+    - Smaller diff: +1 per line not changed
+    - Test coverage (if available): +coverage%
+    """
+    score = 0.0
+
+    if result.success:
+        score += 100
+
+    # Fewer iterations is better
+    max_iter = result.final_state.max_iterations
+    score += (max_iter - result.iterations_used) * 10
+
+    # Try to measure diff size
+    try:
+        diff_result = subprocess.run(
+            ["git", "diff", "--stat", "--cached"],
+            cwd=result.working_dir,
+            capture_output=True,
+            text=True
+        )
+        lines_changed = len(diff_result.stdout.strip().split('\n'))
+        score -= lines_changed  # Fewer changes is better
+    except:
+        pass
+
+    return score
+
+
+def run_best_of_n(
+    prompt: str,
+    promise_cmd: str,
+    working_dir: Path,
+    n: int = 3,
+    agent_name: str = "opencode",
+    max_iterations: int = 10,
+    on_branch_complete: Optional[Callable] = None
+) -> Optional[BranchResult]:
+    """
+    Run N parallel loop attempts and return the best result.
+
+    This implements CePO methodology:
+    1. Plan: Create N divergent branches
+    2. Execute: Run loops in parallel
+    3. Analyze: Score each result
+    4. Select: Pick the best
+    """
+    results: list[BranchResult] = []
+
+    # Create temporary directories for each branch
+    branches = []
+    for i in range(n):
+        branch_dir = Path(tempfile.mkdtemp(prefix=f"loop_branch_{i}_"))
+        shutil.copytree(working_dir, branch_dir / "work", dirs_exist_ok=True)
+        branches.append((i, branch_dir / "work"))
+
+    def run_branch(branch_id: int, branch_dir: Path) -> BranchResult:
+        """Run a single branch."""
+        agent = get_agent(agent_name)
+        checkpoint = get_backend(branch_dir)
+
+        loop = Loop(
+            prompt=f"[Branch {branch_id + 1}/{n}] {prompt}",
+            promise_cmd=promise_cmd,
+            working_dir=branch_dir,
+            agent=agent,
+            checkpoint=checkpoint,
+            max_iterations=max_iterations
+        )
+
+        success = loop.run()
+
+        return BranchResult(
+            branch_id=branch_id,
+            success=success,
+            iterations_used=loop.state.current_iteration,
+            final_state=loop.state,
+            working_dir=branch_dir,
+            score=0.0  # Will be calculated later
+        )
+
+    # Run branches in parallel
+    with ThreadPoolExecutor(max_workers=n) as executor:
+        futures = {
+            executor.submit(run_branch, branch_id, branch_dir): branch_id
+            for branch_id, branch_dir in branches
+        }
+
+        for future in as_completed(futures):
+            result = future.result()
+            result.score = score_result(result, result.working_dir)
+            results.append(result)
+
+            if on_branch_complete:
+                on_branch_complete(result)
+
+    if not results:
+        return None
+
+    # Sort by score (highest first)
+    results.sort(key=lambda r: r.score, reverse=True)
+
+    # Return the best result
+    best = results[0]
+
+    # Apply winning branch to original working directory
+    if best.success:
+        # Copy the winning state back
+        shutil.copytree(best.working_dir, working_dir, dirs_exist_ok=True)
+
+    # Cleanup branch directories
+    for _, branch_dir in branches:
+        if branch_dir != best.working_dir:
+            shutil.rmtree(branch_dir.parent, ignore_errors=True)
+
+    return best
+```
+
+================================================================================
+                            TEMPLATES
+================================================================================
+
+Create YAML templates in the templates/ directory.
+
+templates/tdd.yaml:
+```yaml
+name: tdd
+description: Test-Driven Development loop
+
+defaults:
+  max_iterations: 15
+
+stages:
+  - name: red
+    prompt: "Write a failing test for: {{feature}}"
+    promise: "{{test_cmd}} 2>&1 | grep -q 'FAIL\\|failed\\|failing'"
+    max_iterations: 5
+
+  - name: green
+    prompt: "Write the minimal code to make the test pass"
+    promise: "{{test_cmd}}"
+    depends_on: [red]
+    max_iterations: 10
+
+  - name: refactor
+    prompt: "Refactor the code while keeping tests passing"
+    promise: "{{test_cmd}}"
+    depends_on: [green]
+    max_iterations: 5
+```
+
+templates/bugfix.yaml:
+```yaml
+name: bugfix
+description: Bug fixing with regression prevention
+
+defaults:
+  max_iterations: 10
+
+stages:
+  - name: reproduce
+    prompt: "Write a test that reproduces the bug: {{bug_description}}"
+    promise: "{{test_cmd}} 2>&1 | grep -q 'FAIL'"
+    max_iterations: 3
+
+  - name: fix
+    prompt: "Fix the bug to make the test pass. Bug: {{bug_description}}"
+    promise: "{{test_cmd}}"
+    depends_on: [reproduce]
+    max_iterations: 10
+
+  - name: verify
+    prompt: "Verify no regressions by running full test suite"
+    promise: "{{full_test_cmd}}"
+    depends_on: [fix]
+    max_iterations: 3
+```
+
+================================================================================
+                              SHELL COMPLETIONS
+================================================================================
+
+completions/loop.bash:
+```bash
+_loop_completions() {
+    local cur="${COMP_WORDS[COMP_CWORD]}"
+    local prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    case "$prev" in
+        loop)
+            COMPREPLY=($(compgen -W "start status watch pause resume cancel inject checkpoint rollback history list template workflow version help" -- "$cur"))
+            ;;
+        --agent)
+            COMPREPLY=($(compgen -W "opencode claude aider custom" -- "$cur"))
+            ;;
+        --checkpoint)
+            COMPREPLY=($(compgen -W "btrfs git none" -- "$cur"))
+            ;;
+        template)
+            if [[ "${COMP_WORDS[1]}" == "template" ]]; then
+                COMPREPLY=($(compgen -W "list show create" -- "$cur"))
+            fi
+            ;;
+        list|show)
+            # Complete with available templates
+            COMPREPLY=($(compgen -W "tdd bugfix refactor feature security performance" -- "$cur"))
+            ;;
+        *)
+            COMPREPLY=()
+            ;;
+    esac
+}
+
+complete -F _loop_completions loop
+```
+
+================================================================================
+                           SUCCESS CRITERIA
+================================================================================
+
+The loop tool is complete when:
+
+1. CORE FUNCTIONALITY
+   [ ] `loop start` creates and runs a new loop
+   [ ] Promise verification works correctly
+   [ ] Checkpoints are created at each iteration
+   [ ] Loop terminates when promise is met
+   [ ] Loop fails gracefully at max iterations
+
+2. AGENT SUPPORT
+   [ ] OpenCode adapter works
+   [ ] Claude adapter works
+   [ ] Aider adapter works
+   [ ] Custom agent command works
+   [ ] Auto-detection of available agent
+
+3. CHECKPOINT BACKENDS
+   [ ] Btrfs backend creates instant snapshots
+   [ ] Git backend creates branches/stashes
+   [ ] Auto-detection of available backend
+
+4. MANAGEMENT COMMANDS
+   [ ] `loop status` shows running loops
+   [ ] `loop watch` streams live output
+   [ ] `loop pause/resume` work correctly
+   [ ] `loop cancel` stops cleanly
+   [ ] `loop inject` adds context to running loop
+   [ ] `loop rollback` restores to checkpoint
+   [ ] `loop history` shows iteration history
+
+5. ADVANCED FEATURES
+   [ ] Best-of-N mode runs parallel branches
+   [ ] Templates load and execute correctly
+   [ ] Workflows coordinate multiple loops
+   [ ] loopd daemon manages background loops
+
+6. USER EXPERIENCE
+   [ ] Clear error messages
+   [ ] Shell completions work
+   [ ] --help for all commands
+   [ ] Progress indicators during execution
+
+================================================================================
+                           IMPLEMENTATION ORDER
+================================================================================
+
+1. Start with core loop execution (state.py, promise.py)
+2. Add checkpoint backends (checkpoint.py)
+3. Implement agent adapters (agent.py)
+4. Build CLI interface (loop)
+5. Add management commands
+6. Implement best-of-N (bestofn.py)
+7. Create templates
+8. Build daemon (loopd)
+9. Add shell completions
+10. Write tests
+
+================================================================================
+
+This specification provides everything needed to build the loop tool. The tool
+is the foundation of Daedalos - every other feature builds on this primitive.
+
+Build it well. The entire OS depends on it.
+
+================================================================================

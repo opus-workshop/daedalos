@@ -1,0 +1,630 @@
+================================================================================
+                        PROJECT CLI BUILD PROMPT
+================================================================================
+
+You are building the `project` CLI tool for ClaudeOS - a command-line tool that
+provides instant codebase intelligence through pre-computed indexes.
+
+================================================================================
+                              YOUR TASK
+================================================================================
+
+Build a complete, production-ready CLI tool with:
+
+1. Main executable: project (Python for better parsing capabilities)
+2. Core modules: src/*.py (modular, testable)
+3. Language parsers: src/parsers/*.py (one per language)
+4. Templates: templates/*.txt (output templates)
+5. Tests: tests/*.py (comprehensive test suite)
+6. Installation: install.sh + pyproject.toml
+
+================================================================================
+                              ARCHITECTURE
+================================================================================
+
+File structure to create:
+
+project/
+  src/
+    project/
+      __init__.py
+      __main__.py           # Entry point
+      cli.py                # CLI argument parsing (click)
+      index.py              # Indexing logic
+      database.py           # SQLite operations
+      cache.py              # Cache management
+      formatters.py         # Output formatting
+      parsers/
+        __init__.py
+        base.py             # Base parser class
+        swift.py            # Swift parser
+        typescript.py       # TypeScript/JavaScript parser
+        python_parser.py    # Python parser
+        rust.py             # Rust parser
+        go.py               # Go parser
+      detectors/
+        __init__.py
+        project_type.py     # Detect project type
+        architecture.py     # Detect architecture pattern
+        conventions.py      # Detect conventions
+  tests/
+    __init__.py
+    test_index.py
+    test_parsers.py
+    test_detectors.py
+    fixtures/              # Test project fixtures
+  pyproject.toml
+  install.sh
+  README.txt
+
+================================================================================
+                              IMPLEMENTATION
+================================================================================
+
+CLI ENTRY POINT (src/project/cli.py):
+-------------------------------------
+import click
+from pathlib import Path
+from .index import ProjectIndex
+from .formatters import SummaryFormatter, TreeFormatter
+
+@click.group()
+@click.option('--no-color', is_flag=True, help='Disable colors')
+@click.pass_context
+def cli(ctx, no_color):
+    ctx.ensure_object(dict)
+    ctx.obj['no_color'] = no_color
+
+@cli.command()
+@click.argument('path', default='.', type=click.Path(exists=True))
+@click.option('--json', 'as_json', is_flag=True)
+@click.option('--refresh', is_flag=True)
+@click.option('--brief', is_flag=True)
+def summary(path, as_json, refresh, brief):
+    """Show project summary."""
+    index = ProjectIndex(path, refresh=refresh)
+    formatter = SummaryFormatter(as_json=as_json, brief=brief)
+    click.echo(formatter.format(index.get_summary()))
+
+@cli.command()
+@click.argument('path', default='.')
+@click.option('--depth', default=3, type=int)
+@click.option('--format', 'fmt', default='tree', type=click.Choice(['tree', 'dot', 'json']))
+def map(path, depth, fmt):
+    """Show dependency map."""
+    index = ProjectIndex(path)
+    # Implementation...
+
+# Continue for all commands...
+
+--------------------------------------------------------------------------------
+
+DATABASE SCHEMA (src/project/database.py):
+------------------------------------------
+import sqlite3
+from pathlib import Path
+
+SCHEMA = '''
+CREATE TABLE IF NOT EXISTS files (
+  id INTEGER PRIMARY KEY,
+  path TEXT UNIQUE NOT NULL,
+  type TEXT,
+  size INTEGER,
+  lines INTEGER,
+  modified REAL,
+  hash TEXT
+);
+
+CREATE TABLE IF NOT EXISTS symbols (
+  id INTEGER PRIMARY KEY,
+  file_id INTEGER REFERENCES files(id),
+  name TEXT NOT NULL,
+  type TEXT,
+  line_start INTEGER,
+  line_end INTEGER,
+  signature TEXT,
+  visibility TEXT
+);
+
+CREATE TABLE IF NOT EXISTS dependencies (
+  id INTEGER PRIMARY KEY,
+  source_file_id INTEGER REFERENCES files(id),
+  target_path TEXT,
+  target_file_id INTEGER,
+  import_type TEXT
+);
+
+CREATE TABLE IF NOT EXISTS conventions (
+  id INTEGER PRIMARY KEY,
+  pattern TEXT,
+  type TEXT,
+  occurrences INTEGER,
+  examples TEXT
+);
+
+CREATE TABLE IF NOT EXISTS metadata (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
+CREATE INDEX IF NOT EXISTS idx_deps_source ON dependencies(source_file_id);
+CREATE INDEX IF NOT EXISTS idx_deps_target ON dependencies(target_file_id);
+'''
+
+class ProjectDatabase:
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        self.conn = sqlite3.connect(db_path)
+        self.conn.row_factory = sqlite3.Row
+        self._init_schema()
+
+    def _init_schema(self):
+        self.conn.executescript(SCHEMA)
+        self.conn.commit()
+
+    def upsert_file(self, path, type_, size, lines, modified, hash_):
+        # Implementation...
+
+    def add_symbol(self, file_id, name, type_, line_start, line_end, signature, visibility):
+        # Implementation...
+
+    def add_dependency(self, source_file_id, target_path, target_file_id, import_type):
+        # Implementation...
+
+    def get_file_dependencies(self, file_id):
+        # Implementation...
+
+    def get_file_dependents(self, file_id):
+        # Implementation...
+
+--------------------------------------------------------------------------------
+
+INDEXER (src/project/index.py):
+-------------------------------
+from pathlib import Path
+import hashlib
+from .database import ProjectDatabase
+from .cache import CacheManager
+from .parsers import get_parser
+from .detectors import detect_project_type, detect_architecture, detect_conventions
+
+class ProjectIndex:
+    def __init__(self, path: str, refresh: bool = False):
+        self.path = Path(path).resolve()
+        self.cache = CacheManager(self.path)
+        self.db = self.cache.get_database()
+
+        if refresh or self.cache.is_stale():
+            self.reindex()
+
+    def reindex(self):
+        """Index or re-index the project."""
+        for file_path in self._iter_files():
+            self._index_file(file_path)
+        self._detect_patterns()
+        self.cache.mark_fresh()
+
+    def _iter_files(self):
+        """Iterate over indexable files."""
+        ignore = self._load_ignore_patterns()
+        for path in self.path.rglob('*'):
+            if path.is_file() and not self._should_ignore(path, ignore):
+                yield path
+
+    def _index_file(self, file_path: Path):
+        """Index a single file."""
+        content = file_path.read_text(errors='ignore')
+        hash_ = hashlib.sha256(content.encode()).hexdigest()[:16]
+
+        # Check if unchanged
+        existing = self.db.get_file(str(file_path.relative_to(self.path)))
+        if existing and existing['hash'] == hash_:
+            return
+
+        # Get appropriate parser
+        parser = get_parser(file_path)
+        if parser:
+            result = parser.parse(content)
+            file_id = self.db.upsert_file(
+                str(file_path.relative_to(self.path)),
+                result.file_type,
+                file_path.stat().st_size,
+                content.count('\n'),
+                file_path.stat().st_mtime,
+                hash_
+            )
+            for symbol in result.symbols:
+                self.db.add_symbol(file_id, **symbol)
+            for dep in result.dependencies:
+                self.db.add_dependency(file_id, **dep)
+
+    def get_summary(self):
+        """Get project summary."""
+        return {
+            'name': self.path.name,
+            'type': detect_project_type(self.path),
+            'architecture': detect_architecture(self.db),
+            'entry_points': self._find_entry_points(),
+            'modules': self._find_key_modules(),
+            'dependencies': self._find_external_deps(),
+            'conventions': detect_conventions(self.db),
+            'stats': self._get_stats(),
+        }
+
+--------------------------------------------------------------------------------
+
+BASE PARSER (src/project/parsers/base.py):
+------------------------------------------
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import List, Optional
+
+@dataclass
+class Symbol:
+    name: str
+    type: str  # function, class, interface, etc.
+    line_start: int
+    line_end: int
+    signature: str
+    visibility: str  # public, private, internal
+
+@dataclass
+class Dependency:
+    target_path: str
+    import_type: str  # import, require, use
+
+@dataclass
+class ParseResult:
+    file_type: str
+    symbols: List[Symbol]
+    dependencies: List[Dependency]
+
+class BaseParser(ABC):
+    @abstractmethod
+    def parse(self, content: str) -> ParseResult:
+        """Parse file content and extract symbols and dependencies."""
+        pass
+
+    @classmethod
+    @abstractmethod
+    def extensions(cls) -> List[str]:
+        """Return list of file extensions this parser handles."""
+        pass
+
+--------------------------------------------------------------------------------
+
+SWIFT PARSER (src/project/parsers/swift.py):
+--------------------------------------------
+import re
+from .base import BaseParser, ParseResult, Symbol, Dependency
+
+class SwiftParser(BaseParser):
+    @classmethod
+    def extensions(cls):
+        return ['.swift']
+
+    def parse(self, content: str) -> ParseResult:
+        symbols = []
+        dependencies = []
+        lines = content.split('\n')
+
+        for i, line in enumerate(lines, 1):
+            # Imports
+            if match := re.match(r'import\s+(\w+)', line):
+                dependencies.append(Dependency(
+                    target_path=match.group(1),
+                    import_type='import'
+                ))
+
+            # Classes
+            if match := re.match(r'(public|internal|private|fileprivate)?\s*(class|struct|enum|protocol|actor)\s+(\w+)', line):
+                visibility = match.group(1) or 'internal'
+                symbols.append(Symbol(
+                    name=match.group(3),
+                    type=match.group(2),
+                    line_start=i,
+                    line_end=self._find_block_end(lines, i),
+                    signature=line.strip(),
+                    visibility=visibility
+                ))
+
+            # Functions
+            if match := re.match(r'(public|internal|private|fileprivate)?\s*func\s+(\w+)', line):
+                visibility = match.group(1) or 'internal'
+                symbols.append(Symbol(
+                    name=match.group(2),
+                    type='function',
+                    line_start=i,
+                    line_end=self._find_block_end(lines, i),
+                    signature=line.strip(),
+                    visibility=visibility
+                ))
+
+        return ParseResult(
+            file_type='swift',
+            symbols=symbols,
+            dependencies=dependencies
+        )
+
+    def _find_block_end(self, lines: list, start: int) -> int:
+        """Find end of code block (matching braces)."""
+        depth = 0
+        for i in range(start - 1, len(lines)):
+            depth += lines[i].count('{') - lines[i].count('}')
+            if depth == 0 and '{' in lines[start - 1]:
+                return i + 1
+        return start
+
+--------------------------------------------------------------------------------
+
+PROJECT TYPE DETECTOR (src/project/detectors/project_type.py):
+--------------------------------------------------------------
+from pathlib import Path
+
+PROJECT_INDICATORS = {
+    'nodejs': ['package.json'],
+    'typescript': ['tsconfig.json'],
+    'rust': ['Cargo.toml'],
+    'go': ['go.mod'],
+    'swift': ['*.xcodeproj', 'Package.swift'],
+    'python': ['pyproject.toml', 'setup.py', 'requirements.txt'],
+    'java-maven': ['pom.xml'],
+    'java-gradle': ['build.gradle', 'build.gradle.kts'],
+    'ruby': ['Gemfile'],
+    'php': ['composer.json'],
+    'elixir': ['mix.exs'],
+    'deno': ['deno.json', 'deno.jsonc'],
+}
+
+def detect_project_type(path: Path) -> str:
+    """Detect project type from indicator files."""
+    for project_type, indicators in PROJECT_INDICATORS.items():
+        for indicator in indicators:
+            if '*' in indicator:
+                if list(path.glob(indicator)):
+                    return project_type
+            elif (path / indicator).exists():
+                return project_type
+
+    # Fallback: detect from file extensions
+    extensions = {}
+    for f in path.rglob('*'):
+        if f.is_file():
+            ext = f.suffix.lower()
+            extensions[ext] = extensions.get(ext, 0) + 1
+
+    if extensions:
+        top_ext = max(extensions, key=extensions.get)
+        return {
+            '.py': 'python',
+            '.js': 'nodejs',
+            '.ts': 'typescript',
+            '.swift': 'swift',
+            '.rs': 'rust',
+            '.go': 'go',
+        }.get(top_ext, 'unknown')
+
+    return 'unknown'
+
+--------------------------------------------------------------------------------
+
+ARCHITECTURE DETECTOR (src/project/detectors/architecture.py):
+--------------------------------------------------------------
+from ..database import ProjectDatabase
+
+ARCHITECTURE_PATTERNS = {
+    'mvc': {
+        'dirs': ['controllers', 'models', 'views'],
+        'description': 'Model-View-Controller'
+    },
+    'mvvm': {
+        'dirs': ['viewmodels', 'views', 'models'],
+        'description': 'Model-View-ViewModel'
+    },
+    'clean': {
+        'dirs': ['domain', 'application', 'infrastructure', 'presentation'],
+        'description': 'Clean Architecture'
+    },
+    'feature-based': {
+        'pattern': 'features/*/[controllers|views|models]',
+        'description': 'Feature-based organization'
+    },
+    'component-based': {
+        'dirs': ['components', 'hooks', 'pages'],
+        'description': 'Component-based (React-style)'
+    },
+}
+
+def detect_architecture(db: ProjectDatabase) -> dict:
+    """Detect architecture pattern from directory structure."""
+    dirs = set()
+    for row in db.conn.execute('SELECT DISTINCT path FROM files'):
+        parts = row['path'].split('/')
+        dirs.update(p.lower() for p in parts[:-1])
+
+    for arch, config in ARCHITECTURE_PATTERNS.items():
+        if 'dirs' in config:
+            if all(d in dirs for d in config['dirs']):
+                return {
+                    'type': arch,
+                    'description': config['description'],
+                    'confidence': 'high'
+                }
+
+    return {
+        'type': 'unknown',
+        'description': 'No recognized pattern',
+        'confidence': 'low'
+    }
+
+--------------------------------------------------------------------------------
+
+OUTPUT FORMATTER (src/project/formatters.py):
+---------------------------------------------
+import json
+from typing import Any
+
+class SummaryFormatter:
+    def __init__(self, as_json: bool = False, brief: bool = False, no_color: bool = False):
+        self.as_json = as_json
+        self.brief = brief
+        self.no_color = no_color
+
+    def format(self, summary: dict) -> str:
+        if self.as_json:
+            return json.dumps(summary, indent=2)
+
+        if self.brief:
+            return f"{summary['name']}: {summary['type']} ({summary['architecture']['description']})"
+
+        return self._format_box(summary)
+
+    def _format_box(self, summary: dict) -> str:
+        width = 65
+        lines = []
+
+        # Header
+        lines.append('┌' + '─' * width + '┐')
+        title = f" PROJECT SUMMARY: {summary['name']} "
+        lines.append('│' + title.center(width) + '│')
+        lines.append('├' + '─' * width + '┤')
+
+        # Type and architecture
+        lines.append(f"│ Type: {summary['type']:<{width-8}} │")
+        lines.append(f"│ Architecture: {summary['architecture']['description']:<{width-16}} │")
+
+        # Entry points
+        if summary['entry_points']:
+            entry = ' → '.join(summary['entry_points'][:3])
+            lines.append(f"│ Entry: {entry:<{width-9}} │")
+
+        lines.append('│' + ' ' * width + '│')
+
+        # Key modules
+        lines.append('│ Key Modules:' + ' ' * (width - 13) + '│')
+        for module in summary['modules'][:5]:
+            line = f"   • {module['name']} - {module['description']}"
+            lines.append(f"│{line:<{width}}│")
+
+        lines.append('│' + ' ' * width + '│')
+
+        # Conventions
+        if summary['conventions']:
+            lines.append('│ Conventions:' + ' ' * (width - 13) + '│')
+            for conv in summary['conventions'][:3]:
+                line = f"   • {conv}"
+                lines.append(f"│{line:<{width}}│")
+
+        # Footer
+        lines.append('└' + '─' * width + '┘')
+
+        return '\n'.join(lines)
+
+================================================================================
+                              PYPROJECT.TOML
+================================================================================
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "claude-os-project"
+version = "1.0.0"
+description = "Pre-computed codebase intelligence for ClaudeOS"
+readme = "README.txt"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "click>=8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+]
+
+[project.scripts]
+project = "project:cli"
+
+================================================================================
+                              INSTALLATION SCRIPT
+================================================================================
+
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Installing project CLI..."
+
+# Check Python version
+python3 -c "import sys; assert sys.version_info >= (3, 10)" 2>/dev/null || {
+    echo "Error: Python 3.10+ required"
+    exit 1
+}
+
+# Install with pip
+pip install --user -e .
+
+# Create config directory
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-os/project"
+mkdir -p "$CONFIG_DIR"
+
+# Create default config if not exists
+if [[ ! -f "$CONFIG_DIR/config.yaml" ]]; then
+    cat > "$CONFIG_DIR/config.yaml" << 'EOF'
+cache_dir: ~/.cache/claude-os/project
+max_cache_size_mb: 500
+index_on_access: true
+ignore_patterns:
+  - node_modules
+  - .git
+  - __pycache__
+  - build
+  - dist
+  - target
+  - venv
+  - .venv
+max_file_size_kb: 1024
+EOF
+fi
+
+echo "Installation complete!"
+echo "Run 'project --help' to get started."
+
+================================================================================
+                              BUILD CHECKLIST
+================================================================================
+
+[ ] Create directory structure
+[ ] Implement cli.py with all commands
+[ ] Implement database.py with SQLite schema
+[ ] Implement cache.py for cache management
+[ ] Implement index.py for indexing logic
+[ ] Implement base parser
+[ ] Implement Swift parser
+[ ] Implement TypeScript parser
+[ ] Implement Python parser
+[ ] Implement project type detector
+[ ] Implement architecture detector
+[ ] Implement conventions detector
+[ ] Implement formatters
+[ ] Create pyproject.toml
+[ ] Create install.sh
+[ ] Write tests for each component
+[ ] Write README.txt
+[ ] Test on multiple project types
+[ ] Ensure < 100ms query time for cached data
+
+================================================================================
+                              START BUILDING
+================================================================================
+
+Create all files in the project/ directory. Follow the specification exactly.
+The tool should provide instant (<100ms) responses for indexed projects.
+
+Begin by creating the directory structure and pyproject.toml, then implement
+each component. Test with real codebases of different types.
+
+================================================================================

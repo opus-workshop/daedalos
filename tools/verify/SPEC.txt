@@ -1,0 +1,312 @@
+================================================================================
+                         VERIFY CLI SPECIFICATION
+                    Universal Project Verification v1.0
+================================================================================
+
+OVERVIEW
+--------
+The `verify` CLI provides universal project verification with auto-detected
+pipelines. It runs linting, type checking, building, and testing with a
+single command, automatically detecting the project type and tools.
+
+================================================================================
+                              REQUIREMENTS
+================================================================================
+
+DEPENDENCIES:
+  - bash 4.0+
+  - Project-specific tools (auto-detected):
+    - Swift: swiftlint, swift, xcodebuild
+    - TypeScript: eslint, tsc, npm/pnpm/yarn
+    - Python: ruff, mypy, pytest
+    - Rust: cargo (clippy, check, build, test)
+    - Go: go (vet, build, test)
+
+INSTALLATION LOCATION:
+  - Binary: ~/.local/bin/verify
+  - Library: ~/.local/lib/claude-os/verify/
+  - Config: ~/.config/claude-os/verify/
+
+================================================================================
+                              COMMANDS
+================================================================================
+
+verify [OPTIONS] [path]
+-----------------------
+Run verification pipeline on project.
+
+Options:
+  --quick, -q           Fast checks only (lint + types)
+  --staged              Only check git staged files
+  --watch, -w           Continuous verification
+  --fix                 Auto-fix what's possible
+  --pipeline <name>     Use specific pipeline (skip auto-detect)
+  --step <step>         Run only specific step
+  --skip <step>         Skip specific step
+  --json                Output as JSON
+  --quiet               Minimal output (exit code only)
+  --verbose, -v         Verbose output
+
+Output:
+  [0.3s] ✅ lint
+  [1.2s] ✅ types
+  [3.1s] ✅ build
+  [4.2s] ✅ test (48/48)
+  ─────────────────
+  Total: 9.6s ✅ All checks passed
+
+--------------------------------------------------------------------------------
+
+verify status
+-------------
+Show verification status for current project.
+
+Output:
+  - Last verification time
+  - Last result
+  - Detected pipeline
+  - Available steps
+
+--------------------------------------------------------------------------------
+
+verify pipelines
+----------------
+List available verification pipelines.
+
+--------------------------------------------------------------------------------
+
+verify init
+-----------
+Create project-specific verify config.
+
+================================================================================
+                              PIPELINES
+================================================================================
+
+SWIFT/XCODE:
+  steps:
+    - name: lint
+      command: swiftlint lint --quiet
+      fix_command: swiftlint lint --fix
+      timeout: 30
+
+    - name: types
+      command: swift build --skip-link
+      timeout: 120
+
+    - name: build
+      command: xcodebuild build -scheme <scheme> -quiet
+      timeout: 300
+
+    - name: test
+      command: xcodebuild test -scheme <scheme> -quiet
+      timeout: 600
+
+TYPESCRIPT/NODE:
+  steps:
+    - name: lint
+      command: npx eslint . --max-warnings 0
+      fix_command: npx eslint . --fix
+      timeout: 60
+
+    - name: types
+      command: npx tsc --noEmit
+      timeout: 120
+
+    - name: build
+      command: npm run build
+      timeout: 300
+
+    - name: test
+      command: npm test
+      timeout: 600
+
+PYTHON:
+  steps:
+    - name: lint
+      command: ruff check .
+      fix_command: ruff check . --fix
+      timeout: 30
+
+    - name: types
+      command: mypy .
+      timeout: 120
+
+    - name: test
+      command: pytest
+      timeout: 600
+
+RUST:
+  steps:
+    - name: lint
+      command: cargo clippy -- -D warnings
+      fix_command: cargo clippy --fix
+      timeout: 120
+
+    - name: types
+      command: cargo check
+      timeout: 120
+
+    - name: build
+      command: cargo build
+      timeout: 300
+
+    - name: test
+      command: cargo test
+      timeout: 600
+
+GO:
+  steps:
+    - name: lint
+      command: go vet ./...
+      timeout: 60
+
+    - name: build
+      command: go build ./...
+      timeout: 120
+
+    - name: test
+      command: go test ./...
+      timeout: 600
+
+================================================================================
+                              AUTO-DETECTION
+================================================================================
+
+PROJECT TYPE DETECTION:
+  1. Check for project files (package.json, Cargo.toml, etc.)
+  2. Detect package manager (npm, pnpm, yarn, bun)
+  3. Detect available tools (eslint, prettier, etc.)
+  4. Select appropriate pipeline
+
+TOOL DETECTION:
+  - Check if tool is installed
+  - Check for config files (.eslintrc, rustfmt.toml, etc.)
+  - Prefer project-local tools (npx, cargo, etc.)
+
+SCHEME DETECTION (Xcode):
+  - Parse .xcodeproj or .xcworkspace
+  - Find main scheme
+  - Allow override with --scheme flag
+
+================================================================================
+                              QUICK MODE
+================================================================================
+
+--quick skips heavy operations:
+  - Skips: build, test
+  - Runs: lint, types
+
+Useful for rapid iteration while coding.
+
+================================================================================
+                              STAGED MODE
+================================================================================
+
+--staged only checks files in git staging area:
+  1. Get list of staged files: git diff --cached --name-only
+  2. Filter by relevant extensions
+  3. Run lint/types only on those files
+  4. Skip build/test (full codebase needed)
+
+================================================================================
+                              WATCH MODE
+================================================================================
+
+--watch monitors for changes and re-runs:
+  1. Use fswatch/inotify to watch project
+  2. On change, run --quick pipeline
+  3. On manual trigger (Enter), run full pipeline
+  4. Show persistent status bar
+
+Output in watch mode:
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ VERIFY WATCH: kavara-app                                       │
+  │ Status: ✅ Passing | Last: 2s ago | Watching 234 files         │
+  │                                                                 │
+  │ [Enter] Full verify | [Q] Quit | [R] Restart                   │
+  └─────────────────────────────────────────────────────────────────┘
+
+================================================================================
+                              FIX MODE
+================================================================================
+
+--fix automatically fixes what's possible:
+  1. Run lint with fix (eslint --fix, ruff --fix, etc.)
+  2. Run formatter (prettier, swift-format, etc.)
+  3. Show what was fixed
+  4. Re-run verify to confirm
+
+================================================================================
+                              CONFIGURATION
+================================================================================
+
+Global config (~/.config/claude-os/verify/config.yaml):
+  default_timeout: 600
+  parallel: true
+  show_output: errors_only  # all, errors_only, none
+  color: true
+
+Project config (.claude-os/verify.yaml):
+  pipeline: typescript
+  steps:
+    lint:
+      command: pnpm lint
+      timeout: 120
+    types:
+      command: pnpm typecheck
+    build:
+      skip: true  # Skip build step
+    test:
+      command: pnpm test:unit
+
+================================================================================
+                              OUTPUT FORMAT
+================================================================================
+
+DEFAULT OUTPUT:
+  [0.3s] ✅ lint
+  [1.2s] ✅ types
+  [3.1s] ✅ build
+  [4.2s] ✅ test (48/48 passed)
+  ─────────────────────────────
+  Total: 9.6s ✅ All checks passed
+
+FAILURE OUTPUT:
+  [0.3s] ✅ lint
+  [1.2s] ❌ types
+       src/auth.ts:23:5 - error TS2322: Type 'string' is not assignable...
+       src/auth.ts:45:10 - error TS2339: Property 'foo' does not exist...
+  ─────────────────────────────
+  Total: 1.5s ❌ 2 errors
+
+JSON OUTPUT:
+  {
+    "success": false,
+    "duration_ms": 1500,
+    "steps": [
+      {"name": "lint", "success": true, "duration_ms": 300},
+      {"name": "types", "success": false, "duration_ms": 1200, "errors": [...]}
+    ]
+  }
+
+================================================================================
+                              ERROR HANDLING
+================================================================================
+
+- If a step fails, continue to show which steps would pass/fail
+- If tool not found, suggest installation
+- If config invalid, show helpful error
+- Timeout kills stuck processes gracefully
+
+================================================================================
+                              EXIT CODES
+================================================================================
+
+0 - All checks passed
+1 - One or more checks failed
+2 - Configuration error
+3 - Tool not found
+4 - Timeout
+
+================================================================================

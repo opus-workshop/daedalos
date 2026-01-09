@@ -1,0 +1,557 @@
+================================================================================
+                         AGENT CLI BUILD PROMPT
+================================================================================
+
+You are building the `agent` CLI tool for ClaudeOS - a command-line tool that
+manages multiple Claude Code instances running in tmux sessions.
+
+================================================================================
+                              YOUR TASK
+================================================================================
+
+Build a complete, production-ready CLI tool with the following:
+
+1. Main executable: agent (bash script)
+2. Library functions: lib/*.sh (modular, testable)
+3. Templates: templates/*.json (agent templates)
+4. Completions: completions/_agent (zsh completions)
+5. Tests: tests/*.sh (comprehensive test suite)
+6. Installation: install.sh (one-command install)
+
+================================================================================
+                              ARCHITECTURE
+================================================================================
+
+File structure to create:
+
+agent/
+  bin/
+    agent                   # Main executable
+  lib/
+    common.sh               # Shared utilities, colors, formatting
+    tmux.sh                 # tmux session management
+    agents.sh               # Agent CRUD operations
+    status.sh               # Status detection and display
+    search.sh               # Cross-agent search
+    templates.sh            # Template handling
+  templates/
+    explorer.json           # Read-only template
+    implementer.json        # Full write access template
+    reviewer.json           # Code review template
+    debugger.json           # Debug template
+    watcher.json            # Background monitoring template
+  completions/
+    _agent                  # Zsh completions
+  tests/
+    test_common.sh          # Test utilities
+    test_agents.sh          # Test agent operations
+    test_tmux.sh            # Test tmux integration
+    test_search.sh          # Test search functionality
+    run_tests.sh            # Test runner
+  install.sh                # Installation script
+  README.txt                # Usage documentation
+
+================================================================================
+                              IMPLEMENTATION DETAILS
+================================================================================
+
+MAIN EXECUTABLE (bin/agent):
+----------------------------
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Source library files
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../lib"
+
+source "${LIB_DIR}/common.sh"
+source "${LIB_DIR}/tmux.sh"
+source "${LIB_DIR}/agents.sh"
+source "${LIB_DIR}/status.sh"
+source "${LIB_DIR}/search.sh"
+source "${LIB_DIR}/templates.sh"
+
+# Parse command and dispatch
+case "${1:-}" in
+  list)     shift; cmd_list "$@" ;;
+  spawn)    shift; cmd_spawn "$@" ;;
+  focus)    shift; cmd_focus "$@" ;;
+  status)   shift; cmd_status "$@" ;;
+  kill)     shift; cmd_kill "$@" ;;
+  logs)     shift; cmd_logs "$@" ;;
+  search)   shift; cmd_search "$@" ;;
+  pause)    shift; cmd_pause "$@" ;;
+  resume)   shift; cmd_resume "$@" ;;
+  snapshot) shift; cmd_snapshot "$@" ;;
+  restore)  shift; cmd_restore "$@" ;;
+  help|--help|-h) show_help ;;
+  version|--version|-v) show_version ;;
+  *)        show_help; exit 1 ;;
+esac
+
+--------------------------------------------------------------------------------
+
+COMMON LIBRARY (lib/common.sh):
+-------------------------------
+Key functions to implement:
+
+# Configuration
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-os/agent"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/claude-os/agent"
+AGENTS_FILE="${DATA_DIR}/agents.json"
+
+# Colors (using tput for portability)
+setup_colors() - Initialize color variables
+color_status() - Return color for status
+format_duration() - Format seconds as "2h 15m"
+format_table() - Format data as aligned table
+
+# JSON helpers (using jq)
+json_get() - Get value from JSON file
+json_set() - Set value in JSON file
+json_delete() - Delete key from JSON file
+
+# Validation
+validate_name() - Check agent name is valid
+validate_project() - Check project directory exists
+
+# Error handling
+die() - Print error and exit
+warn() - Print warning
+info() - Print info message
+success() - Print success message
+
+--------------------------------------------------------------------------------
+
+TMUX LIBRARY (lib/tmux.sh):
+---------------------------
+Key functions:
+
+tmux_session_exists() - Check if session exists
+tmux_create_session() - Create new session with options
+tmux_kill_session() - Kill session gracefully
+tmux_focus_session() - Switch to session
+tmux_get_pane_content() - Get recent pane output
+tmux_send_keys() - Send keystrokes to session
+tmux_get_pane_pid() - Get PID of process in pane
+
+--------------------------------------------------------------------------------
+
+AGENTS LIBRARY (lib/agents.sh):
+-------------------------------
+Key functions:
+
+agents_init() - Initialize agents.json if not exists
+agents_list() - Return list of agents
+agents_get() - Get agent by name
+agents_create() - Create new agent entry
+agents_update() - Update agent entry
+agents_delete() - Delete agent entry
+agents_next_slot() - Get next available slot
+agents_by_slot() - Get agent by slot number
+agents_fuzzy_match() - Fuzzy match agent name
+
+--------------------------------------------------------------------------------
+
+COMMAND IMPLEMENTATIONS:
+------------------------
+
+cmd_list():
+  1. Load agents from agents.json
+  2. For each agent, check tmux session exists
+  3. Get current status
+  4. Format as table (or JSON if --json flag)
+  5. Handle --quiet flag (names only)
+
+cmd_spawn():
+  1. Parse arguments (-n, -p, -t, -s, --no-focus)
+  2. Generate name if not provided
+  3. Validate project directory
+  4. Load template if specified
+  5. Get next available slot
+  6. Create tmux session
+  7. Start claude in session with args
+  8. Save agent to agents.json
+  9. Focus session unless --no-focus
+
+cmd_focus():
+  1. Parse argument (name or slot number)
+  2. If number, lookup by slot
+  3. If name, fuzzy match
+  4. Check agent exists
+  5. Check tmux session exists
+  6. Focus session
+
+cmd_status():
+  1. If name given, show single agent
+  2. Otherwise show all agents
+  3. For each agent:
+     - Check tmux session
+     - Get status from pane content
+     - Get PID and resource usage
+     - Format output (or JSON)
+  4. Handle --watch flag with loop
+
+cmd_kill():
+  1. Parse argument (name or slot)
+  2. Handle --all flag
+  3. Check agent exists
+  4. Send graceful shutdown (Ctrl+C)
+  5. Wait for process to exit
+  6. If --force, send SIGKILL
+  7. Kill tmux session
+  8. Remove from agents.json
+
+cmd_logs():
+  1. Parse argument and flags
+  2. Get agent's tmux session
+  3. Capture pane content
+  4. If --follow, use tmux capture-pane in loop
+  5. Otherwise show last N lines
+
+cmd_search():
+  1. Parse query and flags
+  2. For each agent:
+     - Capture scrollback buffer
+     - Search with grep/ripgrep
+     - Collect matches with context
+  3. Format results
+  4. Handle --agent flag to limit scope
+
+cmd_pause():
+  1. Get agent by name/slot
+  2. Get PID of claude process
+  3. Send SIGSTOP
+  4. Update status in agents.json
+
+cmd_resume():
+  1. Get agent by name/slot
+  2. Get PID of claude process
+  3. Send SIGCONT
+  4. Update status in agents.json
+
+================================================================================
+                              TEMPLATE FORMAT
+================================================================================
+
+templates/implementer.json:
+{
+  "name": "implementer",
+  "description": "Full write access for implementation work",
+  "sandbox": "implement",
+  "claude_args": [],
+  "env": {},
+  "prompt_prefix": ""
+}
+
+templates/explorer.json:
+{
+  "name": "explorer",
+  "description": "Read-only exploration and research",
+  "sandbox": "explore",
+  "claude_args": [],
+  "env": {
+    "CLAUDE_READONLY": "1"
+  },
+  "prompt_prefix": "You are in exploration mode. Focus on understanding the codebase without making changes. Use Read, Grep, Glob, and Task tools only."
+}
+
+templates/reviewer.json:
+{
+  "name": "reviewer",
+  "description": "Code review mode",
+  "sandbox": "explore",
+  "claude_args": [],
+  "env": {},
+  "prompt_prefix": "You are in code review mode. Analyze code for issues, bugs, and improvements. Do not make changes unless explicitly asked."
+}
+
+templates/debugger.json:
+{
+  "name": "debugger",
+  "description": "Debug mode with full access",
+  "sandbox": "debug",
+  "claude_args": ["--verbose"],
+  "env": {
+    "CLAUDE_DEBUG": "1"
+  },
+  "prompt_prefix": "You are in debug mode. Focus on investigating and fixing the issue. Be methodical and trace the problem to its root cause."
+}
+
+templates/watcher.json:
+{
+  "name": "watcher",
+  "description": "Background monitoring",
+  "sandbox": "explore",
+  "claude_args": [],
+  "env": {},
+  "prompt_prefix": "You are in watcher mode. Monitor for changes and report issues. Run in the background and notify on important events."
+}
+
+================================================================================
+                              ZSH COMPLETIONS
+================================================================================
+
+completions/_agent:
+#compdef agent
+
+_agent() {
+  local -a commands
+  commands=(
+    'list:List all running agents'
+    'spawn:Spawn a new agent'
+    'focus:Focus an agent'
+    'status:Show agent status'
+    'kill:Kill an agent'
+    'logs:Show agent logs'
+    'search:Search across agents'
+    'pause:Pause an agent'
+    'resume:Resume an agent'
+    'snapshot:Save agent state'
+    'restore:Restore agent state'
+    'help:Show help'
+  )
+
+  _arguments -C \
+    '1: :->command' \
+    '*: :->args'
+
+  case $state in
+    command)
+      _describe -t commands 'agent commands' commands
+      ;;
+    args)
+      case $words[2] in
+        spawn)
+          _arguments \
+            '-n[Agent name]:name:' \
+            '-p[Project directory]:directory:_directories' \
+            '-t[Template]:template:_agent_templates' \
+            '-s[Sandbox preset]:preset:(explore implement debug dangerous)' \
+            '--no-focus[Do not focus the new agent]'
+          ;;
+        focus|status|kill|logs|pause|resume)
+          _agent_names
+          ;;
+        search)
+          _arguments \
+            '-a[Agent name]:agent:_agent_names' \
+            '-i[Case insensitive]' \
+            '-c[Context lines]:lines:' \
+            '*:query:'
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_agent_templates() {
+  local -a templates
+  templates=(${(f)"$(ls ~/.config/claude-os/agent/templates/*.json 2>/dev/null | xargs -I{} basename {} .json)"})
+  _describe -t templates 'templates' templates
+}
+
+_agent_names() {
+  local -a agents
+  agents=(${(f)"$(agent list --quiet 2>/dev/null)"})
+  _describe -t agents 'agents' agents
+}
+
+_agent
+
+================================================================================
+                              INSTALLATION SCRIPT
+================================================================================
+
+install.sh:
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Determine installation directories
+PREFIX="${PREFIX:-$HOME/.local}"
+BIN_DIR="${PREFIX}/bin"
+LIB_DIR="${PREFIX}/lib/claude-os/agent"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-os/agent"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/claude-os/agent"
+COMPLETION_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions"
+
+echo "Installing agent CLI..."
+
+# Create directories
+mkdir -p "$BIN_DIR" "$LIB_DIR" "$CONFIG_DIR/templates" "$DATA_DIR" "$COMPLETION_DIR"
+
+# Copy files
+cp bin/agent "$BIN_DIR/"
+chmod +x "$BIN_DIR/agent"
+
+cp lib/*.sh "$LIB_DIR/"
+cp templates/*.json "$CONFIG_DIR/templates/"
+cp completions/_agent "$COMPLETION_DIR/"
+
+# Initialize agents.json
+if [[ ! -f "$DATA_DIR/agents.json" ]]; then
+  echo '{"agents":{},"next_slot":1,"max_slots":9}' > "$DATA_DIR/agents.json"
+fi
+
+# Create default config
+if [[ ! -f "$CONFIG_DIR/config.yaml" ]]; then
+  cat > "$CONFIG_DIR/config.yaml" << 'EOF'
+max_agents: 9
+default_template: implementer
+default_sandbox: implement
+auto_focus: true
+log_retention_days: 7
+EOF
+fi
+
+echo "Installation complete!"
+echo ""
+echo "Add to your PATH if not already:"
+echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+echo ""
+echo "For zsh completions, add to .zshrc:"
+echo "  fpath=(\$HOME/.local/share/zsh/site-functions \$fpath)"
+echo "  autoload -Uz compinit && compinit"
+
+================================================================================
+                              TEST SUITE
+================================================================================
+
+tests/run_tests.sh:
+#!/usr/bin/env bash
+# Run all tests
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source test utilities
+source "${SCRIPT_DIR}/test_common.sh"
+
+# Track results
+TESTS_RUN=0
+TESTS_PASSED=0
+TESTS_FAILED=0
+
+# Run test files
+for test_file in "${SCRIPT_DIR}"/test_*.sh; do
+  [[ "$test_file" == *test_common.sh ]] && continue
+  echo "Running $(basename "$test_file")..."
+  if bash "$test_file"; then
+    ((TESTS_PASSED++))
+  else
+    ((TESTS_FAILED++))
+  fi
+  ((TESTS_RUN++))
+done
+
+# Summary
+echo ""
+echo "================================"
+echo "Tests: $TESTS_RUN | Passed: $TESTS_PASSED | Failed: $TESTS_FAILED"
+[[ $TESTS_FAILED -eq 0 ]] && echo "ALL TESTS PASSED" || echo "SOME TESTS FAILED"
+exit $TESTS_FAILED
+
+--------------------------------------------------------------------------------
+
+tests/test_common.sh:
+#!/usr/bin/env bash
+# Test utilities
+
+assert_eq() {
+  local expected="$1"
+  local actual="$2"
+  local msg="${3:-}"
+  if [[ "$expected" != "$actual" ]]; then
+    echo "FAIL: $msg"
+    echo "  Expected: $expected"
+    echo "  Actual: $actual"
+    return 1
+  fi
+  echo "PASS: $msg"
+}
+
+assert_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local msg="${3:-}"
+  if [[ "$haystack" != *"$needle"* ]]; then
+    echo "FAIL: $msg"
+    echo "  Expected to contain: $needle"
+    echo "  Actual: $haystack"
+    return 1
+  fi
+  echo "PASS: $msg"
+}
+
+setup_test_env() {
+  export TEST_DIR=$(mktemp -d)
+  export CONFIG_DIR="$TEST_DIR/config"
+  export DATA_DIR="$TEST_DIR/data"
+  mkdir -p "$CONFIG_DIR" "$DATA_DIR"
+}
+
+teardown_test_env() {
+  [[ -n "${TEST_DIR:-}" ]] && rm -rf "$TEST_DIR"
+}
+
+================================================================================
+                              QUALITY REQUIREMENTS
+================================================================================
+
+1. SHELLCHECK CLEAN
+   - All bash scripts must pass shellcheck with no warnings
+   - Use `shellcheck -x` to follow sources
+
+2. DEFENSIVE CODING
+   - Always quote variables
+   - Use set -euo pipefail
+   - Check for required commands at startup
+   - Validate all user input
+
+3. PORTABLE
+   - Use bash built-ins where possible
+   - Avoid non-POSIX extensions
+   - Test on both macOS and Linux
+
+4. DOCUMENTED
+   - Every function has a comment explaining purpose
+   - Complex logic has inline comments
+   - README covers all features
+
+5. USER-FRIENDLY
+   - Helpful error messages
+   - Confirmation for destructive actions
+   - Color output (with NO_COLOR support)
+   - Progress indicators for long operations
+
+================================================================================
+                              BUILD CHECKLIST
+================================================================================
+
+[ ] Create directory structure
+[ ] Implement lib/common.sh with utilities
+[ ] Implement lib/tmux.sh with tmux operations
+[ ] Implement lib/agents.sh with agent CRUD
+[ ] Implement lib/status.sh with status detection
+[ ] Implement lib/search.sh with search functionality
+[ ] Implement lib/templates.sh with template handling
+[ ] Create main bin/agent executable
+[ ] Create all templates/*.json files
+[ ] Create completions/_agent
+[ ] Write test suite
+[ ] Create install.sh
+[ ] Write README.txt
+[ ] Test full workflow (spawn -> list -> focus -> logs -> search -> kill)
+[ ] Run shellcheck on all scripts
+[ ] Test on clean system
+
+================================================================================
+                              START BUILDING
+================================================================================
+
+Create all files in the agent/ directory. Follow the specification exactly.
+Ensure the tool is complete and production-ready.
+
+Begin by creating the directory structure, then implement each component.
+Test as you go. The final result should be a fully functional agent manager.
+
+================================================================================

@@ -1,0 +1,236 @@
+================================================================================
+                         SCRATCH CLI BUILD PROMPT
+                   Ephemeral Experiment Environments v1.0
+================================================================================
+
+OVERVIEW
+--------
+The `scratch` CLI manages ephemeral experiment environments - isolated copies
+of projects where you can make risky changes without affecting the original.
+Perfect for "what if" experiments and fearless refactoring.
+
+================================================================================
+                              YOUR TASK
+================================================================================
+
+Build a CLI tool that creates isolated project copies for experimentation.
+
+COMMANDS:
+  scratch new <name> [--from <path>]    Create new scratch environment
+  scratch list                          List all scratch environments
+  scratch enter <name>                  Enter scratch environment (cd + shell)
+  scratch diff <name>                   Show changes from base
+  scratch promote <name>                Convert to real branch
+  scratch abandon <name>                Delete scratch environment
+  scratch status                        Show current scratch status
+
+================================================================================
+                              HOW IT WORKS
+================================================================================
+
+BTRFS MODE (instant, preferred):
+  - Create Btrfs snapshot of project subvolume
+  - Stored in ~/.local/share/claude-os/scratch/<name>
+  - Snapshots are copy-on-write (instant creation, minimal space)
+  - Promotion = create git branch from snapshot
+
+FALLBACK MODE (git worktree):
+  - Create git worktree for scratch environment
+  - Stored in ~/.local/share/claude-os/scratch/<name>
+  - Worktree shares git objects (space efficient)
+  - Promotion = just checkout existing worktree as branch
+
+TMPFS MODE (volatile):
+  - Copy project to tmpfs for max speed
+  - Lost on reboot
+  - For truly temporary experiments
+
+================================================================================
+                              ARCHITECTURE
+================================================================================
+
+scratch/
+  bin/
+    scratch                 # Main executable
+  lib/
+    common.sh
+    btrfs.sh               # Btrfs snapshot operations
+    git.sh                 # Git worktree operations
+    tmpfs.sh               # Tmpfs operations
+  tests/
+    test_scratch.sh
+  install.sh
+  README.txt
+
+================================================================================
+                              KEY IMPLEMENTATION
+================================================================================
+
+cmd_new() {
+    local name="$1"
+    local source="${2:-$(pwd)}"
+
+    # Validate name
+    if scratch_exists "$name"; then
+        die "Scratch environment '$name' already exists"
+    fi
+
+    # Detect best mode
+    local mode
+    mode=$(detect_mode "$source")
+
+    case "$mode" in
+        btrfs)
+            create_btrfs_scratch "$name" "$source"
+            ;;
+        git)
+            create_git_scratch "$name" "$source"
+            ;;
+        tmpfs)
+            create_tmpfs_scratch "$name" "$source"
+            ;;
+    esac
+
+    # Record metadata
+    record_scratch "$name" "$source" "$mode"
+
+    success "Created scratch environment: $name"
+    info "Enter with: scratch enter $name"
+}
+
+create_btrfs_scratch() {
+    local name="$1"
+    local source="$2"
+    local dest="${SCRATCH_DIR}/${name}"
+
+    # Create snapshot
+    btrfs subvolume snapshot "$source" "$dest"
+}
+
+create_git_scratch() {
+    local name="$1"
+    local source="$2"
+    local dest="${SCRATCH_DIR}/${name}"
+
+    cd "$source"
+
+    # Create worktree
+    git worktree add -b "scratch-${name}" "$dest"
+}
+
+cmd_enter() {
+    local name="$1"
+    local scratch_path="${SCRATCH_DIR}/${name}"
+
+    if [[ ! -d "$scratch_path" ]]; then
+        die "Scratch environment not found: $name"
+    fi
+
+    # Set environment
+    export SCRATCH_NAME="$name"
+    export SCRATCH_ORIGINAL="$(get_scratch_original "$name")"
+
+    # Change to scratch directory
+    cd "$scratch_path"
+
+    # Start new shell with indicator
+    export PS1="(scratch:$name) $PS1"
+    exec "$SHELL"
+}
+
+cmd_diff() {
+    local name="$1"
+    local scratch_path="${SCRATCH_DIR}/${name}"
+    local original="$(get_scratch_original "$name")"
+
+    # Use diff or git diff depending on mode
+    diff -rq "$original" "$scratch_path" --exclude='.git' || true
+}
+
+cmd_promote() {
+    local name="$1"
+    local scratch_path="${SCRATCH_DIR}/${name}"
+    local original="$(get_scratch_original "$name")"
+
+    # Copy changes back to original as new branch
+    cd "$original"
+    local branch_name="scratch-${name}-$(date +%Y%m%d)"
+
+    git checkout -b "$branch_name"
+
+    # Copy files (excluding .git)
+    rsync -av --exclude='.git' "$scratch_path/" "$original/"
+
+    git add -A
+    git commit -m "Promoted from scratch: $name"
+
+    success "Promoted to branch: $branch_name"
+
+    # Clean up scratch
+    cmd_abandon "$name"
+}
+
+cmd_abandon() {
+    local name="$1"
+    local scratch_path="${SCRATCH_DIR}/${name}"
+    local mode="$(get_scratch_mode "$name")"
+
+    case "$mode" in
+        btrfs)
+            btrfs subvolume delete "$scratch_path"
+            ;;
+        git)
+            git worktree remove "$scratch_path" --force
+            git branch -D "scratch-${name}" 2>/dev/null || true
+            ;;
+        tmpfs|copy)
+            rm -rf "$scratch_path"
+            ;;
+    esac
+
+    remove_scratch_record "$name"
+    success "Abandoned scratch environment: $name"
+}
+
+================================================================================
+                              METADATA STORAGE
+================================================================================
+
+~/.local/share/claude-os/scratch/meta.json:
+{
+  "scratches": {
+    "experiment-1": {
+      "original": "/home/user/projects/kavara-app",
+      "mode": "btrfs",
+      "created": "2024-01-15T10:30:00Z",
+      "expires": "2024-01-16T10:30:00Z"
+    }
+  }
+}
+
+================================================================================
+                              AUTO-EXPIRATION
+================================================================================
+
+- Default: 24 hours
+- Can be extended with: scratch extend <name> [hours]
+- Cleanup runs on scratch list or via cron
+- Warning shown when entering expired scratch
+
+================================================================================
+                              BUILD CHECKLIST
+================================================================================
+
+[ ] Create directory structure
+[ ] Implement lib/common.sh with shared utilities
+[ ] Implement lib/btrfs.sh for Btrfs snapshots
+[ ] Implement lib/git.sh for git worktree
+[ ] Implement lib/tmpfs.sh for tmpfs (volatile)
+[ ] Create bin/scratch main executable
+[ ] Implement new, list, enter, diff, promote, abandon commands
+[ ] Add expiration handling
+[ ] Write tests
+[ ] Create install.sh
+[ ] Write README.txt
+
+================================================================================

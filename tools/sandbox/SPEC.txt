@@ -1,0 +1,282 @@
+================================================================================
+                            SANDBOX - SPECIFICATION
+                      Ephemeral Experiment Environments
+================================================================================
+
+VERSION: 1.0.0
+LICENSE: MIT
+AUTHOR: Claude (Opus)
+STATUS: Reference Specification
+
+================================================================================
+                                 PHILOSOPHY
+================================================================================
+
+"Try anything. Break nothing."
+
+The sandbox tool creates isolated, disposable environments for experimentation.
+When you want to try a risky refactor, test a wild idea, or explore a new
+approach without affecting your working state - spawn a sandbox.
+
+Unlike scratch (project-scoped), sandbox creates true isolation at the
+filesystem level using Btrfs copy-on-write snapshots or lightweight containers.
+
+================================================================================
+                               CORE CONCEPTS
+================================================================================
+
+SANDBOX ENVIRONMENT
+-------------------
+An isolated copy of a directory tree where changes don't affect the original.
+Think of it as a "what if" space that can be committed or discarded.
+
+INHERITANCE
+-----------
+Sandboxes inherit from a source (usually current working directory).
+Changes in the sandbox are isolated; the source remains untouched.
+
+PROMOTION
+---------
+If an experiment succeeds, you can "promote" the sandbox changes back to
+the source, effectively making the experiment permanent.
+
+NETWORKING ISOLATION
+--------------------
+Sandboxes can optionally isolate network access to prevent accidental
+production API calls during testing.
+
+================================================================================
+                              COMMAND INTERFACE
+================================================================================
+
+sandbox create [name] [--from <path>]
+-------------------------------------
+Create a new sandbox environment.
+
+Arguments:
+  [name]              Optional name (auto-generated if omitted)
+  --from, -f <path>   Source directory to snapshot (default: current dir)
+
+Options:
+  --isolated-network  Block network access in sandbox
+  --with-ports <list> Allow specific ports (comma-separated)
+  --copy <strategy>   Copy strategy: btrfs|overlay|rsync (auto-detected)
+  --size <limit>      Size limit for sandbox (e.g., "1G")
+  --env <KEY=VALUE>   Set environment variable in sandbox
+
+Examples:
+  sandbox create                         # Quick sandbox of current dir
+  sandbox create risky-refactor          # Named sandbox
+  sandbox create --from ~/projects/app   # Sandbox specific directory
+  sandbox create --isolated-network      # No network access
+
+sandbox list
+------------
+List all sandboxes.
+
+Output:
+  NAME             SOURCE              CREATED         SIZE     STATUS
+  risky-refactor   ~/projects/app      10 min ago      45 MB    active
+  test-upgrade     ~/projects/api      2 hours ago     120 MB   idle
+  quick-fix        ~/projects/app      1 day ago       12 MB    stale
+
+Options:
+  --json           Output as JSON
+  --all            Include deleted/archived sandboxes
+
+sandbox enter <name>
+--------------------
+Enter a sandbox environment (spawns a new shell).
+
+What happens:
+  - Working directory changes to sandbox copy
+  - Environment variables set (SANDBOX_NAME, SANDBOX_SOURCE)
+  - Shell prompt modified to show sandbox context
+  - Exit shell to return to normal environment
+
+Options:
+  --command, -c <cmd>  Run command instead of interactive shell
+  --no-prompt          Don't modify shell prompt
+
+sandbox diff <name>
+-------------------
+Show differences between sandbox and source.
+
+Output: Standard diff format showing all changes made in the sandbox.
+
+Options:
+  --stat           Show diff statistics only
+  --files          List changed files only
+  --since <time>   Changes since specific time
+
+sandbox promote <name>
+----------------------
+Apply sandbox changes back to the source directory.
+
+This is the "commit" action - makes experiment permanent.
+
+Options:
+  --dry-run        Show what would be promoted without doing it
+  --interactive    Interactively select which changes to promote
+  --backup         Create backup of source before promoting
+
+Confirmation required unless --yes flag provided.
+
+sandbox discard <name>
+----------------------
+Delete a sandbox and all its changes.
+
+Options:
+  --force, -f      Don't ask for confirmation
+
+sandbox sync <name> [--direction <dir>]
+---------------------------------------
+Sync changes between sandbox and source.
+
+Directions:
+  source-to-sandbox  Pull latest source changes into sandbox
+  sandbox-to-source  Same as promote
+
+Useful when source has changed and you want to rebase your experiment.
+
+sandbox fork <name> <new-name>
+------------------------------
+Create a new sandbox from an existing sandbox.
+Useful for exploring multiple variations of an experiment.
+
+sandbox pause <name>
+--------------------
+Hibernate a sandbox to save resources.
+Preserves full state but releases memory/processes.
+
+sandbox resume <name>
+---------------------
+Resume a paused sandbox.
+
+sandbox run <name> <command>
+----------------------------
+Run a command inside a sandbox without entering it.
+
+Examples:
+  sandbox run risky-refactor "npm test"
+  sandbox run test-upgrade "cargo build"
+
+sandbox info <name>
+-------------------
+Show detailed information about a sandbox.
+
+Output includes:
+  - Creation time and age
+  - Source directory
+  - Disk usage
+  - Changed files count
+  - Active processes (if any)
+  - Environment variables
+  - Network isolation status
+
+================================================================================
+                            IMPLEMENTATION BACKENDS
+================================================================================
+
+BTRFS (Recommended)
+-------------------
+Uses Btrfs subvolume snapshots for instant, copy-on-write isolation.
+
+Advantages:
+  - Instant creation (< 1ms)
+  - Space-efficient (only stores changes)
+  - Full filesystem semantics
+  - Fast promote/discard
+
+Implementation:
+  - Create: btrfs subvolume snapshot <source> <sandbox>
+  - Promote: rsync changes back, delete snapshot
+  - Discard: btrfs subvolume delete <sandbox>
+
+OVERLAYFS
+---------
+Uses Linux overlay filesystem for layered isolation.
+
+Advantages:
+  - Works on any filesystem
+  - Good performance
+  - Clear separation of changes
+
+Implementation:
+  - Create: mount -t overlay with lowerdir=source, upperdir=sandbox
+  - Promote: copy upperdir to source
+  - Discard: unmount and delete upperdir
+
+RSYNC
+-----
+Simple copy-based isolation for maximum compatibility.
+
+Advantages:
+  - Works everywhere
+  - Simple model
+  - Easy debugging
+
+Limitations:
+  - Slower creation (copies all files)
+  - Uses more disk space
+
+================================================================================
+                          NETWORK ISOLATION
+================================================================================
+
+When --isolated-network is used:
+
+1. Create network namespace for sandbox
+2. Loopback interface only (localhost works)
+3. No external network access
+
+With --with-ports:
+  - Allow specific outbound ports
+  - Useful for "allow database but block internet"
+
+Implementation uses Linux network namespaces (unshare -n).
+
+================================================================================
+                              ENVIRONMENT
+================================================================================
+
+SANDBOX_ROOT          Where sandboxes are stored (default: ~/.local/share/daedalos/sandbox)
+SANDBOX_BACKEND       Default backend: btrfs|overlay|rsync
+SANDBOX_SHELL         Shell to use when entering sandbox
+
+Environment inside sandbox:
+  SANDBOX_NAME        Current sandbox name
+  SANDBOX_SOURCE      Original source directory
+  SANDBOX_CREATED     Creation timestamp
+  IN_SANDBOX=1        Always set inside sandbox
+
+================================================================================
+                            EXIT CODES
+================================================================================
+
+0   Success
+1   General error
+2   Sandbox not found
+3   Permission denied
+4   Source not found
+5   Promote conflict (manual resolution needed)
+6   Disk space exhausted
+
+================================================================================
+                         INTEGRATION WITH LOOP
+================================================================================
+
+Sandboxes integrate naturally with the loop tool:
+
+  # Run a risky loop in isolation
+  sandbox create experiment
+  sandbox run experiment "loop start 'refactor everything' --promise 'make test'"
+
+  # If it worked, promote it
+  sandbox diff experiment
+  sandbox promote experiment
+
+  # If not, discard it
+  sandbox discard experiment
+
+================================================================================

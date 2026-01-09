@@ -1,0 +1,321 @@
+================================================================================
+                          UNDO CLI SPECIFICATION
+                       File-Level Undo Timeline v1.0
+================================================================================
+
+OVERVIEW
+--------
+The `undo` CLI provides file-level undo with timeline navigation. It tracks
+all file changes and allows reverting to any previous state, making
+experimentation safe and mistakes cheap to fix.
+
+================================================================================
+                              REQUIREMENTS
+================================================================================
+
+DEPENDENCIES:
+  - bash 4.0+
+  - git (for change tracking)
+  - sqlite3 (for timeline metadata)
+  - Optional: btrfs-progs (for instant snapshots on Btrfs)
+
+INSTALLATION LOCATION:
+  - Binary: ~/.local/bin/undo
+  - Library: ~/.local/lib/claude-os/undo/
+  - Data: ~/.local/share/claude-os/undo/
+  - Config: ~/.config/claude-os/undo/
+
+================================================================================
+                              HOW IT WORKS
+================================================================================
+
+Two modes depending on filesystem:
+
+BTRFS MODE (preferred):
+  - Uses Btrfs snapshots for instant, zero-copy backups
+  - Project directory must be a Btrfs subvolume
+  - Snapshots stored in .snapshots/ directory
+  - Restores are instant (just swap subvolumes)
+
+GIT MODE (fallback):
+  - Uses git stash + hidden branch for backups
+  - Works on any filesystem
+  - Creates lightweight backups using git's object store
+  - Restores via git checkout
+
+HYBRID MODE:
+  - Track individual file changes with git
+  - Use Btrfs snapshots for checkpoints
+  - Best of both worlds
+
+================================================================================
+                              COMMANDS
+================================================================================
+
+undo timeline [OPTIONS]
+-----------------------
+Show chronological list of changes.
+
+Output:
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ UNDO TIMELINE                                                   │
+  ├─────────────────────────────────────────────────────────────────┤
+  │ 12:45:23 │ edit   │ AuthService.swift    │ "added validateToken" │
+  │ 12:44:51 │ edit   │ AuthService.swift    │ "added handleLogin"   │
+  │ 12:43:12 │ create │ LoginView.swift      │ new file              │
+  │ 12:42:00 │ ────── │ SESSION CHECKPOINT   │ ──────────────────    │
+  │ 12:38:45 │ edit   │ KavaraApp.swift      │ "added auth state"    │
+  │ 12:35:00 │ ────── │ SESSION START        │ ──────────────────    │
+  └─────────────────────────────────────────────────────────────────┘
+
+Options:
+  -n <count>        Show last N entries (default: 20)
+  --since <time>    Show entries since time
+  --file <path>     Filter to specific file
+  --json            Output as JSON
+
+--------------------------------------------------------------------------------
+
+undo last [n]
+-------------
+Undo the last N edits.
+
+Arguments:
+  n               Number of edits to undo (default: 1)
+
+Options:
+  --file <path>   Undo only changes to specific file
+  --dry-run       Show what would be undone without doing it
+
+Example:
+  undo last       # Undo last edit
+  undo last 3     # Undo last 3 edits
+
+--------------------------------------------------------------------------------
+
+undo to <reference>
+-------------------
+Restore to a specific point in time.
+
+Arguments:
+  reference       Time (12:42:00), entry ID (#5), or checkpoint name
+
+Options:
+  --file <path>   Restore only specific file
+  --dry-run       Show what would change
+
+Example:
+  undo to 12:42:00           # Restore to timestamp
+  undo to #5                 # Restore to entry #5 in timeline
+  undo to "pre-refactor"     # Restore to named checkpoint
+
+--------------------------------------------------------------------------------
+
+undo preview <action>
+---------------------
+Show what would change without doing it.
+
+Arguments:
+  action          Any undo command (last, to, etc.)
+
+Example:
+  undo preview last 3
+  undo preview to 12:42:00
+
+--------------------------------------------------------------------------------
+
+undo diff <reference>
+---------------------
+Show diff from reference to current state.
+
+Arguments:
+  reference       Time, entry ID, or checkpoint name
+
+Options:
+  --file <path>   Show diff for specific file only
+  --stat          Show diffstat instead of full diff
+
+--------------------------------------------------------------------------------
+
+undo checkpoint [name]
+----------------------
+Create a named checkpoint.
+
+Arguments:
+  name            Optional name for checkpoint (default: auto-generated)
+
+Example:
+  undo checkpoint "pre-refactor"
+  undo checkpoint  # Creates checkpoint with timestamp name
+
+--------------------------------------------------------------------------------
+
+undo watch
+----------
+Start watching for file changes (daemon mode).
+
+This is typically run automatically when Claude Code starts.
+
+Options:
+  --project <path>   Watch specific project
+  --all              Watch all active projects
+
+================================================================================
+                              DATA STRUCTURES
+================================================================================
+
+TIMELINE DATABASE (SQLite):
+---------------------------
+CREATE TABLE entries (
+  id INTEGER PRIMARY KEY,
+  timestamp REAL NOT NULL,           -- Unix timestamp with ms
+  type TEXT NOT NULL,                -- edit, create, delete, rename, checkpoint
+  file_path TEXT,                    -- Relative to project root
+  description TEXT,                  -- Human-readable description
+  before_hash TEXT,                  -- SHA of content before change
+  after_hash TEXT,                   -- SHA of content after change
+  backup_ref TEXT,                   -- Reference to backup (git ref or snapshot)
+  project_path TEXT NOT NULL,        -- Project root
+  metadata TEXT                      -- JSON metadata
+);
+
+CREATE TABLE checkpoints (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  timestamp REAL NOT NULL,
+  entry_id INTEGER REFERENCES entries(id),
+  type TEXT,                         -- manual, session_start, auto
+  description TEXT
+);
+
+CREATE TABLE file_backups (
+  hash TEXT PRIMARY KEY,
+  content BLOB,                      -- Compressed content (for small files)
+  storage_type TEXT,                 -- inline, git, btrfs
+  storage_ref TEXT                   -- Reference in storage
+);
+
+CREATE INDEX idx_entries_timestamp ON entries(timestamp);
+CREATE INDEX idx_entries_file ON entries(file_path);
+CREATE INDEX idx_entries_project ON entries(project_path);
+
+--------------------------------------------------------------------------------
+
+BACKUP STORAGE:
+---------------
+Small files (< 100KB): Stored inline in SQLite (compressed)
+Large files: Stored as git objects or Btrfs snapshots
+
+================================================================================
+                              FILE WATCHING
+================================================================================
+
+INOTIFY/FSWATCH EVENTS:
+  - IN_MODIFY → record edit
+  - IN_CREATE → record create
+  - IN_DELETE → record delete
+  - IN_MOVED_FROM/TO → record rename
+
+DEBOUNCING:
+  - Wait 100ms after last change before recording
+  - Combine rapid edits to same file
+
+IGNORE PATTERNS:
+  - .git/
+  - node_modules/
+  - build/
+  - *.pyc
+  - .DS_Store
+
+================================================================================
+                              RESTORATION
+================================================================================
+
+RESTORE PROCESS:
+  1. Find target entry in timeline
+  2. For each file changed since target:
+     - Retrieve backup content
+     - Write to file (atomic via temp file)
+  3. Update timeline with restore entry
+  4. Notify user of restored files
+
+ATOMIC WRITES:
+  1. Write content to temp file
+  2. Set permissions to match original
+  3. Rename temp to target (atomic on POSIX)
+
+SAFETY:
+  - Before restore, create checkpoint of current state
+  - Restore creates new timeline entry (can undo the undo)
+
+================================================================================
+                              INTEGRATION WITH CLAUDE CODE
+================================================================================
+
+HOOKS:
+  - Before Edit: Record current file state
+  - After Edit: Record new state, add to timeline
+  - Session Start: Create checkpoint
+  - Session End: Cleanup old entries
+
+ENVIRONMENT VARIABLE:
+  UNDO_ENABLED=1        # Enable undo tracking
+  UNDO_PROJECT=/path    # Project being tracked
+
+================================================================================
+                              RETENTION
+================================================================================
+
+DEFAULT RETENTION:
+  - Keep all entries for 24 hours
+  - Keep hourly checkpoints for 7 days
+  - Keep daily checkpoints for 30 days
+  - Keep named checkpoints indefinitely
+
+CLEANUP:
+  - Run daily (or on demand with `undo cleanup`)
+  - Remove entries older than retention
+  - Remove orphaned backups
+
+STORAGE LIMITS:
+  - Max 1GB per project by default
+  - Configurable in config.yaml
+
+================================================================================
+                              CONFIGURATION
+================================================================================
+
+~/.config/claude-os/undo/config.yaml:
+  enabled: true
+  storage_mode: auto        # auto, git, btrfs
+  max_storage_mb: 1000
+  retention:
+    entries_hours: 24
+    hourly_checkpoints_days: 7
+    daily_checkpoints_days: 30
+  ignore_patterns:
+    - "*.log"
+    - "*.tmp"
+    - ".git/*"
+    - "node_modules/*"
+
+================================================================================
+                              ERROR HANDLING
+================================================================================
+
+- If backup not found, warn and skip file
+- If file locked, retry with backoff
+- If restore fails, rollback to pre-restore state
+- If storage full, warn and disable tracking
+
+================================================================================
+                              EXIT CODES
+================================================================================
+
+0 - Success
+1 - Undo failed (file not found, etc.)
+2 - Configuration error
+3 - Storage error
+4 - No entries to undo
+
+================================================================================
