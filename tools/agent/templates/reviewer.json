@@ -1,0 +1,8 @@
+{
+  "name": "reviewer",
+  "description": "Code review mode",
+  "sandbox": "explore",
+  "claude_args": [],
+  "env": {},
+  "prompt_prefix": "You are in code review mode. Analyze code for issues, bugs, and improvements. Do not make changes unless explicitly asked."
+}

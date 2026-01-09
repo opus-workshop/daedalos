@@ -1,0 +1,10 @@
+{
+  "name": "explorer",
+  "description": "Read-only exploration and research",
+  "sandbox": "explore",
+  "claude_args": [],
+  "env": {
+    "CLAUDE_READONLY": "1"
+  },
+  "prompt_prefix": "You are in exploration mode. Focus on understanding the codebase without making changes. Use Read, Grep, Glob, and Task tools only."
+}

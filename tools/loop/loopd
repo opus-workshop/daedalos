@@ -1,0 +1,690 @@
+#!/usr/bin/env python3
+"""
+loopd - Loop Daemon for Daedalos
+
+The loopd daemon manages background loops and provides:
+- Process supervision (restart crashed loops)
+- Resource management (limit concurrent loops)
+- Notification dispatch
+- IPC for loop commands
+- Metrics collection
+- Web UI at localhost:7777
+"""
+
+import os
+import sys
+import json
+import signal
+import socket
+import threading
+import time
+import argparse
+from pathlib import Path
+from datetime import datetime
+from typing import Optional, Dict, List
+from dataclasses import dataclass, asdict
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from concurrent.futures import ThreadPoolExecutor
+
+# Add lib directory to path
+SCRIPT_DIR = Path(__file__).parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from lib.state import Loop, LoopState, LoopStatus, list_loops, get_loop
+from lib.agent import get_agent, detect_agent
+from lib.checkpoint import get_backend
+from lib.notify import notify, notify_loop_complete
+
+
+@dataclass
+class DaemonConfig:
+    """Configuration for loopd."""
+    max_concurrent_loops: int = 4
+    checkpoint_retention_hours: int = 24
+    web_ui_port: int = 7777
+    socket_path: str = "/run/daedalos/loopd.sock"
+    state_dir: str = str(Path.home() / ".local/share/daedalos/loop")
+    notification_enabled: bool = True
+
+    @classmethod
+    def load(cls, path: Optional[Path] = None) -> "DaemonConfig":
+        """Load config from file."""
+        if path is None:
+            path = Path.home() / ".config/daedalos/loop/loopd.yaml"
+
+        if path.exists():
+            import yaml
+            with open(path) as f:
+                data = yaml.safe_load(f) or {}
+            return cls(**data)
+        return cls()
+
+    def save(self, path: Optional[Path] = None):
+        """Save config to file."""
+        if path is None:
+            path = Path.home() / ".config/daedalos/loop/loopd.yaml"
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        import yaml
+        with open(path, "w") as f:
+            yaml.dump(asdict(self), f)
+
+
+@dataclass
+class ManagedLoop:
+    """A loop managed by the daemon."""
+    loop_id: str
+    thread: Optional[threading.Thread]
+    started_at: str
+    state: LoopState
+
+
+class LoopDaemon:
+    """Main daemon class."""
+
+    def __init__(self, config: DaemonConfig):
+        self.config = config
+        self.running = False
+        self.managed_loops: Dict[str, ManagedLoop] = {}
+        self.executor = ThreadPoolExecutor(max_workers=config.max_concurrent_loops)
+        self.lock = threading.Lock()
+        self.socket: Optional[socket.socket] = None
+        self.web_server: Optional[HTTPServer] = None
+
+        # Ensure directories exist
+        Path(config.state_dir).mkdir(parents=True, exist_ok=True)
+        Path(config.socket_path).parent.mkdir(parents=True, exist_ok=True)
+
+    def start(self):
+        """Start the daemon."""
+        print(f"Starting loopd v1.0.0")
+        print(f"Socket: {self.config.socket_path}")
+        print(f"Web UI: http://localhost:{self.config.web_ui_port}")
+        print(f"Max concurrent loops: {self.config.max_concurrent_loops}")
+
+        self.running = True
+
+        # Set up signal handlers
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        signal.signal(signal.SIGINT, self._handle_shutdown)
+
+        # Start IPC socket
+        self._start_socket()
+
+        # Start web UI
+        self._start_web_ui()
+
+        # Resume any paused/running loops from previous session
+        self._resume_loops()
+
+        # Main loop
+        try:
+            while self.running:
+                self._monitor_loops()
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self.stop()
+
+    def stop(self):
+        """Stop the daemon gracefully."""
+        print("Stopping loopd...")
+        self.running = False
+
+        # Wait for loops to pause at iteration boundary
+        with self.lock:
+            for managed in self.managed_loops.values():
+                if managed.state.status == LoopStatus.RUNNING:
+                    managed.state.status = LoopStatus.PAUSED
+                    state_dir = Path(self.config.state_dir) / "states"
+                    managed.state.save(state_dir)
+
+        # Shutdown executor
+        self.executor.shutdown(wait=True, cancel_futures=False)
+
+        # Close socket
+        if self.socket:
+            self.socket.close()
+            # Remove socket file
+            try:
+                os.unlink(self.config.socket_path)
+            except OSError:
+                pass
+
+        # Stop web server
+        if self.web_server:
+            self.web_server.shutdown()
+
+        print("loopd stopped")
+
+    def _handle_shutdown(self, signum, frame):
+        """Handle shutdown signals."""
+        self.running = False
+
+    def _start_socket(self):
+        """Start the IPC socket."""
+        # Remove existing socket
+        try:
+            os.unlink(self.config.socket_path)
+        except OSError:
+            pass
+
+        self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.socket.bind(self.config.socket_path)
+        self.socket.listen(5)
+        self.socket.setblocking(False)
+
+        # Start socket handler thread
+        thread = threading.Thread(target=self._socket_handler, daemon=True)
+        thread.start()
+
+    def _socket_handler(self):
+        """Handle IPC socket connections."""
+        while self.running:
+            try:
+                conn, _ = self.socket.accept()
+                data = conn.recv(4096).decode()
+                response = self._handle_command(json.loads(data))
+                conn.send(json.dumps(response).encode())
+                conn.close()
+            except BlockingIOError:
+                time.sleep(0.1)
+            except Exception as e:
+                print(f"Socket error: {e}")
+
+    def _handle_command(self, cmd: dict) -> dict:
+        """Handle a command from the IPC socket."""
+        action = cmd.get("action")
+
+        if action == "status":
+            return self._cmd_status()
+        elif action == "start":
+            return self._cmd_start(cmd)
+        elif action == "pause":
+            return self._cmd_pause(cmd.get("loop_id"))
+        elif action == "resume":
+            return self._cmd_resume(cmd.get("loop_id"))
+        elif action == "cancel":
+            return self._cmd_cancel(cmd.get("loop_id"))
+        elif action == "list":
+            return self._cmd_list()
+        else:
+            return {"error": f"Unknown action: {action}"}
+
+    def _cmd_status(self) -> dict:
+        """Get daemon status."""
+        return {
+            "running": self.running,
+            "managed_loops": len(self.managed_loops),
+            "max_concurrent": self.config.max_concurrent_loops,
+            "uptime": "N/A"  # Would track actual uptime
+        }
+
+    def _cmd_start(self, cmd: dict) -> dict:
+        """Start a new loop."""
+        if len(self.managed_loops) >= self.config.max_concurrent_loops:
+            return {"error": "Max concurrent loops reached"}
+
+        prompt = cmd.get("prompt")
+        promise = cmd.get("promise")
+        working_dir = Path(cmd.get("working_dir", "."))
+
+        if not prompt or not promise:
+            return {"error": "Missing prompt or promise"}
+
+        # Get agent and checkpoint
+        agent_name = cmd.get("agent", "auto")
+        if agent_name == "auto":
+            agent = detect_agent()
+        else:
+            agent = get_agent(agent_name)
+
+        if not agent:
+            return {"error": "No agent available"}
+
+        checkpoint = get_backend(working_dir)
+
+        # Create loop
+        loop = Loop(
+            prompt=prompt,
+            promise_cmd=promise,
+            working_dir=working_dir,
+            agent=agent,
+            checkpoint=checkpoint,
+            max_iterations=cmd.get("max_iterations", 10),
+            timeout=cmd.get("timeout", 300),
+            state_dir=Path(self.config.state_dir) / "states"
+        )
+
+        # Start loop in thread
+        managed = ManagedLoop(
+            loop_id=loop.state.id,
+            thread=None,
+            started_at=datetime.now().isoformat(),
+            state=loop.state
+        )
+
+        def run_loop():
+            try:
+                success = loop.run()
+                if self.config.notification_enabled:
+                    notify_loop_complete(
+                        loop.state.id,
+                        prompt,
+                        loop.state.current_iteration,
+                        success
+                    )
+            finally:
+                with self.lock:
+                    if loop.state.id in self.managed_loops:
+                        del self.managed_loops[loop.state.id]
+
+        thread = threading.Thread(target=run_loop, daemon=True)
+        managed.thread = thread
+
+        with self.lock:
+            self.managed_loops[loop.state.id] = managed
+
+        thread.start()
+
+        return {"loop_id": loop.state.id, "status": "started"}
+
+    def _cmd_pause(self, loop_id: str) -> dict:
+        """Pause a loop."""
+        with self.lock:
+            if loop_id not in self.managed_loops:
+                return {"error": "Loop not found"}
+
+            managed = self.managed_loops[loop_id]
+            managed.state.status = LoopStatus.PAUSED
+            state_dir = Path(self.config.state_dir) / "states"
+            managed.state.save(state_dir)
+
+        return {"status": "paused"}
+
+    def _cmd_resume(self, loop_id: str) -> dict:
+        """Resume a paused loop."""
+        state = get_loop(loop_id, Path(self.config.state_dir) / "states")
+        if not state:
+            return {"error": "Loop not found"}
+
+        if state.status != LoopStatus.PAUSED:
+            return {"error": f"Loop is not paused (status: {state.status.value})"}
+
+        # Resume loop
+        working_dir = Path(state.working_dir)
+        agent = get_agent(state.agent_name)
+        checkpoint = get_backend(working_dir)
+
+        loop = Loop.resume_from_state(
+            state,
+            agent,
+            checkpoint,
+            state_dir=Path(self.config.state_dir) / "states"
+        )
+
+        managed = ManagedLoop(
+            loop_id=loop.state.id,
+            thread=None,
+            started_at=datetime.now().isoformat(),
+            state=loop.state
+        )
+
+        def run_loop():
+            try:
+                success = loop.run()
+                if self.config.notification_enabled:
+                    notify_loop_complete(
+                        loop.state.id,
+                        loop.state.prompt,
+                        loop.state.current_iteration,
+                        success
+                    )
+            finally:
+                with self.lock:
+                    if loop.state.id in self.managed_loops:
+                        del self.managed_loops[loop.state.id]
+
+        thread = threading.Thread(target=run_loop, daemon=True)
+        managed.thread = thread
+
+        with self.lock:
+            self.managed_loops[loop.state.id] = managed
+
+        thread.start()
+
+        return {"status": "resumed"}
+
+    def _cmd_cancel(self, loop_id: str) -> dict:
+        """Cancel a loop."""
+        with self.lock:
+            if loop_id in self.managed_loops:
+                managed = self.managed_loops[loop_id]
+                managed.state.status = LoopStatus.CANCELLED
+                state_dir = Path(self.config.state_dir) / "states"
+                managed.state.save(state_dir)
+                del self.managed_loops[loop_id]
+                return {"status": "cancelled"}
+
+        # Not managed, try to update state file directly
+        state = get_loop(loop_id, Path(self.config.state_dir) / "states")
+        if state:
+            state.status = LoopStatus.CANCELLED
+            state_dir = Path(self.config.state_dir) / "states"
+            state.save(state_dir)
+            return {"status": "cancelled"}
+
+        return {"error": "Loop not found"}
+
+    def _cmd_list(self) -> dict:
+        """List all loops."""
+        state_dir = Path(self.config.state_dir) / "states"
+        states = list_loops(state_dir)
+
+        return {
+            "loops": [
+                {
+                    "id": s.id,
+                    "status": s.status.value,
+                    "prompt": s.prompt[:50],
+                    "iterations": f"{s.current_iteration}/{s.max_iterations}",
+                    "managed": s.id in self.managed_loops
+                }
+                for s in states
+            ]
+        }
+
+    def _resume_loops(self):
+        """Resume any loops that were running when daemon stopped."""
+        state_dir = Path(self.config.state_dir) / "states"
+        states = list_loops(state_dir, status=LoopStatus.RUNNING)
+
+        for state in states:
+            print(f"Resuming loop: {state.id}")
+            # Mark as paused first, then resume via normal flow
+            state.status = LoopStatus.PAUSED
+            state.save(state_dir)
+            self._cmd_resume(state.id)
+
+    def _monitor_loops(self):
+        """Monitor running loops and handle failures."""
+        with self.lock:
+            for loop_id, managed in list(self.managed_loops.items()):
+                if managed.thread and not managed.thread.is_alive():
+                    # Thread died unexpectedly
+                    print(f"Loop {loop_id} thread died")
+                    del self.managed_loops[loop_id]
+
+    def _start_web_ui(self):
+        """Start the web UI server."""
+        daemon = self
+
+        class WebHandler(BaseHTTPRequestHandler):
+            def log_message(self, format, *args):
+                pass  # Suppress logging
+
+            def do_GET(self):
+                if self.path == "/":
+                    self.send_response(200)
+                    self.send_header("Content-type", "text/html")
+                    self.end_headers()
+                    self.wfile.write(daemon._generate_web_ui().encode())
+                elif self.path == "/api/status":
+                    self.send_response(200)
+                    self.send_header("Content-type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps(daemon._cmd_status()).encode())
+                elif self.path == "/api/loops":
+                    self.send_response(200)
+                    self.send_header("Content-type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps(daemon._cmd_list()).encode())
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+
+        self.web_server = HTTPServer(("localhost", self.config.web_ui_port), WebHandler)
+
+        thread = threading.Thread(target=self.web_server.serve_forever, daemon=True)
+        thread.start()
+
+    def _generate_web_ui(self) -> str:
+        """Generate the web UI HTML."""
+        loops_data = self._cmd_list()
+
+        loops_html = ""
+        for loop in loops_data.get("loops", []):
+            status_class = {
+                "running": "status-running",
+                "completed": "status-completed",
+                "failed": "status-failed",
+                "paused": "status-paused",
+                "cancelled": "status-cancelled"
+            }.get(loop["status"], "")
+
+            loops_html += f"""
+            <tr>
+                <td><code>{loop['id']}</code></td>
+                <td><span class="status {status_class}">{loop['status']}</span></td>
+                <td>{loop['iterations']}</td>
+                <td>{loop['prompt']}...</td>
+            </tr>
+            """
+
+        if not loops_html:
+            loops_html = "<tr><td colspan='4'>No loops</td></tr>"
+
+        return f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>loopd - Daedalos Loop Daemon</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }}
+        h1 {{
+            color: #00d4ff;
+            border-bottom: 2px solid #00d4ff;
+            padding-bottom: 10px;
+        }}
+        .header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .stats {{
+            display: flex;
+            gap: 20px;
+        }}
+        .stat {{
+            background: #16213e;
+            padding: 15px 25px;
+            border-radius: 8px;
+        }}
+        .stat-value {{
+            font-size: 2em;
+            font-weight: bold;
+            color: #00d4ff;
+        }}
+        .stat-label {{
+            color: #888;
+            font-size: 0.9em;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }}
+        th, td {{
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }}
+        th {{
+            background: #16213e;
+            color: #00d4ff;
+        }}
+        tr:hover {{
+            background: #16213e;
+        }}
+        .status {{
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }}
+        .status-running {{ background: #0d7377; }}
+        .status-completed {{ background: #1d8348; }}
+        .status-failed {{ background: #922b21; }}
+        .status-paused {{ background: #7d6608; }}
+        .status-cancelled {{ background: #555; }}
+        code {{
+            background: #0f0f23;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', monospace;
+        }}
+        .refresh {{
+            color: #888;
+            font-size: 0.9em;
+        }}
+    </style>
+    <script>
+        setTimeout(() => location.reload(), 5000);
+    </script>
+</head>
+<body>
+    <div class="header">
+        <h1>loopd - Loop Daemon</h1>
+        <span class="refresh">Auto-refreshes every 5s</span>
+    </div>
+
+    <div class="stats">
+        <div class="stat">
+            <div class="stat-value">{len(self.managed_loops)}</div>
+            <div class="stat-label">Active Loops</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">{self.config.max_concurrent_loops}</div>
+            <div class="stat-label">Max Concurrent</div>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Iterations</th>
+                <th>Prompt</th>
+            </tr>
+        </thead>
+        <tbody>
+            {loops_html}
+        </tbody>
+    </table>
+
+    <p style="color: #666; margin-top: 40px; text-align: center;">
+        Daedalos - The AI-Native Development OS
+    </p>
+</body>
+</html>
+        """
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Loop Daemon for Daedalos")
+    subparsers = parser.add_subparsers(dest="command", help="Command")
+
+    # start command
+    start_parser = subparsers.add_parser("start", help="Start the daemon")
+    start_parser.add_argument("--port", type=int, default=7777, help="Web UI port")
+    start_parser.add_argument("--max-concurrent", type=int, default=4, help="Max concurrent loops")
+
+    # stop command
+    subparsers.add_parser("stop", help="Stop the daemon")
+
+    # status command
+    subparsers.add_parser("status", help="Show daemon status")
+
+    # config command
+    config_parser = subparsers.add_parser("config", help="Show/edit configuration")
+    config_parser.add_argument("--set", nargs=2, metavar=("KEY", "VALUE"), help="Set config value")
+
+    args = parser.parse_args()
+
+    if args.command == "start" or args.command is None:
+        config = DaemonConfig.load()
+        if args.command == "start":
+            if hasattr(args, "port"):
+                config.web_ui_port = args.port
+            if hasattr(args, "max_concurrent"):
+                config.max_concurrent_loops = args.max_concurrent
+
+        daemon = LoopDaemon(config)
+        daemon.start()
+
+    elif args.command == "stop":
+        # Send stop command via socket
+        socket_path = DaemonConfig.load().socket_path
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.connect(socket_path)
+            sock.send(json.dumps({"action": "stop"}).encode())
+            sock.close()
+            print("Stop signal sent")
+        except Exception as e:
+            print(f"Could not connect to daemon: {e}")
+            sys.exit(1)
+
+    elif args.command == "status":
+        config = DaemonConfig.load()
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.connect(config.socket_path)
+            sock.send(json.dumps({"action": "status"}).encode())
+            response = json.loads(sock.recv(4096).decode())
+            sock.close()
+
+            print(f"loopd status:")
+            print(f"  Running: {response.get('running', False)}")
+            print(f"  Managed loops: {response.get('managed_loops', 0)}")
+            print(f"  Max concurrent: {response.get('max_concurrent', 'N/A')}")
+        except ConnectionRefusedError:
+            print("loopd is not running")
+            sys.exit(1)
+        except FileNotFoundError:
+            print("loopd is not running (socket not found)")
+            sys.exit(1)
+
+    elif args.command == "config":
+        config = DaemonConfig.load()
+        if args.set:
+            key, value = args.set
+            if hasattr(config, key):
+                # Convert value to appropriate type
+                current = getattr(config, key)
+                if isinstance(current, int):
+                    value = int(value)
+                elif isinstance(current, bool):
+                    value = value.lower() in ("true", "1", "yes")
+                setattr(config, key, value)
+                config.save()
+                print(f"Set {key} = {value}")
+            else:
+                print(f"Unknown config key: {key}")
+                sys.exit(1)
+        else:
+            print("loopd configuration:")
+            for key, value in asdict(config).items():
+                print(f"  {key}: {value}")
+
+
+if __name__ == "__main__":
+    main()

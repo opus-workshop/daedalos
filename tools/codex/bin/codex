@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# codex - Semantic Code Search for Daedalos
+#
+# Ask natural language questions about your codebase.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Ensure Python can find the module
+export PYTHONPATH="${PYTHONPATH:-}:$(dirname "$SCRIPT_DIR")/src"
+
+exec python3 -m codex.cli "$@"

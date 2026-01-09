@@ -1,0 +1,8 @@
+{
+  "name": "implementer",
+  "description": "Full write access for implementation work",
+  "sandbox": "implement",
+  "claude_args": [],
+  "env": {},
+  "prompt_prefix": ""
+}

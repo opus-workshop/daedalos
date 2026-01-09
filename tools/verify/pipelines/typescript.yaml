@@ -1,0 +1,30 @@
+# TypeScript Verification Pipeline
+description: TypeScript/Node.js projects
+
+steps:
+  - name: lint
+    command: npx eslint . --max-warnings 0
+    fix_command: npx eslint . --fix
+    timeout: 60
+    quick: true
+
+  - name: format
+    command: npx prettier --check .
+    fix_command: npx prettier --write .
+    timeout: 30
+    quick: true
+
+  - name: types
+    command: npx tsc --noEmit
+    timeout: 120
+    quick: true
+
+  - name: build
+    command: <pm> run build
+    timeout: 300
+    quick: false
+
+  - name: test
+    command: <pm> test
+    timeout: 600
+    quick: false

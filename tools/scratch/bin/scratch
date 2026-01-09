@@ -1,0 +1,533 @@
+#!/usr/bin/env bash
+# scratch - Project-scoped ephemeral experiment environments
+#
+# Create isolated copies of projects for experimentation.
+# Integrates with git worktrees for efficient, reversible changes.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$(dirname "$SCRIPT_DIR")/lib"
+
+# Source common utilities
+source "$LIB_DIR/common.sh"
+
+# ============================================================================
+# BACKEND OPERATIONS
+# ============================================================================
+
+create_btrfs_scratch() {
+    local name="$1"
+    local source="$2"
+    local dest=$(get_scratch_path "$name")
+
+    btrfs subvolume snapshot "$source" "$dest" || die "Failed to create Btrfs snapshot"
+}
+
+create_git_scratch() {
+    local name="$1"
+    local source="$2"
+    local dest=$(get_scratch_path "$name")
+    local branch_name="scratch-$name"
+
+    cd "$source"
+
+    # Create worktree with new branch
+    git worktree add -b "$branch_name" "$dest" || die "Failed to create git worktree"
+}
+
+create_copy_scratch() {
+    local name="$1"
+    local source="$2"
+    local dest=$(get_scratch_path "$name")
+
+    mkdir -p "$dest"
+    rsync -a "$source/" "$dest/" || die "Failed to copy source"
+}
+
+delete_btrfs_scratch() {
+    local name="$1"
+    local dest=$(get_scratch_path "$name")
+
+    btrfs subvolume delete "$dest" 2>/dev/null || rm -rf "$dest"
+}
+
+delete_git_scratch() {
+    local name="$1"
+    local original=$(get_scratch_original "$name")
+    local dest=$(get_scratch_path "$name")
+    local branch_name="scratch-$name"
+
+    cd "$original" 2>/dev/null || true
+    git worktree remove "$dest" --force 2>/dev/null || rm -rf "$dest"
+    git branch -D "$branch_name" 2>/dev/null || true
+}
+
+delete_copy_scratch() {
+    local name="$1"
+    local dest=$(get_scratch_path "$name")
+
+    rm -rf "$dest"
+}
+
+# ============================================================================
+# COMMANDS
+# ============================================================================
+
+cmd_new() {
+    local name=""
+    local source="$(pwd)"
+    local mode=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from|-f)
+                source="$2"
+                shift 2
+                ;;
+            --mode|-m)
+                mode="$2"
+                shift 2
+                ;;
+            --help|-h)
+                echo "Usage: scratch new <name> [options]"
+                echo ""
+                echo "Create a new scratch environment."
+                echo ""
+                echo "Options:"
+                echo "  --from, -f <path>   Source directory (default: current dir)"
+                echo "  --mode, -m <mode>   Mode: btrfs|git|copy (auto-detected)"
+                return 0
+                ;;
+            -*)
+                die "Unknown option: $1"
+                ;;
+            *)
+                name="$1"
+                shift
+                ;;
+        esac
+    done
+
+    # Require name
+    if [[ -z "$name" ]]; then
+        die "Scratch name required. Usage: scratch new <name>"
+    fi
+
+    # Validate source
+    if [[ ! -d "$source" ]]; then
+        die "Source directory not found: $source"
+    fi
+    source="$(cd "$source" && pwd)"
+
+    # Check if already exists
+    if scratch_exists "$name"; then
+        die "Scratch environment '$name' already exists"
+    fi
+
+    # Detect mode if not specified
+    [[ -z "$mode" ]] && mode=$(detect_mode "$source")
+
+    log_info "Creating scratch '$name' from $source"
+    log_info "Using mode: $mode"
+
+    case "$mode" in
+        btrfs)
+            create_btrfs_scratch "$name" "$source"
+            ;;
+        git)
+            create_git_scratch "$name" "$source"
+            ;;
+        copy|*)
+            create_copy_scratch "$name" "$source"
+            mode="copy"
+            ;;
+    esac
+
+    # Record metadata
+    record_scratch "$name" "$source" "$mode"
+
+    log_success "Created scratch environment: $name"
+    echo ""
+    echo "Enter with:   ${BOLD}scratch enter $name${NC}"
+    echo "See changes:  ${BOLD}scratch diff $name${NC}"
+    echo "Keep changes: ${BOLD}scratch promote $name${NC}"
+    echo "Discard:      ${BOLD}scratch abandon $name${NC}"
+}
+
+cmd_list() {
+    local as_json=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) as_json=true; shift ;;
+            --help|-h)
+                echo "Usage: scratch list [options]"
+                echo ""
+                echo "Options:"
+                echo "  --json    Output as JSON"
+                return 0
+                ;;
+            *) shift ;;
+        esac
+    done
+
+    init_meta
+
+    if [[ "$as_json" == true ]]; then
+        cat "$SCRATCH_META"
+    else
+        local count=0
+        printf "${BOLD}%-20s %-30s %-12s %-10s${NC}\n" "NAME" "ORIGINAL" "CREATED" "MODE"
+        echo "--------------------------------------------------------------------------------"
+
+        for name in $(list_scratches); do
+            [[ -z "$name" ]] && continue
+
+            local original=$(get_scratch_original "$name")
+            local mode=$(get_scratch_mode "$name")
+            local created=$(python3 -c "import json; d=json.load(open('$SCRATCH_META')); print(d.get('scratches',{}).get('$name',{}).get('created',''))")
+
+            # Truncate original path
+            [[ ${#original} -gt 28 ]] && original="...${original: -25}"
+
+            local expired=""
+            if is_expired "$name" 2>/dev/null; then
+                expired=" ${YELLOW}(expired)${NC}"
+            fi
+
+            printf "%-20s %-30s %-12s %-10s%b\n" "$name" "$original" "$(time_ago "$created")" "$mode" "$expired"
+            ((count++))
+        done
+
+        if [[ $count -eq 0 ]]; then
+            echo "${DIM}No scratch environments found. Create one with: scratch new <name>${NC}"
+        fi
+    fi
+}
+
+cmd_enter() {
+    local name="${1:-}"
+
+    if [[ -z "$name" ]]; then
+        die "Scratch name required. Usage: scratch enter <name>"
+    fi
+
+    local scratch_path=$(get_scratch_path "$name")
+
+    if [[ ! -d "$scratch_path" ]]; then
+        die "Scratch environment not found: $name"
+    fi
+
+    # Check if expired
+    if is_expired "$name" 2>/dev/null; then
+        log_warn "This scratch environment has expired"
+        log_warn "Extend with: scratch extend $name"
+    fi
+
+    # Set environment
+    export SCRATCH_NAME="$name"
+    export SCRATCH_ORIGINAL=$(get_scratch_original "$name")
+    export IN_SCRATCH=1
+
+    cd "$scratch_path"
+
+    # Modify prompt
+    export PS1="[${CYAN}scratch:$name${NC}] \$ "
+
+    log_info "Entering scratch '$name' - exit to return"
+    exec "${SHELL:-/bin/bash}"
+}
+
+cmd_diff() {
+    local name="${1:-}"
+    local stat_only=false
+    local files_only=false
+
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --stat) stat_only=true; shift ;;
+            --files) files_only=true; shift ;;
+            --help|-h)
+                echo "Usage: scratch diff <name> [options]"
+                echo ""
+                echo "Options:"
+                echo "  --stat   Show statistics only"
+                echo "  --files  List changed files only"
+                return 0
+                ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ -z "$name" ]]; then
+        die "Scratch name required"
+    fi
+
+    local scratch_path=$(get_scratch_path "$name")
+    local original=$(get_scratch_original "$name")
+    local mode=$(get_scratch_mode "$name")
+
+    if [[ ! -d "$scratch_path" ]]; then
+        die "Scratch environment not found: $name"
+    fi
+
+    if [[ "$mode" == "git" ]]; then
+        # Use git diff for git mode
+        cd "$scratch_path"
+        if [[ "$files_only" == true ]]; then
+            git diff --name-only HEAD~1 2>/dev/null || git diff --name-only
+        elif [[ "$stat_only" == true ]]; then
+            git diff --stat HEAD~1 2>/dev/null || git diff --stat
+        else
+            git diff HEAD~1 2>/dev/null || git diff
+        fi
+    else
+        # Use diff for other modes
+        if [[ "$files_only" == true ]]; then
+            diff -rq "$original" "$scratch_path" --exclude='.git' 2>/dev/null || echo "No changes"
+        elif [[ "$stat_only" == true ]]; then
+            diff -rq "$original" "$scratch_path" --exclude='.git' 2>/dev/null | wc -l | xargs echo "Changed items:"
+        else
+            diff -ru "$original" "$scratch_path" --exclude='.git' 2>/dev/null || true
+        fi
+    fi
+}
+
+cmd_promote() {
+    local name="${1:-}"
+    local force=false
+
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes|-y) force=true; shift ;;
+            --help|-h)
+                echo "Usage: scratch promote <name> [options]"
+                echo ""
+                echo "Options:"
+                echo "  --yes, -y  Don't ask for confirmation"
+                return 0
+                ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ -z "$name" ]]; then
+        die "Scratch name required"
+    fi
+
+    local scratch_path=$(get_scratch_path "$name")
+    local original=$(get_scratch_original "$name")
+    local mode=$(get_scratch_mode "$name")
+
+    if [[ ! -d "$scratch_path" ]]; then
+        die "Scratch environment not found: $name"
+    fi
+
+    if [[ "$force" != true ]]; then
+        echo "This will apply scratch changes to: $original"
+        echo ""
+        cmd_diff "$name" --files 2>/dev/null | head -20
+        echo ""
+        read -p "Continue? [y/N] " confirm
+        if [[ "$confirm" != [yY]* ]]; then
+            echo "Aborted."
+            return 0
+        fi
+    fi
+
+    local branch_name="scratch-${name}-$(date +%Y%m%d)"
+
+    if [[ "$mode" == "git" ]]; then
+        # For git mode, just rename the branch
+        cd "$scratch_path"
+        git branch -m "scratch-$name" "$branch_name"
+        log_success "Promoted to branch: $branch_name"
+        log_info "Merge with: cd $original && git merge $branch_name"
+    else
+        # For other modes, copy changes back
+        cd "$original"
+
+        # Create branch if in git repo
+        if git rev-parse --is-inside-work-tree &>/dev/null 2>&1; then
+            git checkout -b "$branch_name"
+            rsync -av --exclude='.git' "$scratch_path/" "$original/"
+            git add -A
+            git commit -m "Promoted from scratch: $name"
+            log_success "Promoted to branch: $branch_name"
+        else
+            rsync -av "$scratch_path/" "$original/"
+            log_success "Changes applied to $original"
+        fi
+    fi
+
+    # Ask about cleanup
+    read -p "Delete scratch environment now? [Y/n] " cleanup
+    if [[ "$cleanup" != [nN]* ]]; then
+        cmd_abandon "$name" --force
+    fi
+}
+
+cmd_abandon() {
+    local name="${1:-}"
+    local force=false
+
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force|-f) force=true; shift ;;
+            --help|-h)
+                echo "Usage: scratch abandon <name> [options]"
+                echo ""
+                echo "Options:"
+                echo "  --force, -f  Don't ask for confirmation"
+                return 0
+                ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ -z "$name" ]]; then
+        die "Scratch name required"
+    fi
+
+    local scratch_path=$(get_scratch_path "$name")
+    local mode=$(get_scratch_mode "$name")
+
+    if [[ ! -d "$scratch_path" ]] && ! scratch_exists "$name"; then
+        die "Scratch environment not found: $name"
+    fi
+
+    if [[ "$force" != true ]]; then
+        read -p "Abandon scratch '$name'? This cannot be undone. [y/N] " confirm
+        if [[ "$confirm" != [yY]* ]]; then
+            echo "Aborted."
+            return 0
+        fi
+    fi
+
+    log_info "Abandoning scratch '$name'"
+
+    case "$mode" in
+        btrfs)
+            delete_btrfs_scratch "$name"
+            ;;
+        git)
+            delete_git_scratch "$name"
+            ;;
+        copy|*)
+            delete_copy_scratch "$name"
+            ;;
+    esac
+
+    remove_scratch_record "$name"
+    log_success "Abandoned scratch environment: $name"
+}
+
+cmd_status() {
+    if [[ -n "${IN_SCRATCH:-}" ]]; then
+        echo "${BOLD}Currently in scratch:${NC} $SCRATCH_NAME"
+        echo "Original: $SCRATCH_ORIGINAL"
+        echo ""
+        cmd_diff "$SCRATCH_NAME" --stat
+    else
+        echo "${DIM}Not in a scratch environment${NC}"
+        echo ""
+        cmd_list
+    fi
+}
+
+cmd_extend() {
+    local name="${1:-}"
+    local hours="${2:-24}"
+
+    if [[ -z "$name" ]]; then
+        die "Scratch name required"
+    fi
+
+    if ! scratch_exists "$name"; then
+        die "Scratch environment not found: $name"
+    fi
+
+    init_meta
+
+    local expires=$(date -v+${hours}H -Iseconds 2>/dev/null || date -d "+${hours} hours" -Iseconds 2>/dev/null || echo "")
+
+    python3 << EOF
+import json
+with open('$SCRATCH_META', 'r+') as f:
+    data = json.load(f)
+    if 'scratches' in data and '$name' in data['scratches']:
+        data['scratches']['$name']['expires'] = '$expires'
+    f.seek(0)
+    json.dump(data, f, indent=2)
+    f.truncate()
+EOF
+
+    log_success "Extended scratch '$name' by $hours hours"
+}
+
+cmd_help() {
+    cat <<EOF
+${BOLD}scratch${NC} - Project-scoped ephemeral experiment environments
+
+${BOLD}USAGE${NC}
+    scratch <command> [arguments]
+
+${BOLD}COMMANDS${NC}
+    new <name>           Create new scratch environment
+    list                 List all scratch environments
+    enter <name>         Enter scratch environment
+    diff <name>          Show changes from original
+    promote <name>       Apply changes to original (as branch)
+    abandon <name>       Delete scratch environment
+    status               Show current scratch status
+    extend <name> [hrs]  Extend expiration time
+
+${BOLD}OPTIONS${NC}
+    --help, -h           Show this help
+    --version            Show version
+
+${BOLD}EXAMPLES${NC}
+    scratch new experiment                # New scratch of current dir
+    scratch new test --from ~/project     # New scratch of specific dir
+    scratch enter experiment              # Work in scratch
+    scratch diff experiment               # See what changed
+    scratch promote experiment            # Apply as git branch
+    scratch abandon experiment            # Delete scratch
+
+${BOLD}MODES${NC}
+    btrfs   Instant copy-on-write snapshots (Btrfs filesystems)
+    git     Git worktree integration (git repositories)
+    copy    Simple rsync copy (fallback)
+
+EOF
+}
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+main() {
+    case "${1:-help}" in
+        new|create)   shift; cmd_new "$@" ;;
+        list|ls)      shift; cmd_list "$@" ;;
+        enter|cd)     shift; cmd_enter "$@" ;;
+        diff)         shift; cmd_diff "$@" ;;
+        promote)      shift; cmd_promote "$@" ;;
+        abandon|rm)   shift; cmd_abandon "$@" ;;
+        status)       shift; cmd_status "$@" ;;
+        extend)       shift; cmd_extend "$@" ;;
+        version|--version) echo "scratch $SCRATCH_VERSION" ;;
+        help|--help|-h) cmd_help ;;
+        *)
+            log_error "Unknown command: $1"
+            cmd_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

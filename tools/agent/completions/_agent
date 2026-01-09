@@ -1,0 +1,137 @@
+#compdef agent
+
+# Zsh completions for agent CLI
+# Part of Daedalos toolsuite
+
+_agent() {
+  local -a commands
+  commands=(
+    'list:List all running agents'
+    'spawn:Spawn a new agent'
+    'focus:Focus an agent'
+    'status:Show agent status'
+    'kill:Kill an agent'
+    'logs:Show agent logs'
+    'search:Search across agents'
+    'pause:Pause an agent'
+    'resume:Resume an agent'
+    'snapshot:Save agent state'
+    'restore:Restore agent state'
+    'templates:Manage templates'
+    'help:Show help'
+    'version:Show version'
+  )
+
+  _arguments -C \
+    '1: :->command' \
+    '*: :->args'
+
+  case $state in
+    command)
+      _describe -t commands 'agent commands' commands
+      ;;
+    args)
+      case $words[2] in
+        spawn)
+          _arguments \
+            '-n[Agent name]:name:' \
+            '--name[Agent name]:name:' \
+            '-p[Project directory]:directory:_directories' \
+            '--project[Project directory]:directory:_directories' \
+            '-t[Template]:template:_agent_templates' \
+            '--template[Template]:template:_agent_templates' \
+            '-s[Sandbox preset]:preset:(explore implement debug dangerous)' \
+            '--sandbox[Sandbox preset]:preset:(explore implement debug dangerous)' \
+            '--no-focus[Do not focus the new agent]' \
+            '--background[Run in background]' \
+            '--prompt[Initial prompt]:prompt:'
+          ;;
+        focus|status|kill|logs|pause|resume)
+          _agent_names
+          ;;
+        status)
+          _arguments \
+            '--json[Output as JSON]' \
+            '--watch[Continuously update]' \
+            '-w[Continuously update]' \
+            '--interval[Update interval]:seconds:' \
+            '-i[Update interval]:seconds:' \
+            '*:agent:_agent_names'
+          ;;
+        kill)
+          _arguments \
+            '--force[Force kill]' \
+            '-f[Force kill]' \
+            '--all[Kill all agents]' \
+            '-a[Kill all agents]' \
+            '*:agent:_agent_names'
+          ;;
+        logs)
+          _arguments \
+            '-f[Follow log output]' \
+            '--follow[Follow log output]' \
+            '--no-follow[Do not follow]' \
+            '-n[Number of lines]:lines:' \
+            '*:agent:_agent_names'
+          ;;
+        search)
+          _arguments \
+            '-a[Agent name]:agent:_agent_names' \
+            '--agent[Agent name]:agent:_agent_names' \
+            '-i[Case insensitive]' \
+            '--ignore-case[Case insensitive]' \
+            '-c[Context lines]:lines:' \
+            '--context[Context lines]:lines:' \
+            '--json[Output as JSON]' \
+            '--interactive[Interactive search]' \
+            '*:query:'
+          ;;
+        list)
+          _arguments \
+            '--json[Output as JSON]' \
+            '--quiet[Only output agent names]' \
+            '-q[Only output agent names]'
+          ;;
+        templates)
+          local -a template_commands
+          template_commands=(
+            'list:List available templates'
+            'show:Show template details'
+            'create:Create a new template'
+            'delete:Delete a template'
+          )
+          _arguments -C \
+            '1: :->template_cmd' \
+            '*: :->template_args'
+          case $state in
+            template_cmd)
+              _describe -t template_commands 'template commands' template_commands
+              ;;
+            template_args)
+              _agent_templates
+              ;;
+          esac
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_agent_templates() {
+  local -a templates
+  local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/daedalos/agent/templates"
+  if [[ -d "$config_dir" ]]; then
+    templates=(${(f)"$(ls "$config_dir"/*.json 2>/dev/null | xargs -I{} basename {} .json)"})
+  fi
+  _describe -t templates 'templates' templates
+}
+
+_agent_names() {
+  local -a agents
+  agents=(${(f)"$(agent list --quiet 2>/dev/null)"})
+  if [[ ${#agents[@]} -gt 0 ]]; then
+    _describe -t agents 'agents' agents
+  fi
+}
+
+_agent

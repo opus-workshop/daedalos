@@ -1,0 +1,10 @@
+{
+  "name": "debugger",
+  "description": "Debug mode with full access",
+  "sandbox": "debug",
+  "claude_args": ["--verbose"],
+  "env": {
+    "CLAUDE_DEBUG": "1"
+  },
+  "prompt_prefix": "You are in debug mode. Focus on investigating and fixing the issue. Be methodical and trace the problem to its root cause."
+}

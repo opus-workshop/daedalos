@@ -1,0 +1,25 @@
+# Python Verification Pipeline
+description: Python projects
+
+steps:
+  - name: lint
+    command: ruff check .
+    fix_command: ruff check . --fix
+    timeout: 30
+    quick: true
+
+  - name: format
+    command: ruff format --check .
+    fix_command: ruff format .
+    timeout: 30
+    quick: true
+
+  - name: types
+    command: mypy .
+    timeout: 120
+    quick: true
+
+  - name: test
+    command: pytest
+    timeout: 600
+    quick: false

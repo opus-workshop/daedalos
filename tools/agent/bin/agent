@@ -1,0 +1,602 @@
+#!/usr/bin/env bash
+# agent - Multi-agent orchestration for Daedalos
+#
+# Manages multiple Claude Code instances running in tmux sessions.
+# Part of the Daedalos toolsuite.
+
+set -euo pipefail
+
+AGENT_VERSION="1.0.0"
+
+# Get the real path, following symlinks
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../lib"
+
+# Source library files
+source "${LIB_DIR}/common.sh"
+source "${LIB_DIR}/tmux.sh"
+source "${LIB_DIR}/agents.sh"
+source "${LIB_DIR}/status.sh"
+source "${LIB_DIR}/search.sh"
+source "${LIB_DIR}/templates.sh"
+
+# Check requirements on startup
+check_requirements
+
+# Command: list
+cmd_list() {
+    local as_json=false
+    local quiet=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) as_json=true; shift ;;
+            --quiet|-q) quiet=true; shift ;;
+            *) die "Unknown option: $1" ;;
+        esac
+    done
+
+    format_agent_list "$as_json" "$quiet"
+}
+
+# Command: spawn
+cmd_spawn() {
+    local name=""
+    local project=""
+    local template=""
+    local sandbox=""
+    local no_focus=false
+    local initial_prompt=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--name) name="$2"; shift 2 ;;
+            -p|--project) project="$2"; shift 2 ;;
+            -t|--template) template="$2"; shift 2 ;;
+            -s|--sandbox) sandbox="$2"; shift 2 ;;
+            --no-focus|--background) no_focus=true; shift ;;
+            --prompt) initial_prompt="$2"; shift 2 ;;
+            *) die "Unknown option: $1" ;;
+        esac
+    done
+
+    # Default project to current directory
+    if [[ -z "$project" ]]; then
+        project="$(pwd)"
+    fi
+    project="$(cd "$project" && pwd)"  # Resolve to absolute path
+
+    # Generate name if not provided
+    if [[ -z "$name" ]]; then
+        local base_name
+        base_name=$(basename "$project")
+        local counter=1
+        name="${base_name}"
+        while agents_exists "$name"; do
+            name="${base_name}-${counter}"
+            ((counter++))
+        done
+    fi
+
+    # Validate name
+    validate_name "$name"
+
+    # Check if agent already exists
+    if agents_exists "$name"; then
+        die "Agent already exists: $name"
+    fi
+
+    # Check agent limit
+    if agents_at_limit; then
+        die "Maximum number of agents reached"
+    fi
+
+    # Get next slot
+    local slot
+    slot=$(agents_next_slot) || die "No available slots"
+
+    # Apply template if specified
+    if [[ -n "$template" ]]; then
+        if ! templates_exists "$template"; then
+            die "Template not found: $template"
+        fi
+        if [[ -z "$sandbox" ]]; then
+            sandbox=$(templates_get_sandbox "$template")
+        fi
+    fi
+
+    # Default sandbox
+    sandbox="${sandbox:-implement}"
+
+    # Build claude command
+    local -a claude_cmd=("claude")
+
+    # Add template args
+    if [[ -n "$template" ]]; then
+        local template_args
+        template_args=$(templates_get_claude_args "$template")
+        if [[ -n "$template_args" ]]; then
+            read -ra args <<< "$template_args"
+            claude_cmd+=("${args[@]}")
+        fi
+    fi
+
+    # Create tmux session
+    local session
+    session=$(tmux_session_name "$name")
+
+    info "Spawning agent: $name (slot $slot)"
+    debug "Project: $project"
+    debug "Session: $session"
+    debug "Command: ${claude_cmd[*]}"
+
+    # Set up environment
+    if [[ -n "$template" ]]; then
+        while IFS='=' read -r key value; do
+            [[ -n "$key" ]] && export "$key=$value"
+        done < <(templates_get_env "$template")
+    fi
+
+    # Create tmux session
+    if ! tmux_create_session "$session" "$project" "${claude_cmd[@]}"; then
+        die "Failed to create tmux session"
+    fi
+
+    # Record agent in database
+    agents_create "$name" "$project" "${template:-default}" "$sandbox" "$slot"
+
+    # Get PID and update
+    sleep 0.5
+    local pid
+    pid=$(tmux_get_pane_pid "$session")
+    if [[ -n "$pid" ]]; then
+        agents_set_pid "$name" "$pid"
+    fi
+
+    # Send initial prompt if provided
+    if [[ -n "$initial_prompt" ]]; then
+        sleep 1
+        tmux_send_keys "$session" "$initial_prompt" Enter
+    fi
+
+    success "Agent spawned: $name (slot $slot)"
+
+    # Focus unless told not to
+    if [[ "$no_focus" != "true" ]]; then
+        if [[ "$(config_get auto_focus true)" == "true" ]]; then
+            tmux_focus_session "$session"
+        fi
+    fi
+}
+
+# Command: focus
+cmd_focus() {
+    if [[ $# -eq 0 ]]; then
+        # Interactive selection with fzf if available
+        if has_fzf; then
+            local selected
+            selected=$(agents_names | fzf --prompt="Select agent: ")
+            if [[ -z "$selected" ]]; then
+                return
+            fi
+            cmd_focus "$selected"
+            return
+        fi
+        die "Usage: agent focus <name|slot>"
+    fi
+
+    local identifier="$1"
+
+    local name
+    name=$(agents_resolve "$identifier")
+    if [[ -z "$name" ]]; then
+        die "Agent not found: $identifier"
+    fi
+
+    local agent
+    agent=$(agents_get "$name")
+    local session
+    session=$(echo "$agent" | jq -r '.tmux_session')
+
+    if ! tmux_session_exists "$session"; then
+        die "Session does not exist for agent: $name"
+    fi
+
+    tmux_focus_session "$session"
+}
+
+# Command: status
+cmd_status() {
+    local name=""
+    local as_json=false
+    local watch=false
+    local interval=2
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) as_json=true; shift ;;
+            --watch|-w) watch=true; shift ;;
+            --interval|-i) interval="$2"; shift 2 ;;
+            -*) die "Unknown option: $1" ;;
+            *) name="$1"; shift ;;
+        esac
+    done
+
+    if [[ "$watch" == "true" ]]; then
+        watch_status "$name" "$interval"
+        return
+    fi
+
+    if [[ -n "$name" ]]; then
+        local resolved
+        resolved=$(agents_resolve "$name")
+        if [[ -z "$resolved" ]]; then
+            die "Agent not found: $name"
+        fi
+        format_agent_status "$resolved" "$as_json"
+    else
+        format_agent_list "$as_json"
+    fi
+}
+
+# Command: kill
+cmd_kill() {
+    local force=false
+    local all=false
+    local names=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force|-f) force=true; shift ;;
+            --all|-a) all=true; shift ;;
+            -*) die "Unknown option: $1" ;;
+            *) names+=("$1"); shift ;;
+        esac
+    done
+
+    if [[ "$all" == "true" ]]; then
+        # Confirmation for killing all
+        echo "This will kill all agents."
+        read -rp "Are you sure? (y/N) " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            echo "Aborted."
+            return
+        fi
+
+        while IFS= read -r name; do
+            [[ -z "$name" ]] && continue
+            kill_agent "$name" "$force"
+        done < <(agents_names)
+        return
+    fi
+
+    if [[ ${#names[@]} -eq 0 ]]; then
+        die "Usage: agent kill <name|slot> or agent kill --all"
+    fi
+
+    for identifier in "${names[@]}"; do
+        local name
+        name=$(agents_resolve "$identifier")
+        if [[ -z "$name" ]]; then
+            warn "Agent not found: $identifier"
+            continue
+        fi
+        kill_agent "$name" "$force"
+    done
+}
+
+# Helper: Kill a single agent
+kill_agent() {
+    local name="$1"
+    local force="${2:-false}"
+
+    local agent
+    agent=$(agents_get "$name")
+    if [[ -z "$agent" ]]; then
+        return
+    fi
+
+    local session
+    session=$(echo "$agent" | jq -r '.tmux_session')
+
+    info "Killing agent: $name"
+
+    # Kill tmux session
+    tmux_kill_session "$session" "$force"
+
+    # Remove from database
+    agents_delete "$name"
+
+    success "Agent killed: $name"
+}
+
+# Command: logs
+cmd_logs() {
+    local name=""
+    local follow=true
+    local lines=100
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f|--follow) follow=true; shift ;;
+            --no-follow) follow=false; shift ;;
+            -n) lines="$2"; shift 2 ;;
+            -*) die "Unknown option: $1" ;;
+            *) name="$1"; shift ;;
+        esac
+    done
+
+    if [[ -z "$name" ]]; then
+        die "Usage: agent logs <name|slot>"
+    fi
+
+    local resolved
+    resolved=$(agents_resolve "$name")
+    if [[ -z "$resolved" ]]; then
+        die "Agent not found: $name"
+    fi
+
+    local agent
+    agent=$(agents_get "$resolved")
+    local session
+    session=$(echo "$agent" | jq -r '.tmux_session')
+
+    if ! tmux_session_exists "$session"; then
+        die "Session does not exist for agent: $resolved"
+    fi
+
+    if [[ "$follow" == "true" ]]; then
+        # Follow logs using tmux capture-pane in a loop
+        while true; do
+            clear
+            echo "${C_BOLD}Logs: ${C_CYAN}${resolved}${C_RESET} (Ctrl+C to exit)"
+            echo ""
+            tmux_get_pane_content "$session" "$lines"
+            sleep 1
+        done
+    else
+        tmux_get_pane_content "$session" "$lines"
+    fi
+}
+
+# Command: search
+cmd_search() {
+    local query=""
+    local agent=""
+    local ignore_case=false
+    local context=2
+    local as_json=false
+    local interactive=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -a|--agent) agent="$2"; shift 2 ;;
+            -i|--ignore-case) ignore_case=true; shift ;;
+            -c|--context) context="$2"; shift 2 ;;
+            --json) as_json=true; shift ;;
+            --interactive) interactive=true; shift ;;
+            -*) die "Unknown option: $1" ;;
+            *) query="$1"; shift ;;
+        esac
+    done
+
+    if [[ "$interactive" == "true" ]]; then
+        search_interactive "$query"
+        return
+    fi
+
+    if [[ -z "$query" ]]; then
+        die "Usage: agent search <query>"
+    fi
+
+    search_all "$query" "$agent" "$ignore_case" "$context" "$as_json"
+}
+
+# Command: pause
+cmd_pause() {
+    if [[ $# -eq 0 ]]; then
+        die "Usage: agent pause <name|slot>"
+    fi
+
+    local identifier="$1"
+    local name
+    name=$(agents_resolve "$identifier")
+    if [[ -z "$name" ]]; then
+        die "Agent not found: $identifier"
+    fi
+
+    local agent
+    agent=$(agents_get "$name")
+    local session
+    session=$(echo "$agent" | jq -r '.tmux_session')
+
+    if ! tmux_session_exists "$session"; then
+        die "Session does not exist for agent: $name"
+    fi
+
+    if tmux_pause_process "$session"; then
+        agents_update "$name" "status" "paused"
+        success "Agent paused: $name"
+    else
+        die "Failed to pause agent: $name"
+    fi
+}
+
+# Command: resume
+cmd_resume() {
+    if [[ $# -eq 0 ]]; then
+        die "Usage: agent resume <name|slot>"
+    fi
+
+    local identifier="$1"
+    local name
+    name=$(agents_resolve "$identifier")
+    if [[ -z "$name" ]]; then
+        die "Agent not found: $identifier"
+    fi
+
+    local agent
+    agent=$(agents_get "$name")
+    local session
+    session=$(echo "$agent" | jq -r '.tmux_session')
+
+    if ! tmux_session_exists "$session"; then
+        die "Session does not exist for agent: $name"
+    fi
+
+    if tmux_resume_process "$session"; then
+        agents_update "$name" "status" "active"
+        success "Agent resumed: $name"
+    else
+        die "Failed to resume agent: $name"
+    fi
+}
+
+# Command: snapshot (placeholder)
+cmd_snapshot() {
+    warn "Snapshot functionality not yet implemented"
+    echo "Would snapshot agent states to: ${DATA_DIR}/snapshots/"
+}
+
+# Command: restore (placeholder)
+cmd_restore() {
+    warn "Restore functionality not yet implemented"
+}
+
+# Command: templates
+cmd_templates() {
+    local action="${1:-list}"
+    shift || true
+
+    case "$action" in
+        list)
+            templates_list "${1:-false}"
+            ;;
+        show)
+            if [[ $# -eq 0 ]]; then
+                die "Usage: agent templates show <name>"
+            fi
+            templates_show "$1"
+            ;;
+        create)
+            if [[ $# -eq 0 ]]; then
+                die "Usage: agent templates create <name> [description]"
+            fi
+            templates_create "$@"
+            ;;
+        delete)
+            if [[ $# -eq 0 ]]; then
+                die "Usage: agent templates delete <name>"
+            fi
+            templates_delete "$1"
+            ;;
+        *)
+            die "Unknown templates action: $action"
+            ;;
+    esac
+}
+
+# Show help
+show_help() {
+    cat << 'EOF'
+agent - Multi-agent orchestration for Daedalos
+
+USAGE:
+    agent <command> [options]
+
+COMMANDS:
+    list                    List all agents
+    spawn                   Spawn a new agent
+    focus <name|slot>       Focus an agent
+    status [name]           Show agent status
+    kill <name|slot>        Kill an agent
+    logs <name|slot>        Show agent logs
+    search <query>          Search across agents
+    pause <name|slot>       Pause an agent
+    resume <name|slot>      Resume a paused agent
+    templates               Manage templates
+    help                    Show this help
+
+SPAWN OPTIONS:
+    -n, --name <name>       Agent name
+    -p, --project <path>    Project directory (default: current)
+    -t, --template <name>   Use a template
+    -s, --sandbox <preset>  Sandbox preset (explore, implement, debug)
+    --no-focus              Don't focus the new agent
+    --prompt <text>         Initial prompt to send
+
+LIST OPTIONS:
+    --json                  Output as JSON
+    --quiet                 Only output agent names
+
+STATUS OPTIONS:
+    --json                  Output as JSON
+    --watch                 Continuously update
+    --interval <secs>       Update interval (default: 2)
+
+KILL OPTIONS:
+    --force                 Force kill without graceful shutdown
+    --all                   Kill all agents
+
+SEARCH OPTIONS:
+    -a, --agent <name>      Search only in this agent
+    -i, --ignore-case       Case insensitive search
+    -c, --context <lines>   Context lines (default: 2)
+    --json                  Output as JSON
+    --interactive           Interactive search with fzf
+
+TEMPLATES:
+    explorer                Read-only exploration
+    implementer             Full write access
+    reviewer                Code review mode
+    debugger                Debug mode
+    watcher                 Background monitoring
+
+EXAMPLES:
+    agent spawn -n mywork -p ~/project
+    agent spawn -t explorer --no-focus
+    agent focus mywork
+    agent focus 1
+    agent status --watch
+    agent search "error" -i
+    agent kill mywork
+    agent kill --all
+
+PART OF DAEDALOS
+    Tools designed BY AI, FOR AI development.
+EOF
+}
+
+# Show version
+show_version() {
+    echo "agent $AGENT_VERSION"
+}
+
+# Main dispatch
+main() {
+    case "${1:-help}" in
+        list)      shift; cmd_list "$@" ;;
+        spawn)     shift; cmd_spawn "$@" ;;
+        focus)     shift; cmd_focus "$@" ;;
+        status)    shift; cmd_status "$@" ;;
+        kill)      shift; cmd_kill "$@" ;;
+        logs)      shift; cmd_logs "$@" ;;
+        search)    shift; cmd_search "$@" ;;
+        pause)     shift; cmd_pause "$@" ;;
+        resume)    shift; cmd_resume "$@" ;;
+        snapshot)  shift; cmd_snapshot "$@" ;;
+        restore)   shift; cmd_restore "$@" ;;
+        templates) shift; cmd_templates "$@" ;;
+        version|--version|-v) show_version ;;
+        help|--help|-h) show_help ;;
+        *)         echo "Unknown command: $1"; show_help; exit 1 ;;
+    esac
+}
+
+main "$@"

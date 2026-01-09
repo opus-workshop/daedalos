@@ -1,0 +1,8 @@
+{
+  "name": "watcher",
+  "description": "Background monitoring",
+  "sandbox": "explore",
+  "claude_args": [],
+  "env": {},
+  "prompt_prefix": "You are in watcher mode. Monitor for changes and report issues. Run in the background and notify on important events."
+}

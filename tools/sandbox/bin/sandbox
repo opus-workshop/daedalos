@@ -1,0 +1,802 @@
+#!/usr/bin/env bash
+# sandbox - Ephemeral experiment environments for Daedalos
+#
+# Create isolated, disposable environments for experimentation.
+# Changes in a sandbox don't affect the original until promoted.
+
+set -euo pipefail
+
+SANDBOX_VERSION="1.0.0"
+SANDBOX_ROOT="${SANDBOX_ROOT:-$HOME/.local/share/daedalos/sandbox}"
+SANDBOX_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/daedalos/sandbox"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$(dirname "$SCRIPT_DIR")/lib"
+
+# Ensure directories exist
+mkdir -p "$SANDBOX_ROOT" "$SANDBOX_CONFIG"
+
+# Colors
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' DIM='' NC=''
+fi
+
+log_info() { echo -e "${BLUE}info:${NC} $*"; }
+log_success() { echo -e "${GREEN}success:${NC} $*"; }
+log_error() { echo -e "${RED}error:${NC} $*" >&2; }
+log_warn() { echo -e "${YELLOW}warning:${NC} $*"; }
+
+# Detect available backend
+detect_backend() {
+    local path="${1:-.}"
+
+    # Try Btrfs first
+    if command -v btrfs &>/dev/null; then
+        if btrfs subvolume show "$path" &>/dev/null 2>&1; then
+            echo "btrfs"
+            return
+        fi
+    fi
+
+    # Try OverlayFS (requires root usually)
+    if [[ -f /proc/filesystems ]] && grep -q overlay /proc/filesystems 2>/dev/null; then
+        # Only use overlay if we can mount (root or CAP_SYS_ADMIN)
+        if [[ $EUID -eq 0 ]] || command -v fuse-overlayfs &>/dev/null; then
+            echo "overlay"
+            return
+        fi
+    fi
+
+    # Fallback to rsync
+    echo "rsync"
+}
+
+generate_name() {
+    # Generate memorable sandbox name
+    local adjectives=("quick" "bold" "calm" "deep" "fast" "keen" "warm" "cool" "swift" "wild")
+    local nouns=("fox" "owl" "elk" "bee" "ant" "ray" "oak" "ivy" "ash" "bay")
+
+    local adj=${adjectives[$RANDOM % ${#adjectives[@]}]}
+    local noun=${nouns[$RANDOM % ${#nouns[@]}]}
+    local num=$((RANDOM % 100))
+
+    echo "${adj}-${noun}-${num}"
+}
+
+get_sandbox_path() {
+    echo "$SANDBOX_ROOT/$1"
+}
+
+sandbox_exists() {
+    local name="$1"
+    [[ -d "$(get_sandbox_path "$name")/work" ]]
+}
+
+human_size() {
+    local bytes="$1"
+    if [[ $bytes -lt 1024 ]]; then
+        echo "${bytes}B"
+    elif [[ $bytes -lt $((1024*1024)) ]]; then
+        echo "$((bytes/1024))K"
+    elif [[ $bytes -lt $((1024*1024*1024)) ]]; then
+        echo "$((bytes/1024/1024))M"
+    else
+        echo "$((bytes/1024/1024/1024))G"
+    fi
+}
+
+time_ago() {
+    local timestamp="$1"
+    local now=$(date +%s)
+    local created=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${timestamp%.*}" +%s 2>/dev/null || echo "$now")
+    local diff=$((now - created))
+
+    if [[ $diff -lt 60 ]]; then
+        echo "just now"
+    elif [[ $diff -lt 3600 ]]; then
+        echo "$((diff/60)) min ago"
+    elif [[ $diff -lt 86400 ]]; then
+        echo "$((diff/3600)) hours ago"
+    else
+        echo "$((diff/86400)) days ago"
+    fi
+}
+
+# ============================================================================
+# COMMANDS
+# ============================================================================
+
+cmd_create() {
+    local name=""
+    local source_dir="$(pwd)"
+    local backend=""
+    local isolated_network=false
+    local allowed_ports=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from|-f)
+                source_dir="$2"
+                shift 2
+                ;;
+            --copy)
+                backend="$2"
+                shift 2
+                ;;
+            --isolated-network)
+                isolated_network=true
+                shift
+                ;;
+            --with-ports)
+                allowed_ports="$2"
+                shift 2
+                ;;
+            --help|-h)
+                echo "Usage: sandbox create [name] [options]"
+                echo ""
+                echo "Create a new sandbox environment."
+                echo ""
+                echo "Options:"
+                echo "  --from, -f <path>     Source directory (default: current dir)"
+                echo "  --copy <strategy>     Backend: btrfs|overlay|rsync (auto-detected)"
+                echo "  --isolated-network    Block network access"
+                echo "  --with-ports <list>   Allow specific ports"
+                return 0
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                exit 1
+                ;;
+            *)
+                name="$1"
+                shift
+                ;;
+        esac
+    done
+
+    # Validate source
+    if [[ ! -d "$source_dir" ]]; then
+        log_error "Source directory not found: $source_dir"
+        exit 4
+    fi
+    source_dir="$(cd "$source_dir" && pwd)"
+
+    # Generate name if not provided
+    [[ -z "$name" ]] && name=$(generate_name)
+
+    # Check if sandbox already exists
+    if sandbox_exists "$name"; then
+        log_error "Sandbox '$name' already exists"
+        exit 1
+    fi
+
+    # Detect backend if not specified
+    [[ -z "$backend" ]] && backend=$(detect_backend "$source_dir")
+
+    log_info "Creating sandbox '$name' from $source_dir"
+    log_info "Using backend: $backend"
+
+    local sandbox_path=$(get_sandbox_path "$name")
+    local work_path="$sandbox_path/work"
+
+    mkdir -p "$sandbox_path"
+
+    case "$backend" in
+        btrfs)
+            btrfs subvolume snapshot "$source_dir" "$work_path" || {
+                log_error "Failed to create Btrfs snapshot"
+                exit 1
+            }
+            ;;
+        overlay)
+            local upper_path="$sandbox_path/upper"
+            local workdir_path="$sandbox_path/workdir"
+            mkdir -p "$work_path" "$upper_path" "$workdir_path"
+
+            if command -v fuse-overlayfs &>/dev/null; then
+                fuse-overlayfs -o "lowerdir=$source_dir,upperdir=$upper_path,workdir=$workdir_path" "$work_path" || {
+                    log_error "Failed to create overlay mount"
+                    rm -rf "$sandbox_path"
+                    exit 1
+                }
+            else
+                sudo mount -t overlay overlay -o "lowerdir=$source_dir,upperdir=$upper_path,workdir=$workdir_path" "$work_path" || {
+                    log_error "Failed to create overlay mount (may need sudo)"
+                    rm -rf "$sandbox_path"
+                    exit 1
+                }
+            fi
+            ;;
+        rsync)
+            mkdir -p "$work_path"
+            rsync -a "$source_dir/" "$work_path/" || {
+                log_error "Failed to copy source with rsync"
+                rm -rf "$sandbox_path"
+                exit 1
+            }
+            ;;
+        *)
+            log_error "Unknown backend: $backend"
+            exit 1
+            ;;
+    esac
+
+    # Store metadata
+    echo "$source_dir" > "$sandbox_path/source"
+    date -Iseconds > "$sandbox_path/created"
+    echo "$backend" > "$sandbox_path/backend"
+    [[ "$isolated_network" == true ]] && echo "1" > "$sandbox_path/isolated_network"
+    [[ -n "$allowed_ports" ]] && echo "$allowed_ports" > "$sandbox_path/allowed_ports"
+
+    log_success "Sandbox '$name' created"
+    echo ""
+    echo "Enter with:   ${BOLD}sandbox enter $name${NC}"
+    echo "See changes:  ${BOLD}sandbox diff $name${NC}"
+    echo "Apply:        ${BOLD}sandbox promote $name${NC}"
+    echo "Discard:      ${BOLD}sandbox discard $name${NC}"
+}
+
+cmd_list() {
+    local as_json=false
+    local show_all=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) as_json=true; shift ;;
+            --all|-a) show_all=true; shift ;;
+            --help|-h)
+                echo "Usage: sandbox list [options]"
+                echo ""
+                echo "Options:"
+                echo "  --json    Output as JSON"
+                echo "  --all     Include all sandboxes"
+                return 0
+                ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ "$as_json" == true ]]; then
+        echo "["
+        local first=true
+        for sandbox_dir in "$SANDBOX_ROOT"/*/; do
+            [[ -d "$sandbox_dir" ]] || continue
+            [[ -f "${sandbox_dir}source" ]] || continue
+
+            local name=$(basename "$sandbox_dir")
+            local source=$(cat "${sandbox_dir}source" 2>/dev/null || echo "unknown")
+            local created=$(cat "${sandbox_dir}created" 2>/dev/null || echo "unknown")
+            local backend=$(cat "${sandbox_dir}backend" 2>/dev/null || echo "unknown")
+
+            [[ "$first" == true ]] || echo ","
+            first=false
+
+            echo "  {"
+            echo "    \"name\": \"$name\","
+            echo "    \"source\": \"$source\","
+            echo "    \"created\": \"$created\","
+            echo "    \"backend\": \"$backend\""
+            echo -n "  }"
+        done
+        echo ""
+        echo "]"
+    else
+        local count=0
+        printf "${BOLD}%-20s %-30s %-15s %-10s${NC}\n" "NAME" "SOURCE" "CREATED" "BACKEND"
+        echo "--------------------------------------------------------------------------------"
+
+        for sandbox_dir in "$SANDBOX_ROOT"/*/; do
+            [[ -d "$sandbox_dir" ]] || continue
+            [[ -f "${sandbox_dir}source" ]] || continue
+
+            local name=$(basename "$sandbox_dir")
+            local source=$(cat "${sandbox_dir}source" 2>/dev/null || echo "unknown")
+            local created=$(cat "${sandbox_dir}created" 2>/dev/null || echo "")
+            local backend=$(cat "${sandbox_dir}backend" 2>/dev/null || echo "unknown")
+
+            # Truncate source path
+            [[ ${#source} -gt 28 ]] && source="...${source: -25}"
+
+            printf "%-20s %-30s %-15s %-10s\n" "$name" "$source" "$(time_ago "$created")" "$backend"
+            ((count++))
+        done
+
+        if [[ $count -eq 0 ]]; then
+            echo "${DIM}No sandboxes found. Create one with: sandbox create${NC}"
+        fi
+    fi
+}
+
+cmd_enter() {
+    local name="${1:-}"
+    local command=""
+    local no_prompt=false
+
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --command|-c)
+                command="$2"
+                shift 2
+                ;;
+            --no-prompt)
+                no_prompt=true
+                shift
+                ;;
+            --help|-h)
+                echo "Usage: sandbox enter <name> [options]"
+                echo ""
+                echo "Options:"
+                echo "  --command, -c <cmd>  Run command instead of shell"
+                echo "  --no-prompt          Don't modify shell prompt"
+                return 0
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$name" ]]; then
+        log_error "Sandbox name required"
+        echo "Usage: sandbox enter <name>"
+        exit 1
+    fi
+
+    local sandbox_path=$(get_sandbox_path "$name")
+    local work_path="$sandbox_path/work"
+
+    if [[ ! -d "$work_path" ]]; then
+        log_error "Sandbox '$name' not found"
+        exit 2
+    fi
+
+    # Set environment
+    export SANDBOX_NAME="$name"
+    export SANDBOX_SOURCE=$(cat "$sandbox_path/source" 2>/dev/null || echo "")
+    export SANDBOX_CREATED=$(cat "$sandbox_path/created" 2>/dev/null || echo "")
+    export IN_SANDBOX=1
+
+    cd "$work_path"
+
+    if [[ -n "$command" ]]; then
+        eval "$command"
+    else
+        # Modify prompt if not disabled
+        if [[ "$no_prompt" != true ]]; then
+            export PS1="[${CYAN}sandbox:$name${NC}] \$ "
+        fi
+
+        log_info "Entering sandbox '$name' - exit to return"
+        exec "${SHELL:-/bin/bash}"
+    fi
+}
+
+cmd_diff() {
+    local name="${1:-}"
+    local stat_only=false
+    local files_only=false
+
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --stat) stat_only=true; shift ;;
+            --files) files_only=true; shift ;;
+            --help|-h)
+                echo "Usage: sandbox diff <name> [options]"
+                echo ""
+                echo "Options:"
+                echo "  --stat   Show statistics only"
+                echo "  --files  List changed files only"
+                return 0
+                ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ -z "$name" ]]; then
+        log_error "Sandbox name required"
+        exit 1
+    fi
+
+    local sandbox_path=$(get_sandbox_path "$name")
+    local work_path="$sandbox_path/work"
+    local source=$(cat "$sandbox_path/source" 2>/dev/null || echo "")
+    local backend=$(cat "$sandbox_path/backend" 2>/dev/null || echo "rsync")
+
+    if [[ ! -d "$work_path" ]]; then
+        log_error "Sandbox '$name' not found"
+        exit 2
+    fi
+
+    if [[ "$backend" == "overlay" ]]; then
+        # For overlay, show contents of upper layer
+        local upper_path="$sandbox_path/upper"
+        if [[ "$files_only" == true ]]; then
+            find "$upper_path" -type f 2>/dev/null | sed "s|$upper_path/||"
+        else
+            find "$upper_path" -type f -exec ls -la {} \; 2>/dev/null
+        fi
+    else
+        # For btrfs/rsync, use diff
+        if [[ "$files_only" == true ]]; then
+            diff -rq "$source" "$work_path" 2>/dev/null | grep -E "^Only in|^Files" || echo "No changes"
+        elif [[ "$stat_only" == true ]]; then
+            diff -rq "$source" "$work_path" 2>/dev/null | wc -l | xargs echo "Changed items:"
+        else
+            diff -ru "$source" "$work_path" 2>/dev/null || true
+        fi
+    fi
+}
+
+cmd_promote() {
+    local name="${1:-}"
+    local dry_run=false
+    local force=false
+    local backup=false
+
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run) dry_run=true; shift ;;
+            --yes|-y) force=true; shift ;;
+            --backup) backup=true; shift ;;
+            --help|-h)
+                echo "Usage: sandbox promote <name> [options]"
+                echo ""
+                echo "Options:"
+                echo "  --dry-run  Show what would be promoted"
+                echo "  --yes, -y  Don't ask for confirmation"
+                echo "  --backup   Create backup of source first"
+                return 0
+                ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ -z "$name" ]]; then
+        log_error "Sandbox name required"
+        exit 1
+    fi
+
+    local sandbox_path=$(get_sandbox_path "$name")
+    local work_path="$sandbox_path/work"
+    local source=$(cat "$sandbox_path/source" 2>/dev/null || echo "")
+    local backend=$(cat "$sandbox_path/backend" 2>/dev/null || echo "rsync")
+
+    if [[ ! -d "$work_path" ]]; then
+        log_error "Sandbox '$name' not found"
+        exit 2
+    fi
+
+    if [[ "$dry_run" == true ]]; then
+        log_info "Dry run - showing what would be promoted:"
+        rsync -avn --delete "$work_path/" "$source/" 2>/dev/null || true
+        return 0
+    fi
+
+    if [[ "$force" != true ]]; then
+        echo "This will apply sandbox changes to: $source"
+        echo ""
+        cmd_diff "$name" --files 2>/dev/null | head -20
+        echo ""
+        read -p "Continue? [y/N] " confirm
+        if [[ "$confirm" != [yY]* ]]; then
+            echo "Aborted."
+            exit 0
+        fi
+    fi
+
+    # Backup if requested
+    if [[ "$backup" == true ]]; then
+        local backup_path="${source}.backup.$(date +%Y%m%d_%H%M%S)"
+        log_info "Creating backup at $backup_path"
+        rsync -a "$source/" "$backup_path/"
+    fi
+
+    log_info "Promoting sandbox '$name' to $source"
+
+    # Unmount overlay first if needed
+    if [[ "$backend" == "overlay" ]]; then
+        umount "$work_path" 2>/dev/null || sudo umount "$work_path" 2>/dev/null || true
+        local upper_path="$sandbox_path/upper"
+        rsync -av "$upper_path/" "$source/"
+    else
+        rsync -av --delete "$work_path/" "$source/"
+    fi
+
+    log_success "Sandbox '$name' promoted to $source"
+
+    # Clean up sandbox
+    read -p "Delete sandbox now? [Y/n] " cleanup
+    if [[ "$cleanup" != [nN]* ]]; then
+        cmd_discard "$name" --force
+    fi
+}
+
+cmd_discard() {
+    local name="${1:-}"
+    local force=false
+
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force|-f) force=true; shift ;;
+            --help|-h)
+                echo "Usage: sandbox discard <name> [options]"
+                echo ""
+                echo "Options:"
+                echo "  --force, -f  Don't ask for confirmation"
+                return 0
+                ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ -z "$name" ]]; then
+        log_error "Sandbox name required"
+        exit 1
+    fi
+
+    local sandbox_path=$(get_sandbox_path "$name")
+    local work_path="$sandbox_path/work"
+    local backend=$(cat "$sandbox_path/backend" 2>/dev/null || echo "rsync")
+
+    if [[ ! -d "$sandbox_path" ]]; then
+        log_error "Sandbox '$name' not found"
+        exit 2
+    fi
+
+    if [[ "$force" != true ]]; then
+        read -p "Discard sandbox '$name'? This cannot be undone. [y/N] " confirm
+        if [[ "$confirm" != [yY]* ]]; then
+            echo "Aborted."
+            exit 0
+        fi
+    fi
+
+    log_info "Discarding sandbox '$name'"
+
+    case "$backend" in
+        btrfs)
+            btrfs subvolume delete "$work_path" 2>/dev/null || rm -rf "$work_path"
+            ;;
+        overlay)
+            umount "$work_path" 2>/dev/null || sudo umount "$work_path" 2>/dev/null || true
+            ;;
+    esac
+
+    rm -rf "$sandbox_path"
+    log_success "Sandbox '$name' discarded"
+}
+
+cmd_info() {
+    local name="${1:-}"
+    local as_json=false
+
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) as_json=true; shift ;;
+            --help|-h)
+                echo "Usage: sandbox info <name> [options]"
+                echo ""
+                echo "Options:"
+                echo "  --json  Output as JSON"
+                return 0
+                ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ -z "$name" ]]; then
+        log_error "Sandbox name required"
+        exit 1
+    fi
+
+    local sandbox_path=$(get_sandbox_path "$name")
+    local work_path="$sandbox_path/work"
+
+    if [[ ! -d "$sandbox_path" ]]; then
+        log_error "Sandbox '$name' not found"
+        exit 2
+    fi
+
+    local source=$(cat "$sandbox_path/source" 2>/dev/null || echo "unknown")
+    local created=$(cat "$sandbox_path/created" 2>/dev/null || echo "unknown")
+    local backend=$(cat "$sandbox_path/backend" 2>/dev/null || echo "unknown")
+    local isolated=$(cat "$sandbox_path/isolated_network" 2>/dev/null || echo "0")
+
+    # Calculate size
+    local size=$(du -sh "$work_path" 2>/dev/null | cut -f1 || echo "unknown")
+
+    # Count changed files
+    local changes=0
+    if [[ "$backend" == "overlay" ]]; then
+        changes=$(find "$sandbox_path/upper" -type f 2>/dev/null | wc -l | tr -d ' ')
+    else
+        changes=$(diff -rq "$source" "$work_path" 2>/dev/null | wc -l | tr -d ' ')
+    fi
+
+    if [[ "$as_json" == true ]]; then
+        cat <<EOF
+{
+  "name": "$name",
+  "source": "$source",
+  "created": "$created",
+  "backend": "$backend",
+  "size": "$size",
+  "changes": $changes,
+  "isolated_network": $([[ "$isolated" == "1" ]] && echo "true" || echo "false")
+}
+EOF
+    else
+        echo "${BOLD}Sandbox: $name${NC}"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Source:     $source"
+        echo "Created:    $created ($(time_ago "$created"))"
+        echo "Backend:    $backend"
+        echo "Size:       $size"
+        echo "Changes:    $changes files"
+        echo "Network:    $([[ "$isolated" == "1" ]] && echo "isolated" || echo "normal")"
+        echo "Path:       $work_path"
+    fi
+}
+
+cmd_run() {
+    local name="${1:-}"
+    shift || true
+    local command="$*"
+
+    if [[ -z "$name" ]]; then
+        log_error "Sandbox name required"
+        echo "Usage: sandbox run <name> <command>"
+        exit 1
+    fi
+
+    if [[ -z "$command" ]]; then
+        log_error "Command required"
+        exit 1
+    fi
+
+    local sandbox_path=$(get_sandbox_path "$name")
+    local work_path="$sandbox_path/work"
+
+    if [[ ! -d "$work_path" ]]; then
+        log_error "Sandbox '$name' not found"
+        exit 2
+    fi
+
+    cd "$work_path"
+    SANDBOX_NAME="$name" IN_SANDBOX=1 eval "$command"
+}
+
+cmd_fork() {
+    local name="${1:-}"
+    local new_name="${2:-}"
+
+    if [[ -z "$name" || -z "$new_name" ]]; then
+        echo "Usage: sandbox fork <name> <new-name>"
+        exit 1
+    fi
+
+    local sandbox_path=$(get_sandbox_path "$name")
+    local work_path="$sandbox_path/work"
+
+    if [[ ! -d "$work_path" ]]; then
+        log_error "Sandbox '$name' not found"
+        exit 2
+    fi
+
+    log_info "Forking sandbox '$name' to '$new_name'"
+    cmd_create "$new_name" --from "$work_path"
+}
+
+cmd_sync() {
+    local name="${1:-}"
+    local direction="${2:-source-to-sandbox}"
+
+    if [[ -z "$name" ]]; then
+        echo "Usage: sandbox sync <name> [direction]"
+        echo "Directions: source-to-sandbox (default), sandbox-to-source"
+        exit 1
+    fi
+
+    local sandbox_path=$(get_sandbox_path "$name")
+    local work_path="$sandbox_path/work"
+    local source=$(cat "$sandbox_path/source" 2>/dev/null || echo "")
+
+    if [[ ! -d "$work_path" ]]; then
+        log_error "Sandbox '$name' not found"
+        exit 2
+    fi
+
+    case "$direction" in
+        source-to-sandbox)
+            log_info "Syncing source to sandbox '$name'"
+            rsync -av "$source/" "$work_path/"
+            log_success "Sandbox updated from source"
+            ;;
+        sandbox-to-source)
+            cmd_promote "$name"
+            ;;
+        *)
+            log_error "Unknown direction: $direction"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_help() {
+    cat <<EOF
+${BOLD}sandbox${NC} - Ephemeral experiment environments
+
+${BOLD}USAGE${NC}
+    sandbox <command> [arguments]
+
+${BOLD}COMMANDS${NC}
+    create [name]        Create a new sandbox
+    list                 List all sandboxes
+    enter <name>         Enter sandbox environment
+    diff <name>          Show changes in sandbox
+    promote <name>       Apply sandbox changes to source
+    discard <name>       Delete sandbox
+    sync <name>          Sync sandbox with source
+    fork <name> <new>    Create sandbox from sandbox
+    run <name> <cmd>     Run command in sandbox
+    info <name>          Show sandbox details
+
+${BOLD}OPTIONS${NC}
+    --help, -h           Show this help
+    --version            Show version
+
+${BOLD}EXAMPLES${NC}
+    sandbox create                        # Quick sandbox of current dir
+    sandbox create risky-refactor         # Named sandbox
+    sandbox create --from ~/project       # Sandbox specific directory
+    sandbox enter risky-refactor          # Work in sandbox
+    sandbox diff risky-refactor           # See what changed
+    sandbox promote risky-refactor        # Apply changes
+    sandbox discard risky-refactor        # Throw it away
+
+${BOLD}PHILOSOPHY${NC}
+    "Try anything. Break nothing."
+
+EOF
+}
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+main() {
+    case "${1:-help}" in
+        create)     shift; cmd_create "$@" ;;
+        list|ls)    shift; cmd_list "$@" ;;
+        enter|cd)   shift; cmd_enter "$@" ;;
+        diff)       shift; cmd_diff "$@" ;;
+        promote)    shift; cmd_promote "$@" ;;
+        discard|rm) shift; cmd_discard "$@" ;;
+        sync)       shift; cmd_sync "$@" ;;
+        fork)       shift; cmd_fork "$@" ;;
+        run|exec)   shift; cmd_run "$@" ;;
+        info)       shift; cmd_info "$@" ;;
+        version|--version) echo "sandbox $SANDBOX_VERSION" ;;
+        help|--help|-h) cmd_help ;;
+        *)
+            log_error "Unknown command: $1"
+            cmd_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

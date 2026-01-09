@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# error-db - Error Pattern Database for Daedalos
+#
+# Every error is a lesson. Capture patterns and solutions for instant fixes.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$(dirname "$SCRIPT_DIR")/errordb"
+
+# Ensure Python can find the module
+export PYTHONPATH="${PYTHONPATH:-}:$(dirname "$SCRIPT_DIR")"
+
+exec python3 -m errordb "$@"
