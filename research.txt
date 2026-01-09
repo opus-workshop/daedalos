@@ -122,3 +122,185 @@ The loop tool can now bootstrap its own development. Glorious.
 ================================================================================
 SESSION: 2026-01-09 - Phase 2 Continues: Building More Tools
 ================================================================================
+
+(Tools built in previous session - see tool directories)
+
+================================================================================
+SESSION: 2026-01-09 - Full Stack Installer Created
+================================================================================
+
+Created install.sh to teach all Claude agents about Daedalos tools systemwide.
+
+WHAT WAS BUILT:
+---------------
+
+install.sh - Full stack installer that:
+
+1. PATH SETUP
+   - Creates ~/.local/bin symlinks for all tools
+   - Adds PATH to shell rc files
+   - Tools become globally callable
+
+2. CLAUDE CODE INTEGRATION
+   - Appends tool documentation to ~/.claude/CLAUDE.md
+   - Adds Bash permissions to ~/.claude/settings.json
+   - Registers mcp-hub as MCP server (user scope)
+
+3. DAEMON AUTOSTART (macOS)
+   - Creates launchd plists for loopd, mcp-hub, undod
+   - Daemons start on login, restart on crash
+   - Logs to ~/.local/share/daedalos/<daemon>/
+
+4. OLLAMA INTEGRATION
+   - Creates ~/.config/daedalos/ollama.yaml
+   - Recommends qwen2.5-coder:14b model
+   - Checks if model is pulled
+
+5. OPENCODE CONFIGURATION
+   - Creates ~/.config/opencode/config.yaml
+   - Points to local Ollama instance
+   - Configures mcp-hub as MCP endpoint
+
+uninstall.sh - Clean removal of all components
+
+DIRECTORIES CREATED:
+--------------------
+
+~/.local/bin/              # Tool symlinks
+~/.config/daedalos/        # Per-tool configs
+~/.local/share/daedalos/   # State and history
+~/Library/LaunchAgents/    # Daemon plists (macOS)
+
+AGENT INTEGRATION STRATEGY:
+---------------------------
+
+For Claude Code:
+  - CLAUDE.md documentation (always loaded)
+  - settings.json permissions (auto-allow)
+  - MCP server registration
+
+For OpenCode/Aider/etc:
+  - Tools in PATH
+  - mcp-hub as central MCP broker
+  - Config files for each agent
+
+The key insight: CLI tools are universal. Put them in PATH and
+document them - any agent can use them. MCP provides richer
+integration for agents that support it.
+
+OLLAMA MODELS:
+--------------
+
+User has Ollama 0.13.5 installed. Recommended models:
+
+1. CODING MODEL (for agents):
+   ollama pull qwen2.5-coder:14b
+
+2. EMBEDDING MODEL (for codex semantic search):
+   ollama pull nomic-embed-text
+
+The embedding model enables fully local semantic code search:
+- codex uses nomic-embed-text to create vector embeddings
+- Embeddings stored in SQLite at ~/.local/share/daedalos/codex/
+- No external API calls needed
+- Works offline
+
+Alternative embedding models:
+- mxbai-embed-large: Higher quality, larger (1024 dim)
+- snowflake-arctic-embed: Optimized for retrieval
+- all-minilm: Lightweight, fast
+
+Config: ~/.config/daedalos/codex/config.yaml
+
+This provides local LLM support for OpenCode + semantic search,
+making the full stack FOSS-compatible (no API keys required).
+
+================================================================================
+SESSION: 2026-01-09 - Integration Testing & MCP Server
+================================================================================
+
+Verified end-to-end functionality and fixed integration bugs.
+
+DAEDALOS-MCP SERVER:
+--------------------
+
+Created a unified MCP server exposing ALL Daedalos tools to Claude:
+
+tools/daedalos-mcp/
+├── src/daedalos_mcp/
+│   ├── __init__.py     # MCP server with all tool definitions
+│   └── __main__.py     # Entry point
+├── pyproject.toml
+├── install.sh
+└── README.txt
+
+Exposes 22 tools:
+  - loop_start, loop_status, loop_stop
+  - verify
+  - undo_checkpoint, undo_last, undo_timeline, undo_restore
+  - project_info, project_symbols, project_tree
+  - codex_search, codex_index
+  - context_estimate, context_breakdown
+  - error_match, error_add
+  - scratch_new, scratch_list, scratch_destroy
+  - agent_spawn, agent_list, agent_focus, agent_search, agent_kill
+
+BUGS FIXED:
+-----------
+
+1. LOOP SYMLINK RESOLUTION
+   Problem: `~/.local/bin/loop` failed when run from other directories
+   Cause: BASH_SOURCE[0] returned symlink path, not target
+   Fix: Added symlink resolution loop before setting SCRIPT_DIR
+
+2. MCP CLI MISMATCHES
+   Fixed argument mapping to match actual CLIs:
+   - project_info: "info" -> "summary"
+   - project_symbols: "symbols" -> "search *"
+   - undo_timeline: "--limit" -> "-n"
+   - undo_restore: "restore" -> "to"
+   - loop_start: "--max" -> "-n"
+
+END-TO-END TEST:
+----------------
+
+Command:
+  loop start "create file test.txt containing hello world" \
+    --promise "grep -q hello test.txt" -n 2 --agent claude
+
+Result:
+  - Loop ID: t8tQaWE7
+  - Status: COMPLETED in 1 iteration
+  - Claude created test.txt with "hello world"
+  - Promise verified successfully
+
+The full stack works: MCP server -> CLI tools -> Claude agent -> verification
+
+TOOL STATUS:
+------------
+
+All Phase 2 tools are implemented and installed:
+  ~/.local/bin/loop       OK (symlink fixed)
+  ~/.local/bin/verify     OK
+  ~/.local/bin/undo       OK
+  ~/.local/bin/project    OK
+  ~/.local/bin/codex      OK
+  ~/.local/bin/context    OK
+  ~/.local/bin/error-db   OK
+  ~/.local/bin/scratch    OK
+  ~/.local/bin/agent      OK
+  ~/.local/bin/sandbox    OK
+  ~/.local/bin/mcp-hub    OK
+  ~/.local/bin/lsp-pool   OK
+
+NOTE: MCP server needs restart after edits (python module cached).
+
+WHAT'S LEFT:
+------------
+
+1. Commit all work (MCP server, bug fixes, research updates)
+2. Install shellcheck for verify linting (optional)
+3. Real-world usage testing
+4. NixOS packaging (Phase 3)
+
+================================================================================

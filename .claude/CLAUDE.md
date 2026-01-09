@@ -49,8 +49,20 @@ Runs until promise exits 0. This is how work gets done.
 ## Current State
 
 - **Phase 1 complete**: All tool specifications written (SPEC.txt + prompt.txt)
-- **Phase 2 next**: Build tools from their prompts
-- **Not yet built**: The actual tool implementations - only specs exist
+- **Phase 2 complete**: All tools implemented and installed in ~/.local/bin
+- **MCP server**: daedalos-mcp exposes all tools to Claude natively
+
+All tools are functional:
+```
+loop, verify, undo, project, codex, context,
+error-db, scratch, agent, sandbox, mcp-hub, lsp-pool
+```
+
+## Next Steps
+
+- **Phase 3**: NixOS packaging and system integration
+- Real-world usage testing
+- Documentation polish
 
 ## When Uncertain
 

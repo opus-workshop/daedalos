@@ -34,8 +34,15 @@ LOOP_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/daedalos/loop"
 LOOP_TEMPLATES_DIR="${LOOP_TEMPLATES_DIR:-$(dirname "$0")/templates}"
 LOOPD_SOCKET="${LOOPD_SOCKET:-/run/daedalos/loopd.sock}"
 
-# Find the lib directory relative to this script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Find the lib directory relative to this script (follow symlinks)
+_source="${BASH_SOURCE[0]}"
+while [[ -L "$_source" ]]; do
+    _dir="$(cd -P "$(dirname "$_source")" && pwd)"
+    _source="$(readlink "$_source")"
+    [[ "$_source" != /* ]] && _source="$_dir/$_source"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_source")" && pwd)"
+unset _source _dir
 LOOP_LIB_DIR="$SCRIPT_DIR/lib"
 
 # Ensure directories exist

@@ -324,7 +324,7 @@ async def handle_tool(name: str, arguments: dict[str, Any]) -> str:
     if name == "loop_start":
         args = ["start", arguments["task"], "--promise", arguments["promise"]]
         if arguments.get("max_iterations"):
-            args.extend(["--max", str(arguments["max_iterations"])])
+            args.extend(["-n", str(arguments["max_iterations"])])
         return run_tool("loop", args, cwd)
 
     elif name == "loop_status":
@@ -348,22 +348,23 @@ async def handle_tool(name: str, arguments: dict[str, Any]) -> str:
         return run_tool("undo", ["last"], cwd)
 
     elif name == "undo_timeline":
-        args = []
+        args = ["timeline"]
         if arguments.get("limit"):
-            args.extend(["--limit", str(arguments["limit"])])
+            args.extend(["-n", str(arguments["limit"])])
         return run_tool("undo", args, cwd)
 
     elif name == "undo_restore":
-        return run_tool("undo", ["restore", arguments["id"]], cwd)
+        return run_tool("undo", ["to", arguments["id"]], cwd)
 
     # Project tools
     elif name == "project_info":
-        return run_tool("project", ["info"], cwd)
+        return run_tool("project", ["summary"], cwd)
 
     elif name == "project_symbols":
-        args = ["symbols"]
+        args = ["search"]
         if arguments.get("type"):
             args.extend(["--type", arguments["type"]])
+        args.append("*")  # Search all symbols
         return run_tool("project", args, cwd)
 
     elif name == "project_tree":
