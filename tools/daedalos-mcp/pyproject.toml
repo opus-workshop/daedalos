@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "daedalos-mcp"
+version = "1.0.0"
+description = "MCP server exposing Daedalos tools to Claude"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+]
+
+[project.scripts]
+daedalos-mcp = "daedalos_mcp:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
