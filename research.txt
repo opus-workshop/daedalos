@@ -298,9 +298,78 @@ NOTE: MCP server needs restart after edits (python module cached).
 WHAT'S LEFT:
 ------------
 
-1. Commit all work (MCP server, bug fixes, research updates)
-2. Install shellcheck for verify linting (optional)
-3. Real-world usage testing
-4. NixOS packaging (Phase 3)
+1. Real-world usage testing
+2. Phase 3: NixOS ISO/installer (future)
+
+================================================================================
+SESSION: 2026-01-09 - Local Embeddings & NixOS Packaging
+================================================================================
+
+Integrated local Ollama embeddings for semantic search and created NixOS flake.
+
+LOCAL EMBEDDINGS:
+-----------------
+
+1. Pulled nomic-embed-text model (274MB)
+   ollama pull nomic-embed-text
+
+2. Fixed codex embedder to use Ollama HTTP API:
+   - Changed from CLI `ollama embeddings` (doesn't exist) to HTTP API
+   - URL: http://localhost:11434/api/embeddings
+   - Returns 768-dimensional vectors
+
+3. Fixed empty string fallback bug:
+   - Empty chunks were causing fallback to TF-IDF
+   - Now handles empty/whitespace gracefully
+
+SEMANTIC SEARCH TEST:
+---------------------
+
+  codex status
+  -> Backend: ollama
+  -> Files: 165, Chunks: 802
+
+  codex search "error handling and recovery"
+  -> Found: tools/loop/lib/checkpoint.py
+  -> Found: tools/error-db/errordb/database.py
+  -> Semantic matching works!
+
+NIXOS FLAKE:
+------------
+
+Created flake.nix with:
+
+1. Individual package derivations for all 12 tools
+2. Combined `daedalos` package (symlinkJoin)
+3. Development shell with all tools
+4. NixOS module for system integration
+
+Usage:
+  nix develop            # Dev shell with all tools
+  nix build .#loop       # Build individual tool
+  nix build              # Build all tools
+
+NixOS module options:
+  services.daedalos.enable = true
+  services.daedalos.defaultAgent = "opencode"
+  services.daedalos.enableDaemons = true
+
+FILES CREATED:
+  flake.nix              # Main flake definition
+  nix/README.txt         # NixOS integration docs
+
+CURRENT STATE:
+--------------
+
+Phase 2 COMPLETE:
+- All 12 tools implemented and working
+- MCP server exposing tools to Claude
+- Local semantic search with Ollama
+- NixOS flake for reproducible builds
+- Full end-to-end testing passed
+
+Next:
+- Phase 3: Full NixOS distribution (ISO builder, installer)
+- Real-world usage on actual projects
 
 ================================================================================

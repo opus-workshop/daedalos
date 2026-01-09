@@ -105,55 +105,40 @@ class OllamaEmbedder:
             return self._available
 
         try:
-            result = subprocess.run(
-                ["ollama", "list"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            self._available = result.returncode == 0
-            return self._available
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+            import urllib.request
+            import urllib.error
+
+            # Check if Ollama API is running
+            url = "http://localhost:11434/api/tags"
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+                # Check if our model is in the list
+                models = [m.get("name", "") for m in data.get("models", [])]
+                self._available = any(self.model in m for m in models)
+                return self._available
+        except (urllib.error.URLError, json.JSONDecodeError, TimeoutError):
             self._available = False
             return False
 
     def ensure_model(self) -> bool:
         """Ensure the embedding model is available."""
-        if not self.is_available():
-            return False
-
-        try:
-            result = subprocess.run(
-                ["ollama", "list"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if self.model not in result.stdout:
-                print(f"Pulling embedding model {self.model}...")
-                subprocess.run(
-                    ["ollama", "pull", self.model],
-                    timeout=300  # 5 minutes for model download
-                )
-            return True
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
-            return False
+        # is_available() already checks if model is present
+        return self.is_available()
 
     def embed(self, text: str) -> List[float]:
-        """Generate embedding using Ollama."""
+        """Generate embedding using Ollama HTTP API."""
         try:
-            # Use ollama's embeddings API
-            result = subprocess.run(
-                ["ollama", "embeddings", self.model],
-                input=json.dumps({"prompt": text[:2000]}),
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            if result.returncode == 0:
-                data = json.loads(result.stdout)
-                return data.get("embedding", [])
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
+            import urllib.request
+            import urllib.error
+
+            url = "http://localhost:11434/api/embeddings"
+            data = json.dumps({"model": self.model, "prompt": text[:2000]}).encode()
+            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read().decode())
+                return result.get("embedding", [])
+        except (urllib.error.URLError, json.JSONDecodeError, KeyError, TimeoutError):
             pass
 
         return []
@@ -192,12 +177,16 @@ class HybridEmbedder:
 
     def embed(self, text: str) -> List[float]:
         """Generate embedding using best available method."""
+        # Handle empty/whitespace text
+        if not text or not text.strip():
+            return [0.0] * 768 if self.use_ollama else self.tfidf.embed("")
+
         if self.use_ollama:
             embedding = self.ollama.embed(text)
             if embedding:
                 return embedding
-            # Fallback if Ollama fails
-            self._use_ollama = False
+            # Only fallback on actual errors, not empty input
+            # (empty input handled above)
 
         return self.tfidf.embed(text)
 
