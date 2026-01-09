@@ -15,6 +15,9 @@ from .state import Loop, LoopState, LoopStatus, LoopIteration, get_loop, list_lo
 from .bestofn import run_best_of_n, BranchResult, BestOfNResult
 from .workflow import Workflow, WorkflowRunner, load_workflow
 from .notify import notify, notify_loop_complete, NotifyLevel
+from .workspace import Workspace, WorkspaceState, Finding, Handoff, SubagentStatus, SubagentRecord
+from .subagent import Subagent, SubagentTask, SubagentResult, ParallelSubagentRunner, TEMPLATES
+from .orchestrator import Orchestrator, OrchestratorConfig, OrchestratorPhase, run_orchestrated_loop
 
 __all__ = [
     # Promise verification
@@ -51,4 +54,22 @@ __all__ = [
     "notify",
     "notify_loop_complete",
     "NotifyLevel",
+    # Workspace (orchestration)
+    "Workspace",
+    "WorkspaceState",
+    "Finding",
+    "Handoff",
+    "SubagentStatus",
+    "SubagentRecord",
+    # Subagents
+    "Subagent",
+    "SubagentTask",
+    "SubagentResult",
+    "ParallelSubagentRunner",
+    "TEMPLATES",
+    # Orchestrator
+    "Orchestrator",
+    "OrchestratorConfig",
+    "OrchestratorPhase",
+    "run_orchestrated_loop",
 ]

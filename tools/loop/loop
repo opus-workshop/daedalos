@@ -111,6 +111,8 @@ cmd_start() {
     local inject_file=""
     local background=false
     local notify=false
+    local orchestrate=false
+    local max_subagents=4
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -158,6 +160,14 @@ cmd_start() {
             --notify)
                 notify=true
                 shift
+                ;;
+            --orchestrate|-o)
+                orchestrate=true
+                shift
+                ;;
+            --max-subagents)
+                max_subagents="$2"
+                shift 2
                 ;;
             --help|-h)
                 cmd_start_help
@@ -241,7 +251,72 @@ def on_iteration(iteration):
         for line in lines:
             print(f'  {line}')
 
-if best_of > 0:
+orchestrate = $([[ "$orchestrate" == "true" ]] && echo "True" || echo "False")
+max_subagents = $max_subagents
+
+if orchestrate:
+    # Orchestrated multi-agent mode
+    from lib.orchestrator import Orchestrator, OrchestratorConfig, OrchestratorPhase
+    from lib.workspace import SubagentStatus
+
+    print(f'Starting orchestrated loop with {agent.name} agent')
+    print(f'Max subagents: {max_subagents}')
+    print()
+
+    config = OrchestratorConfig(
+        max_subagents=max_subagents,
+        max_subagent_iterations=3,
+        subagent_timeout=timeout,
+        verbose=True
+    )
+
+    def on_phase(phase):
+        print(f'\\n[PHASE] {phase.value.upper()}')
+
+    def on_subagent(subagent_id, status):
+        status_icons = {
+            'pending': '⏳',
+            'running': '🔄',
+            'completed': '✅',
+            'failed': '❌',
+            'cancelled': '🚫'
+        }
+        icon = status_icons.get(status.value, '❓')
+        print(f'  {icon} {subagent_id}: {status.value}')
+
+    orchestrator = Orchestrator(
+        task=prompt,
+        promise=promise,
+        working_dir=working_dir,
+        config=config,
+        agent=agent,
+        checkpoint=checkpoint,
+        on_phase=on_phase,
+        on_subagent=on_subagent
+    )
+
+    print(f'Loop ID: {orchestrator.loop_id}')
+    print()
+
+    success = orchestrator.run(max_iterations=max_iterations)
+
+    print()
+    status = orchestrator.get_status()
+    print(f'Total subagent iterations: {status[\"total_subagent_iterations\"]}')
+    print(f'Findings collected: {status[\"findings_count\"]}')
+
+    if success:
+        print(f'\\nOrchestrated loop completed!')
+        if do_notify:
+            notify_loop_complete(orchestrator.loop_id, prompt, status['iteration'], True)
+        sys.exit(0)
+    else:
+        print(f'\\nOrchestrated loop failed after {status[\"iteration\"]} iterations')
+        if do_notify:
+            notify_loop_complete(orchestrator.loop_id, prompt, status['iteration'], False)
+        sys.exit(1)
+
+elif best_of > 0:
     # Best-of-N mode
     print(f'Running {best_of} parallel branches...')
     result = run_best_of_n(
@@ -319,10 +394,24 @@ Options:
   --background, -b              Run in background
   --notify                      Send notification on completion
 
+Orchestration:
+  --orchestrate, -o             Enable multi-agent orchestration
+  --max-subagents <n>           Max concurrent subagents (default: 4)
+
+  Orchestration spawns specialized subagents (explorer, implementer, reviewer)
+  that work in parallel to solve complex tasks. The orchestrator:
+  1. Analyzes the task and plans phases (research -> implement -> verify)
+  2. Spawns explorer subagents to research the codebase in parallel
+  3. Synthesizes findings and hands off to implementer subagent
+  4. Verifies with reviewer subagent
+  5. Retries with targeted debugger if promise fails
+
 Examples:
   loop start "fix failing tests" --promise "npm test"
   loop start "add user auth" -p "./verify.sh" -n 20
   loop start "optimize queries" -p "make bench" --best-of 3
+  loop start "implement login flow" -p "npm test" --orchestrate
+  loop start "refactor auth system" -p "./verify.sh" -o --max-subagents 6
 EOF
 }
 

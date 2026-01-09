@@ -105,68 +105,38 @@ record_file_change() {
 }
 
 #-------------------------------------------------------------------------------
-# Daemon Mode
+# Daemon Mode (delegates to Python daemon)
 #-------------------------------------------------------------------------------
+
+PYTHON_DAEMON="${LIB_DIR}/../undod.py"
 
 start_daemon() {
     local project_path="${1:-.}"
-    local pid_file="${UNDO_DATA_DIR}/undod.pid"
+    project_path=$(cd "$project_path" && pwd)
 
-    # Check if already running
-    if [[ -f "$pid_file" ]]; then
-        local old_pid
-        old_pid=$(cat "$pid_file")
-        if kill -0 "$old_pid" 2>/dev/null; then
-            warn "Daemon already running (PID: $old_pid)"
-            return 1
-        fi
-    fi
-
-    # Start in background
-    cmd_watch "$project_path" &
+    # Start Python daemon in background
+    nohup python3 "$PYTHON_DAEMON" start "$project_path" > "${UNDO_DATA_DIR}/undod.log" 2>&1 &
     local pid=$!
 
-    echo "$pid" > "$pid_file"
+    echo "$pid" > "${UNDO_DATA_DIR}/undod.pid"
     info "Daemon started (PID: $pid)"
+    info "Web UI: http://localhost:7778"
+    info "Log: ${UNDO_DATA_DIR}/undod.log"
 }
 
 stop_daemon() {
+    python3 "$PYTHON_DAEMON" stop 2>/dev/null || true
+
     local pid_file="${UNDO_DATA_DIR}/undod.pid"
-
-    if [[ ! -f "$pid_file" ]]; then
-        info "Daemon not running"
-        return 0
-    fi
-
-    local pid
-    pid=$(cat "$pid_file")
-
-    if kill -0 "$pid" 2>/dev/null; then
-        kill "$pid"
+    if [[ -f "$pid_file" ]]; then
+        local pid
+        pid=$(cat "$pid_file")
+        kill "$pid" 2>/dev/null || true
         rm -f "$pid_file"
-        success "Daemon stopped"
-    else
-        rm -f "$pid_file"
-        info "Daemon was not running (stale pid file removed)"
     fi
+    success "Daemon stopped"
 }
 
 daemon_status() {
-    local pid_file="${UNDO_DATA_DIR}/undod.pid"
-
-    if [[ ! -f "$pid_file" ]]; then
-        echo "Daemon: not running"
-        return 1
-    fi
-
-    local pid
-    pid=$(cat "$pid_file")
-
-    if kill -0 "$pid" 2>/dev/null; then
-        echo "Daemon: running (PID: $pid)"
-        return 0
-    else
-        echo "Daemon: not running (stale pid file)"
-        return 1
-    fi
+    python3 "$PYTHON_DAEMON" status
 }

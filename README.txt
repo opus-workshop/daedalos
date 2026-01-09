@@ -94,8 +94,28 @@ AGENT - Multi-Agent Orchestration
 
   agent list                 # Show all agents
   agent spawn -n backend     # Start new agent
+  agent spawn -t explorer    # Start with template
   agent focus frontend       # Switch to agent
   agent search "auth"        # Search across all agents
+
+  Templates: explorer, implementer, reviewer, debugger, tester
+
+ORCHESTRATED LOOPS ★★
+  The loop can orchestrate multiple subagents for complex tasks.
+  Based on Anthropic's orchestrator-worker pattern (90% improvement).
+
+  loop start "implement auth" --promise "make test" --orchestrate
+
+  The orchestrator:
+    1. ANALYZE   - Break task into subtasks
+    2. DISPATCH  - Spawn specialized subagents (parallel)
+    3. SYNTHESIZE - Combine results
+    4. VERIFY    - Check against promise
+
+  Subagents run their own loops, share findings via workspace.
+
+  Example with custom subagent count:
+  loop start "refactor API" --promise "cargo test" --orchestrate --max-subagents 4
 
 PROJECT - Codebase Intelligence
   Pre-computed understanding of your codebase. Instant answers.
@@ -135,6 +155,19 @@ LSP-POOL - Pre-warmed Language Servers
   lsp-pool status            # Show warm servers
   lsp-pool warm typescript   # Pre-warm TypeScript server
   lsp-pool query hover src/app.ts:42:15
+
+UNDO - File-Level Time Machine
+  Every change is cheap to undo. Real-time file watching with SQLite timeline.
+
+  undo                       # Show timeline
+  undo last                  # Undo last change
+  undo last 3                # Undo last 3 changes
+  undo to <id>               # Restore to specific point
+  undo checkpoint "risky"    # Create named checkpoint
+  undo daemon start          # Start file watcher daemon
+  undo daemon status         # Check daemon status
+
+  Web UI available at http://localhost:7778 when daemon running.
 
 ERROR-DB - Error Pattern Database
   Learn once, fix forever. Community-shared error solutions.
@@ -198,12 +231,19 @@ IMPLEMENTATION STATUS
 [✓] PHASE 1: SPECIFICATIONS
     Complete specs and prompts for all tools
 
-[ ] PHASE 2: TOOL BUILDING
-    Build each tool from its prompt
+[✓] PHASE 2: TOOL BUILDING
+    All core tools implemented:
+    - loop: Full implementation with orchestration, best-of-N, workflows
+    - undo: Python daemon with watchdog, SQLite timeline, web UI
+    - verify, scratch, project, codex, context, error-db, agent
+    - MCP server (daedalos-mcp) exposing all tools
 
-[ ] PHASE 3: INTEGRATION
-    Hyprland, Waybar, tmux, Zsh configurations
-    loopd, mcp-hub, lsp-pool daemons
+[~] PHASE 3: INTEGRATION
+    In progress:
+    - loopd daemon (complete)
+    - undod daemon (complete - Python with watchdog)
+    - mcp-hub, lsp-pool daemons (pending)
+    - Hyprland, Waybar, tmux, Zsh configs (pending)
 
 [ ] PHASE 4: DISTRIBUTION
     NixOS configuration for full Daedalos system

@@ -1,0 +1,261 @@
+================================================================================
+              AGENT ORCHESTRATION IMPLEMENTATION PLAN
+                         2026-01-09
+================================================================================
+
+OVERVIEW
+--------
+Implement orchestrator-worker pattern for multi-agent collaboration.
+Loops become the container for orchestrated work.
+
+ARCHITECTURE
+------------
+
+                    loop start "task" --orchestrate
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │  ORCHESTRATOR   │
+                    │  (plans work)   │
+                    └────────┬────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+        ┌──────────┐  ┌──────────┐  ┌──────────┐
+        │ SUBAGENT │  │ SUBAGENT │  │ SUBAGENT │
+        │  LOOP 1  │  │  LOOP 2  │  │  LOOP 3  │
+        └──────────┘  └──────────┘  └──────────┘
+              │              │              │
+              └──────────────┼──────────────┘
+                             ▼
+                    ┌─────────────────┐
+                    │   WORKSPACE     │
+                    │ (shared state)  │
+                    └─────────────────┘
+
+FILES TO CREATE/MODIFY
+----------------------
+
+1. tools/loop/lib/orchestrator.py (NEW)
+   - OrchestratorAgent class
+   - Subagent spawning and management
+   - Parallel execution with ThreadPoolExecutor
+   - Result synthesis
+   - Iteration planning based on failures
+
+2. tools/loop/lib/workspace.py (NEW)
+   - Workspace class for shared state
+   - Findings storage/retrieval
+   - Handoff message passing
+   - Artifact management
+
+3. tools/loop/lib/subagent.py (NEW)
+   - SubagentLoop class
+   - Isolated context execution
+   - Result formatting for orchestrator
+   - Promise verification
+
+4. tools/loop/loop (MODIFY)
+   - Add --orchestrate flag
+   - Add --subagent flag (for when running as subagent)
+   - Add --workspace flag (path to shared workspace)
+
+5. tools/loop/lib/state.py (MODIFY)
+   - Add orchestration state to LoopState
+   - Track subagent IDs
+   - Store workspace path
+
+6. tools/undo/bin/undod (REWRITE)
+   - Proper daemon with file watching
+   - inotify/FSEvents for change detection
+   - Checkpoint creation on file changes
+   - Timeline management
+
+7. README.txt (REWRITE)
+   - Full documentation of all tools
+   - Orchestration examples
+   - Architecture overview
+
+IMPLEMENTATION ORDER
+--------------------
+
+Phase 1: Workspace (foundation)
+  - workspace.py: Create shared state management
+  - Test: Can create, read, write workspace
+
+Phase 2: Subagent (worker)
+  - subagent.py: Subagent loop execution
+  - Modify loop CLI for --subagent mode
+  - Test: Can run isolated subagent loop
+
+Phase 3: Orchestrator (coordinator)
+  - orchestrator.py: Planning and delegation
+  - Modify loop CLI for --orchestrate mode
+  - Test: Can spawn and coordinate subagents
+
+Phase 4: Integration
+  - Update state.py for orchestration tracking
+  - Update loopd for orchestrated loops
+  - Test: Full orchestrated loop lifecycle
+
+Phase 5: Undod
+  - Rewrite undod as proper daemon
+  - File watching with debouncing
+  - Test: Changes tracked automatically
+
+Phase 6: Documentation
+  - Rewrite README.txt
+  - Update research.txt
+
+DATA STRUCTURES
+---------------
+
+Workspace (workspace.json):
+{
+  "loop_id": "abc123",
+  "created": "2026-01-09T10:00:00Z",
+  "iteration": 1,
+  "orchestrator": {
+    "plan": ["research", "implement", "verify"],
+    "current_phase": "research"
+  },
+  "subagents": {
+    "explorer-1": {
+      "status": "completed",
+      "started": "...",
+      "finished": "...",
+      "promise_result": true
+    }
+  },
+  "findings": [
+    {
+      "from": "explorer-1",
+      "type": "research",
+      "content": "Found auth patterns in src/lib/server/auth.ts",
+      "files": ["src/lib/server/auth.ts"]
+    }
+  ],
+  "handoffs": [
+    {
+      "from": "orchestrator",
+      "to": "implementer-1",
+      "message": "Implement auth using patterns from explorer findings",
+      "context": ["findings/explorer-1.txt"]
+    }
+  ]
+}
+
+Subagent Task:
+{
+  "id": "explorer-1",
+  "type": "explorer",
+  "objective": "Find authentication patterns in the codebase",
+  "output_format": "markdown summary with file paths",
+  "tools": ["read", "grep", "glob"],
+  "boundaries": "Do not modify files. Research only.",
+  "promise": "test -f workspace/findings/explorer-1.txt",
+  "timeout": 120
+}
+
+CLI INTERFACE
+-------------
+
+# Start orchestrated loop
+loop start "implement user authentication" \
+  --promise "npm test" \
+  --orchestrate \
+  --max-subagents 4
+
+# Run as subagent (internal use)
+loop start "find auth patterns" \
+  --promise "test -f findings.txt" \
+  --subagent \
+  --workspace /path/to/workspace \
+  --report-to orchestrator
+
+# Check orchestration status
+loop status <id>
+# Shows: main loop status + subagent statuses
+
+# Watch orchestrated loop
+loop watch <id>
+# Shows: live view of orchestrator + subagents
+
+ORCHESTRATOR LOGIC
+------------------
+
+def plan_iteration(task, previous_results, failure_context):
+    """
+    Orchestrator planning logic.
+
+    1. Analyze task complexity
+    2. If first iteration: plan phases (research -> implement -> verify)
+    3. If retry: analyze failure, plan targeted fix
+    4. Return list of subagent tasks
+    """
+
+def execute_phase(phase, subagent_tasks):
+    """
+    Execute a phase of work.
+
+    1. Spawn subagents in parallel (where independent)
+    2. Wait for completion
+    3. Collect results to workspace
+    4. Return synthesis
+    """
+
+def synthesize_results(findings):
+    """
+    Combine subagent findings into coherent context.
+
+    1. Deduplicate overlapping findings
+    2. Resolve conflicts
+    3. Format for next phase or main agent
+    """
+
+SUBAGENT TEMPLATES
+------------------
+
+explorer:
+  objective_prefix: "Research and find information about"
+  tools: [read, grep, glob, web_search]
+  boundaries: "Read-only. Do not modify files."
+  output: "Markdown summary with relevant file paths and code snippets"
+
+implementer:
+  objective_prefix: "Implement the following"
+  tools: [read, write, edit, bash]
+  boundaries: "Modify only files relevant to the task."
+  output: "List of files modified and summary of changes"
+
+reviewer:
+  objective_prefix: "Review and verify"
+  tools: [read, grep, bash]
+  boundaries: "Do not modify files. Report issues only."
+  output: "List of issues found with severity and location"
+
+debugger:
+  objective_prefix: "Debug and fix"
+  tools: [read, write, edit, bash]
+  boundaries: "Focus on the specific error. Minimal changes."
+  output: "Root cause analysis and fix description"
+
+tester:
+  objective_prefix: "Write tests for"
+  tools: [read, write, bash]
+  boundaries: "Only create/modify test files."
+  output: "Test file paths and coverage summary"
+
+SUCCESS CRITERIA
+----------------
+
+1. `loop start "task" --orchestrate` spawns coordinator
+2. Coordinator can spawn parallel subagents
+3. Subagents execute in isolated context
+4. Results flow to shared workspace
+5. Orchestrator synthesizes and plans next steps
+6. Main promise verified after orchestration
+7. Full lifecycle visible in `loop watch`
+8. Waybar shows orchestrated loop status
+
+================================================================================
