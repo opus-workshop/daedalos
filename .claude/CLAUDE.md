@@ -13,7 +13,7 @@ A Linux distribution designed BY AI, FOR AI development.
 ## Architecture
 
 ```
-tools/
+daedalos-tools/
 ├── loop/        # THE CORE - iterate until promise met
 ├── sandbox/     # Filesystem isolation (Btrfs/overlay)
 ├── mcp-hub/     # MCP server management

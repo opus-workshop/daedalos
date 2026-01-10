@@ -25,6 +25,10 @@ source "${LIB_DIR}/agents.sh"
 source "${LIB_DIR}/status.sh"
 source "${LIB_DIR}/search.sh"
 source "${LIB_DIR}/templates.sh"
+source "${LIB_DIR}/snapshot.sh"
+source "${LIB_DIR}/comms.sh"
+source "${LIB_DIR}/workflow.sh"
+source "${LIB_DIR}/groups.sh"
 
 # Check requirements on startup
 check_requirements
@@ -458,15 +462,291 @@ cmd_resume() {
     fi
 }
 
-# Command: snapshot (placeholder)
+# Command: snapshot
 cmd_snapshot() {
-    warn "Snapshot functionality not yet implemented"
-    echo "Would snapshot agent states to: ${DATA_DIR}/snapshots/"
+    local action="${1:-create}"
+
+    case "$action" in
+        create)
+            shift
+            snapshot_create "$@"
+            ;;
+        list|ls)
+            shift
+            snapshot_list "${1:-false}"
+            ;;
+        show)
+            shift
+            snapshot_show "$@"
+            ;;
+        delete|rm)
+            shift
+            snapshot_delete "$@"
+            ;;
+        *)
+            # If first arg doesn't look like a subcommand, treat as agent name
+            if [[ "$action" != -* ]] && ! [[ "$action" =~ ^(create|list|ls|show|delete|rm)$ ]]; then
+                snapshot_create "$@"
+            else
+                die "Unknown snapshot action: $action"
+            fi
+            ;;
+    esac
 }
 
-# Command: restore (placeholder)
+# Command: restore
 cmd_restore() {
-    warn "Restore functionality not yet implemented"
+    snapshot_restore "$@"
+}
+
+# Command: send - send message to another agent
+cmd_send() {
+    local to=""
+    local msg_type="message"
+    local content=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --to|-t) to="$2"; shift 2 ;;
+            --type) msg_type="$2"; shift 2 ;;
+            -*) die "Unknown option: $1" ;;
+            *)
+                if [[ -z "$to" ]]; then
+                    to="$1"
+                else
+                    content="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$to" ]] || [[ -z "$content" ]]; then
+        die "Usage: agent send <to_agent> <message>"
+    fi
+
+    # Identify "from" as current agent (or default to "user")
+    local from="${DAEDALOS_AGENT_NAME:-user}"
+
+    comms_send "$to" "$from" "$msg_type" "$content"
+    success "Message sent to: $to"
+}
+
+# Command: inbox - check messages
+cmd_inbox() {
+    local agent="${DAEDALOS_AGENT_NAME:-}"
+    local all=false
+    local as_json=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --agent|-a) agent="$2"; shift 2 ;;
+            --all) all=true; shift ;;
+            --json) as_json=true; shift ;;
+            -*) die "Unknown option: $1" ;;
+            *) agent="$1"; shift ;;
+        esac
+    done
+
+    if [[ -z "$agent" ]]; then
+        die "Usage: agent inbox <agent_name> or set DAEDALOS_AGENT_NAME"
+    fi
+
+    local args=("$agent")
+    [[ "$all" == "true" ]] && args+=("--all")
+    [[ "$as_json" == "true" ]] && args+=("--json")
+
+    comms_inbox "${args[@]}"
+}
+
+# Command: help - request help from another agent
+cmd_request_help() {
+    local from="${DAEDALOS_AGENT_NAME:-user}"
+    local task=""
+    local template=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from|-f) from="$2"; shift 2 ;;
+            --template|-t) template="$2"; shift 2 ;;
+            -*) die "Unknown option: $1" ;;
+            *) task="$1"; shift ;;
+        esac
+    done
+
+    if [[ -z "$task" ]]; then
+        die "Usage: agent request-help <task_description>"
+    fi
+
+    local args=("$from" "$task")
+    [[ -n "$template" ]] && args+=("--template" "$template")
+
+    comms_help "${args[@]}"
+}
+
+# Command: share - share file with agents
+cmd_share() {
+    local from="${DAEDALOS_AGENT_NAME:-user}"
+    local file=""
+    local to=""
+    local name=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from|-f) from="$2"; shift 2 ;;
+            --to|-t) to="$2"; shift 2 ;;
+            --name|-n) name="$2"; shift 2 ;;
+            -*) die "Unknown option: $1" ;;
+            *) file="$1"; shift ;;
+        esac
+    done
+
+    if [[ -z "$file" ]]; then
+        die "Usage: agent share <file_path>"
+    fi
+
+    local args=("$from" "$file")
+    [[ -n "$to" ]] && args+=("--to" "$to")
+    [[ -n "$name" ]] && args+=("--name" "$name")
+
+    comms_share "${args[@]}"
+}
+
+# Command: artifacts - list shared artifacts
+cmd_artifacts() {
+    local as_json=false
+    [[ "${1:-}" == "--json" ]] && as_json=true
+    comms_artifacts "$as_json"
+}
+
+# Command: broadcast - send to all agents
+cmd_broadcast() {
+    local from="${DAEDALOS_AGENT_NAME:-user}"
+    local message=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from|-f) from="$2"; shift 2 ;;
+            -*) die "Unknown option: $1" ;;
+            *) message="$1"; shift ;;
+        esac
+    done
+
+    if [[ -z "$message" ]]; then
+        die "Usage: agent broadcast <message>"
+    fi
+
+    comms_broadcast "$from" "$message"
+}
+
+# Command: workflow - manage multi-agent workflows
+cmd_workflow() {
+    local action="${1:-list}"
+    shift || true
+
+    case "$action" in
+        list|ls)
+            workflow_list "${1:-false}"
+            ;;
+        show)
+            workflow_show "$@"
+            ;;
+        start|run)
+            workflow_start "$@"
+            ;;
+        status)
+            workflow_status "$@"
+            ;;
+        stop)
+            workflow_stop "$@"
+            ;;
+        *)
+            # If it looks like a workflow name, try to start it
+            if [[ -f "${WORKFLOWS_DIR}/${action}.yaml" ]]; then
+                workflow_start "$action" "$@"
+            else
+                die "Unknown workflow action: $action"
+            fi
+            ;;
+    esac
+}
+
+# Command: group - manage agent groups
+cmd_group() {
+    local action="${1:-list}"
+    shift || true
+
+    case "$action" in
+        list|ls)
+            groups_list "${1:-false}"
+            ;;
+        create|new)
+            if [[ $# -eq 0 ]]; then
+                die "Usage: agent group create <name> [description]"
+            fi
+            groups_create "$@"
+            ;;
+        delete|rm)
+            if [[ $# -eq 0 ]]; then
+                die "Usage: agent group delete <name>"
+            fi
+            groups_delete "$@"
+            ;;
+        show)
+            if [[ $# -eq 0 ]]; then
+                die "Usage: agent group show <name>"
+            fi
+            groups_show "$@"
+            ;;
+        add)
+            if [[ $# -lt 2 ]]; then
+                die "Usage: agent group add <group> <agent> [agent...]"
+            fi
+            groups_add "$@"
+            ;;
+        remove)
+            if [[ $# -lt 2 ]]; then
+                die "Usage: agent group remove <group> <agent> [agent...]"
+            fi
+            groups_remove "$@"
+            ;;
+        kill)
+            if [[ $# -eq 0 ]]; then
+                die "Usage: agent group kill <name>"
+            fi
+            local name="$1"
+            local force=false
+            [[ "${2:-}" == "--force" ]] && force=true
+            groups_kill "$name" "$force"
+            ;;
+        pause)
+            if [[ $# -eq 0 ]]; then
+                die "Usage: agent group pause <name>"
+            fi
+            groups_pause "$1"
+            ;;
+        resume)
+            if [[ $# -eq 0 ]]; then
+                die "Usage: agent group resume <name>"
+            fi
+            groups_resume "$1"
+            ;;
+        send)
+            if [[ $# -lt 2 ]]; then
+                die "Usage: agent group send <group> <message>"
+            fi
+            groups_send "$1" "$2"
+            ;;
+        team)
+            if [[ $# -lt 2 ]]; then
+                die "Usage: agent group team <name> <project> [templates...]"
+            fi
+            groups_spawn_team "$@"
+            ;;
+        *)
+            die "Unknown group action: $action"
+            ;;
+    esac
 }
 
 # Command: templates
@@ -520,8 +800,49 @@ COMMANDS:
     search <query>          Search across agents
     pause <name|slot>       Pause an agent
     resume <name|slot>      Resume a paused agent
+    snapshot                Create/manage snapshots
+    restore <snapshot>      Restore agents from snapshot
     templates               Manage templates
     help                    Show this help
+
+SNAPSHOT COMMANDS:
+    snapshot [name] --all   Snapshot all agents (or named agent)
+    snapshot list           List available snapshots
+    snapshot show <name>    Show snapshot details
+    snapshot delete <name>  Delete a snapshot
+    restore <snapshot>      Restore agents from snapshot
+
+COMMUNICATION COMMANDS:
+    send <agent> <msg>      Send message to an agent
+    inbox <agent>           Check agent's messages
+    request-help <task>     Request help (spawns helper if needed)
+    share <file>            Share file with other agents
+    artifacts               List shared artifacts
+    broadcast <msg>         Send message to all agents
+
+WORKFLOW COMMANDS:
+    workflow list           List available workflows
+    workflow show <name>    Show workflow definition
+    workflow start <w> <t>  Start workflow with task
+    workflow status [id]    Show workflow status
+    workflow stop <id>      Stop a running workflow
+
+BUILT-IN WORKFLOWS:
+    feature                 Explorer -> Planner -> Implementer -> Reviewer
+    review                  Parallel: Correctness + Security + Style
+    bugfix                  Investigate -> Fix -> Verify
+
+GROUP COMMANDS:
+    group list              List all groups
+    group create <name>     Create a new group
+    group show <name>       Show group details
+    group add <g> <agent>   Add agent(s) to group
+    group remove <g> <a>    Remove agent(s) from group
+    group kill <name>       Kill all agents in group
+    group pause <name>      Pause all agents in group
+    group resume <name>     Resume all agents in group
+    group send <g> <msg>    Send message to group
+    group team <n> <proj>   Spawn a team with default templates
 
 SPAWN OPTIONS:
     -n, --name <name>       Agent name
@@ -581,18 +902,29 @@ show_version() {
 # Main dispatch
 main() {
     case "${1:-help}" in
-        list)      shift; cmd_list "$@" ;;
-        spawn)     shift; cmd_spawn "$@" ;;
-        focus)     shift; cmd_focus "$@" ;;
-        status)    shift; cmd_status "$@" ;;
-        kill)      shift; cmd_kill "$@" ;;
-        logs)      shift; cmd_logs "$@" ;;
-        search)    shift; cmd_search "$@" ;;
-        pause)     shift; cmd_pause "$@" ;;
-        resume)    shift; cmd_resume "$@" ;;
-        snapshot)  shift; cmd_snapshot "$@" ;;
-        restore)   shift; cmd_restore "$@" ;;
-        templates) shift; cmd_templates "$@" ;;
+        list)         shift; cmd_list "$@" ;;
+        spawn)        shift; cmd_spawn "$@" ;;
+        focus)        shift; cmd_focus "$@" ;;
+        status)       shift; cmd_status "$@" ;;
+        kill)         shift; cmd_kill "$@" ;;
+        logs)         shift; cmd_logs "$@" ;;
+        search)       shift; cmd_search "$@" ;;
+        pause)        shift; cmd_pause "$@" ;;
+        resume)       shift; cmd_resume "$@" ;;
+        snapshot)     shift; cmd_snapshot "$@" ;;
+        restore)      shift; cmd_restore "$@" ;;
+        templates)    shift; cmd_templates "$@" ;;
+        # Communication commands
+        send)         shift; cmd_send "$@" ;;
+        inbox)        shift; cmd_inbox "$@" ;;
+        request-help) shift; cmd_request_help "$@" ;;
+        share)        shift; cmd_share "$@" ;;
+        artifacts)    shift; cmd_artifacts "$@" ;;
+        broadcast)    shift; cmd_broadcast "$@" ;;
+        # Workflow commands
+        workflow)     shift; cmd_workflow "$@" ;;
+        # Group commands
+        group)        shift; cmd_group "$@" ;;
         version|--version|-v) show_version ;;
         help|--help|-h) show_help ;;
         *)         echo "Unknown command: $1"; show_help; exit 1 ;;

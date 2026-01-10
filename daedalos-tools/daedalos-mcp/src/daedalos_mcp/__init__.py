@@ -276,6 +276,86 @@ TOOLS = [
             "required": ["name"],
         },
     ),
+
+    # Agent snapshots
+    Tool(
+        name="agent_snapshot",
+        description="Create a snapshot of agent state(s) for later restoration",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Agent name to snapshot (or omit for --all)"},
+                "all": {"type": "boolean", "description": "Snapshot all agents", "default": False},
+                "snapshot_name": {"type": "string", "description": "Name for this snapshot"},
+            },
+        },
+    ),
+    Tool(
+        name="agent_snapshot_list",
+        description="List available agent snapshots",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="agent_restore",
+        description="Restore agent(s) from a snapshot",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "snapshot": {"type": "string", "description": "Snapshot name to restore from"},
+                "agent": {"type": "string", "description": "Restore only this agent from snapshot"},
+            },
+            "required": ["snapshot"],
+        },
+    ),
+
+    # Inter-agent communication
+    Tool(
+        name="agent_send",
+        description="Send a message to another agent",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Agent to send message to"},
+                "message": {"type": "string", "description": "Message content"},
+            },
+            "required": ["to", "message"],
+        },
+    ),
+    Tool(
+        name="agent_inbox",
+        description="Check messages for an agent",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "agent": {"type": "string", "description": "Agent name to check inbox"},
+                "all": {"type": "boolean", "description": "Show all messages including read", "default": False},
+            },
+            "required": ["agent"],
+        },
+    ),
+    Tool(
+        name="agent_broadcast",
+        description="Broadcast a message to all agents",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "Message to broadcast"},
+            },
+            "required": ["message"],
+        },
+    ),
+    Tool(
+        name="agent_request_help",
+        description="Request help from another agent (spawns helper if needed)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Task description to get help with"},
+                "template": {"type": "string", "description": "Preferred template for helper agent"},
+            },
+            "required": ["task"],
+        },
+    ),
 ]
 
 
@@ -437,6 +517,45 @@ async def handle_tool(name: str, arguments: dict[str, Any]) -> str:
         args = ["kill", arguments["name"]]
         if arguments.get("force"):
             args.append("--force")
+        return run_tool("agent", args)
+
+    # Agent snapshot tools
+    elif name == "agent_snapshot":
+        args = ["snapshot"]
+        if arguments.get("name"):
+            args.append(arguments["name"])
+        if arguments.get("all"):
+            args.append("--all")
+        if arguments.get("snapshot_name"):
+            args.extend(["--name", arguments["snapshot_name"]])
+        return run_tool("agent", args)
+
+    elif name == "agent_snapshot_list":
+        return run_tool("agent", ["snapshot", "list"])
+
+    elif name == "agent_restore":
+        args = ["restore", arguments["snapshot"]]
+        if arguments.get("agent"):
+            args.extend(["--agent", arguments["agent"]])
+        return run_tool("agent", args)
+
+    # Inter-agent communication
+    elif name == "agent_send":
+        return run_tool("agent", ["send", arguments["to"], arguments["message"]])
+
+    elif name == "agent_inbox":
+        args = ["inbox", arguments["agent"]]
+        if arguments.get("all"):
+            args.append("--all")
+        return run_tool("agent", args)
+
+    elif name == "agent_broadcast":
+        return run_tool("agent", ["broadcast", arguments["message"]])
+
+    elif name == "agent_request_help":
+        args = ["request-help", arguments["task"]]
+        if arguments.get("template"):
+            args.extend(["--template", arguments["template"]])
         return run_tool("agent", args)
 
     else:

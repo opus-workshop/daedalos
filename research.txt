@@ -552,3 +552,136 @@ The tagline was always "BY AI, FOR AI Development"
 Now we have an actual OS to prove it.
 
 ================================================================================
+SESSION: 2026-01-10 - Agent Orchestration & Folder Rename
+================================================================================
+
+Renamed tools/ to daedalos-tools/ and implemented comprehensive agent orchestration.
+
+FOLDER RENAME:
+--------------
+
+Renamed tools/ -> daedalos-tools/ for clearer naming convention.
+Updated flake.nix and CLAUDE.md references accordingly.
+
+AGENT ORCHESTRATION IMPROVEMENTS:
+---------------------------------
+
+Implemented four major features for multi-agent coordination:
+
+1. SNAPSHOT/RESTORE (daedalos-tools/agent/lib/snapshot.sh)
+
+   Captures and restores complete agent state:
+   - Agent metadata (name, project, template, status)
+   - tmux scrollback history (conversation context)
+   - Git state (branch, staged changes, stash)
+   - Message queue state
+
+   Commands:
+     agent snapshot <name> [description]     # Create snapshot
+     agent snapshot list                     # List all snapshots
+     agent snapshot show <id>                # Show snapshot details
+     agent restore <id> [--new-name <name>]  # Restore from snapshot
+
+2. INTER-AGENT COMMUNICATION (daedalos-tools/agent/lib/comms.sh)
+
+   File-based message queue system with JSONL storage:
+
+   Message Queue:
+     agent send <to> <message>               # Send message to agent
+     agent inbox [--all]                     # Check inbox
+
+   Help Requests:
+     agent help <task> [--template <t>]      # Request help (spawns helper if needed)
+
+   Shared Workspace:
+     agent share <file> [--to <agent>]       # Share file/artifact
+     agent artifacts                         # List shared artifacts
+
+   Broadcast:
+     agent broadcast <message>               # Message all agents
+
+3. WORKFLOW PIPELINES (daedalos-tools/agent/lib/workflow.sh)
+
+   YAML-defined multi-agent workflows with stage sequencing:
+
+   Built-in Workflows:
+     feature   - explore -> plan -> implement -> review (sequential)
+     review    - correctness + security + style (parallel)
+     bugfix    - investigate -> fix -> verify (sequential)
+
+   Commands:
+     agent workflow list                     # Show available workflows
+     agent workflow show <name>              # Show workflow details
+     agent workflow start <name> <task>      # Start workflow
+     agent workflow status [id]              # Check progress
+     agent workflow stop <id>                # Stop running workflow
+
+   Features:
+     - Sequential or parallel stage execution
+     - Context passing between stages (exploration_summary, implementation_plan)
+     - Per-stage template selection
+     - Timeout handling per stage
+
+4. AGENT GROUPS (daedalos-tools/agent/lib/groups.sh)
+
+   Named collections of agents for batch operations:
+
+   CRUD:
+     agent group create <name> [desc]        # Create group
+     agent group delete <name>               # Delete group
+     agent group list                        # List all groups
+     agent group show <name>                 # Show group details
+
+   Membership:
+     agent group add <group> <agent>...      # Add agents to group
+     agent group remove <group> <agent>...   # Remove agents from group
+
+   Batch Operations:
+     agent group kill <group>                # Kill all agents in group
+     agent group pause <group>               # Pause all agents
+     agent group resume <group>              # Resume all agents
+     agent group send <group> <message>      # Message all agents
+     agent group spawn <group> <project>     # Spawn team from templates
+
+MCP SERVER UPDATES:
+-------------------
+
+Added new tools to daedalos-mcp:
+  - agent_snapshot        # Create agent snapshot
+  - agent_snapshot_list   # List snapshots
+  - agent_restore         # Restore from snapshot
+  - agent_send            # Send message to agent
+  - agent_inbox           # Check agent inbox
+  - agent_broadcast       # Broadcast to all agents
+  - agent_request_help    # Request help from agents
+
+FILES CREATED:
+--------------
+
+daedalos-tools/agent/lib/
+├── snapshot.sh           # Snapshot/restore (~150 lines)
+├── comms.sh              # Inter-agent communication (~425 lines)
+├── workflow.sh           # Workflow pipelines (~520 lines)
+└── groups.sh             # Agent groups (~365 lines)
+
+ARCHITECTURAL NOTES:
+--------------------
+
+All features follow Daedalos conventions:
+- State stored as JSON/JSONL in ~/.local/share/daedalos/agent/
+- Workflows defined in YAML at ~/.config/daedalos/agent/workflows/
+- Unix philosophy: small composable commands
+- Designed for scripting and automation
+
+The workflow system enables patterns like:
+  agent workflow start feature "Add user authentication"
+
+Which automatically:
+  1. Spawns explorer to understand codebase
+  2. Passes findings to implementer for planning
+  3. Implementer executes the plan
+  4. Reviewer checks the result
+
+Each stage is a real Claude agent in a tmux session.
+
+================================================================================

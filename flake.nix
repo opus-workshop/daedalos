@@ -26,7 +26,7 @@
           loop = pkgs.stdenv.mkDerivation {
             pname = "daedalos-loop";
             version = "1.0.0";
-            src = ./tools/loop;
+            src = ./daedalos-tools/loop;
 
             nativeBuildInputs = [ pkgs.makeWrapper ];
             buildInputs = [ pkgs.bash pythonEnv ];
@@ -57,7 +57,7 @@
           verify = pkgs.stdenv.mkDerivation {
             pname = "daedalos-verify";
             version = "1.0.0";
-            src = ./tools/verify;
+            src = ./daedalos-tools/verify;
 
             nativeBuildInputs = [ pkgs.makeWrapper ];
             buildInputs = [ pkgs.bash ];
@@ -83,7 +83,7 @@
           undo = pkgs.stdenv.mkDerivation {
             pname = "daedalos-undo";
             version = "1.0.0";
-            src = ./tools/undo;
+            src = ./daedalos-tools/undo;
 
             nativeBuildInputs = [ pkgs.makeWrapper ];
             buildInputs = [ pkgs.bash pkgs.sqlite ];
@@ -107,7 +107,7 @@
           project = pkgs.python312Packages.buildPythonApplication {
             pname = "daedalos-project";
             version = "1.0.0";
-            src = ./tools/project;
+            src = ./daedalos-tools/project;
 
             propagatedBuildInputs = with pkgs.python312Packages; [
               click
@@ -121,7 +121,7 @@
           codex = pkgs.python312Packages.buildPythonApplication {
             pname = "daedalos-codex";
             version = "1.0.0";
-            src = ./tools/codex;
+            src = ./daedalos-tools/codex;
 
             propagatedBuildInputs = with pkgs.python312Packages; [
               click
@@ -135,7 +135,7 @@
           context = pkgs.python312Packages.buildPythonApplication {
             pname = "daedalos-context";
             version = "1.0.0";
-            src = ./tools/context;
+            src = ./daedalos-tools/context;
 
             propagatedBuildInputs = with pkgs.python312Packages; [
               click
@@ -148,7 +148,7 @@
           error-db = pkgs.stdenv.mkDerivation {
             pname = "daedalos-error-db";
             version = "1.0.0";
-            src = ./tools/error-db;
+            src = ./daedalos-tools/error-db;
 
             nativeBuildInputs = [ pkgs.makeWrapper ];
             buildInputs = [ pythonEnv ];
@@ -169,7 +169,7 @@
           scratch = pkgs.stdenv.mkDerivation {
             pname = "daedalos-scratch";
             version = "1.0.0";
-            src = ./tools/scratch;
+            src = ./daedalos-tools/scratch;
 
             nativeBuildInputs = [ pkgs.makeWrapper ];
             buildInputs = [ pkgs.bash pkgs.git ];
@@ -189,7 +189,7 @@
           agent = pkgs.stdenv.mkDerivation {
             pname = "daedalos-agent";
             version = "1.0.0";
-            src = ./tools/agent;
+            src = ./daedalos-tools/agent;
 
             nativeBuildInputs = [ pkgs.makeWrapper ];
             buildInputs = [ pkgs.bash pkgs.tmux pythonEnv ];
@@ -210,7 +210,7 @@
           sandbox = pkgs.stdenv.mkDerivation {
             pname = "daedalos-sandbox";
             version = "1.0.0";
-            src = ./tools/sandbox;
+            src = ./daedalos-tools/sandbox;
 
             nativeBuildInputs = [ pkgs.makeWrapper ];
             buildInputs = [ pkgs.bash ];
@@ -230,7 +230,7 @@
           mcp-hub = pkgs.stdenv.mkDerivation {
             pname = "daedalos-mcp-hub";
             version = "1.0.0";
-            src = ./tools/mcp-hub;
+            src = ./daedalos-tools/mcp-hub;
 
             nativeBuildInputs = [ pkgs.makeWrapper ];
             buildInputs = [ pythonEnv ];
@@ -251,7 +251,7 @@
           lsp-pool = pkgs.stdenv.mkDerivation {
             pname = "daedalos-lsp-pool";
             version = "1.0.0";
-            src = ./tools/lsp-pool;
+            src = ./daedalos-tools/lsp-pool;
 
             nativeBuildInputs = [ pkgs.makeWrapper ];
             buildInputs = [ pythonEnv ];
@@ -272,7 +272,7 @@
           daedalos-mcp = pkgs.python312Packages.buildPythonApplication {
             pname = "daedalos-mcp";
             version = "1.0.0";
-            src = ./tools/daedalos-mcp;
+            src = ./daedalos-tools/daedalos-mcp;
 
             propagatedBuildInputs = with pkgs.python312Packages; [
               mcp
