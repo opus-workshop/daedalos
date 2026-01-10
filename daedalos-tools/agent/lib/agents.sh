@@ -144,7 +144,7 @@ agents_next_slot() {
     max_slots=$(jq -r '.max_slots // 9' "$AGENTS_FILE")
 
     # Get used slots
-    local -a used_slots
+    local -a used_slots=()
     while IFS= read -r slot; do
         [[ -n "$slot" ]] && used_slots+=("$slot")
     done < <(jq -r '.agents[].slot' "$AGENTS_FILE" 2>/dev/null)
@@ -152,12 +152,15 @@ agents_next_slot() {
     # Find first available slot
     for ((i=1; i<=max_slots; i++)); do
         local found=0
-        for used in "${used_slots[@]}"; do
-            if [[ "$used" == "$i" ]]; then
-                found=1
-                break
-            fi
-        done
+        # Only iterate if array is non-empty
+        if [[ ${#used_slots[@]} -gt 0 ]]; then
+            for used in "${used_slots[@]}"; do
+                if [[ "$used" == "$i" ]]; then
+                    found=1
+                    break
+                fi
+            done
+        fi
         if [[ $found -eq 0 ]]; then
             echo "$i"
             return 0
@@ -289,4 +292,108 @@ agents_at_limit() {
     count=$(agents_count)
     max=$(jq -r '.max_slots // 9' "$AGENTS_FILE")
     [[ $count -ge $max ]]
+}
+
+# ============================================================================
+# EXTERNAL AGENT SUPPORT (Claude Code terminals, etc.)
+# ============================================================================
+
+# Create an external agent entry (not managed by tmux)
+# Usage: agents_create_external <name> <project> [type]
+agents_create_external() {
+    local name="$1"
+    local project="$2"
+    local agent_type="${3:-claude-code}"
+
+    agents_init
+
+    if agents_exists "$name"; then
+        die "Agent already exists: $name"
+    fi
+
+    local slot
+    slot=$(agents_next_slot) || die "No available slots"
+
+    local timestamp
+    timestamp=$(iso_timestamp)
+
+    local pid=$$  # Current shell's PID
+
+    local tmp="${AGENTS_FILE}.tmp.$$"
+    jq --arg name "$name" \
+       --arg project "$project" \
+       --arg agent_type "$agent_type" \
+       --argjson slot "$slot" \
+       --argjson pid "$pid" \
+       --arg timestamp "$timestamp" \
+       '.agents[$name] = {
+           "name": $name,
+           "slot": $slot,
+           "project": $project,
+           "template": "external",
+           "sandbox": "",
+           "tmux_session": "",
+           "agent_type": $agent_type,
+           "pid": $pid,
+           "created": $timestamp,
+           "status": "active",
+           "last_activity": $timestamp
+       }' "$AGENTS_FILE" > "$tmp" && mv "$tmp" "$AGENTS_FILE"
+
+    echo "$name"
+}
+
+# Check if agent is external (not tmux-managed)
+agents_is_external() {
+    local name="$1"
+    local agent
+    agent=$(agents_get "$name")
+    if [[ -n "$agent" ]]; then
+        local tmux_session
+        tmux_session=$(echo "$agent" | jq -r '.tmux_session // ""')
+        [[ -z "$tmux_session" || "$tmux_session" == "null" ]]
+    else
+        return 1
+    fi
+}
+
+# Get current agent name from environment or PID
+agents_whoami() {
+    # First check environment variable
+    if [[ -n "${DAEDALOS_AGENT_NAME:-}" ]]; then
+        echo "$DAEDALOS_AGENT_NAME"
+        return 0
+    fi
+
+    # Fall back to finding agent by PID
+    local my_pid=$$
+    local found=""
+
+    while IFS= read -r agent_json; do
+        [[ -z "$agent_json" ]] && continue
+        local pid name
+        pid=$(echo "$agent_json" | jq -r '.pid // 0')
+        name=$(echo "$agent_json" | jq -r '.name')
+
+        if [[ "$pid" == "$my_pid" ]]; then
+            found="$name"
+            break
+        fi
+    done < <(agents_all)
+
+    if [[ -n "$found" ]]; then
+        echo "$found"
+        return 0
+    fi
+
+    return 1
+}
+
+# Update heartbeat for external agent
+agents_heartbeat() {
+    local name="$1"
+    if agents_exists "$name"; then
+        agents_update "$name" "last_activity" "$(iso_timestamp)"
+        agents_update "$name" "pid" "$$"
+    fi
 }

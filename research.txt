@@ -1701,3 +1701,188 @@ Git:
 Each pattern has a helpful solution explaining the cause and fix.
 
 ================================================================================
+SESSION: 2026-01-10 - Inter-Agent Communication for Claude Code
+================================================================================
+
+Built a bridge so Claude Code terminals can register as agents and communicate
+with each other across projects.
+
+THE PROBLEM:
+------------
+
+User has 6 terminals running:
+  - 4 in ShipCrew project
+  - 2 in Daedalos project
+
+The agent tool had messaging, but only for tmux-spawned agents. Claude Code
+terminals couldn't talk to each other.
+
+THE SOLUTION:
+-------------
+
+Added external agent registration:
+
+  agent register <name>      # Register current terminal as an agent
+  agent unregister [name]    # Unregister
+  agent whoami               # Show current identity
+
+Now Claude Code terminals can:
+
+  # Terminal 1 (in Daedalos)
+  export DAEDALOS_AGENT_NAME=daedalos-main
+  agent send shipcrew-1 "Found auth bug - check line 42"
+
+  # Terminal 2 (in ShipCrew)
+  export DAEDALOS_AGENT_NAME=shipcrew-1
+  agent inbox                # See the message!
+  agent broadcast "Starting DB migration"
+
+IMPLEMENTATION:
+---------------
+
+1. agents.sh additions:
+   - agents_create_external(): Create non-tmux agent entries
+   - agents_is_external(): Check if agent is external
+   - agents_whoami(): Get current agent from env or PID
+   - agents_heartbeat(): Update activity timestamp
+
+2. agent bin additions:
+   - cmd_register: Register with name, project, type
+   - cmd_unregister: Remove registration
+   - cmd_whoami: Show identity
+
+3. Fixed agents_next_slot() array bug (empty array with set -u)
+
+4. MCP tools added:
+   - agent_register
+   - agent_unregister
+   - agent_whoami
+
+USAGE:
+------
+
+In each Claude Code terminal:
+
+  # One-time registration
+  agent register shipcrew-frontend -p /path/to/project
+  export DAEDALOS_AGENT_NAME=shipcrew-frontend
+
+  # Messaging
+  agent send other-agent "message"
+  agent inbox
+  agent broadcast "announcement"
+
+  # Shared files
+  agent share ./report.txt
+  agent artifacts
+
+  # Coordination
+  agent signal complete
+  agent lock acquire database
+  agent claim create "implement auth"
+
+All existing messaging features work with registered terminals!
+
+================================================================================
+================================================================================
+SESSION: 2026-01-10 - Phase 3 Prep: Nix + CI + Docs
+================================================================================
+
+Updated flake.nix, added CI, wrote getting started guide.
+
+FLAKE.NIX UPDATES:
+------------------
+
+Added all 16 missing tools to the Nix flake (was only 13, now 29):
+
+Human-Focused Tools (13):
+  - env        Project environment switching
+  - notify     Desktop notifications (libnotify)
+  - session    Terminal session management (tmux)
+  - secrets    Local secrets vault (age encryption)
+  - pair       Pair programming (tmux/tmate)
+  - handoff    Context summaries for handoffs
+  - review     Human code review workflow
+  - focus      Pomodoro timer
+  - metrics    Productivity statistics
+  - template   Project scaffolding
+  - container  Docker/Podman management
+  - remote     SSH and remote development (rsync)
+  - backup     Project backup (age encryption)
+
+Supervision Tools (3):
+  - observe    Watch mode TUI (Python/Textual)
+  - gates      Permission gates (Python)
+  - journal    Activity logging (sqlite)
+
+All tools now have proper dependencies:
+  - age for secrets/backup encryption
+  - libnotify for Linux notifications
+  - tmux/tmate for pair/session
+  - fzf for interactive menus
+  - openssh/rsync for remote
+  - docker/podman for container
+  - sqlite for journal
+
+GITHUB ACTIONS CI:
+------------------
+
+Created .github/workflows/ci.yml with three jobs:
+
+1. build:
+   - Checks flake validity (nix flake check)
+   - Builds all packages (nix build .#daedalos)
+   - Tests all tool --help commands work
+   - Uses cachix for binary caching
+
+2. shellcheck:
+   - Lints all bash scripts
+   - Catches common shell issues
+
+3. format:
+   - Checks Nix formatting (nixfmt)
+
+Cachix integration for faster CI builds.
+
+GETTING STARTED GUIDE:
+----------------------
+
+Created docs/GETTING_STARTED.txt with:
+  - Installation instructions (Nix flake + manual)
+  - First loop tutorial
+  - Essential tools overview
+  - Supervision levels explanation
+  - Human tools summary
+  - Loop templates guide
+  - Quick reference
+
+HUMAN.MD CLEANUP:
+-----------------
+
+Trimmed HUMAN.md to only contain things that genuinely need human action:
+  - Real hardware testing
+  - NixOS/Btrfs testing
+  - Security review
+  - Agent engine integration testing
+  - Community/GitHub push
+  - Visual design (logo)
+
+Removed tasks Claude can do:
+  - Writing flake.nix ✓ (done)
+  - Writing CI ✓ (done)
+  - Writing docs ✓ (done)
+  - Writing Hyprland config (can do)
+  - Writing Waybar modules (can do)
+
+FILES CREATED/MODIFIED:
+-----------------------
+
+Created:
+  .github/workflows/ci.yml          GitHub Actions CI
+  docs/GETTING_STARTED.txt          Getting started guide
+
+Modified:
+  flake.nix                         Added 16 tools
+  HUMAN.md                          Honest human-only tasks
+
+================================================================================

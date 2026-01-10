@@ -277,6 +277,36 @@ TOOLS = [
         },
     ),
 
+    # Agent registration (for Claude Code terminals)
+    Tool(
+        name="agent_register",
+        description="Register current terminal as an agent for inter-agent communication",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name for the agent"},
+                "project": {"type": "string", "description": "Project directory (default: current)"},
+            },
+            "required": ["name"],
+        },
+    ),
+    Tool(
+        name="agent_unregister",
+        description="Unregister an external agent",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Agent name to unregister"},
+            },
+            "required": ["name"],
+        },
+    ),
+    Tool(
+        name="agent_whoami",
+        description="Show current agent identity",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+
     # Agent snapshots
     Tool(
         name="agent_snapshot",
@@ -1022,6 +1052,19 @@ async def handle_tool(name: str, arguments: dict[str, Any]) -> str:
         if arguments.get("force"):
             args.append("--force")
         return run_tool("agent", args)
+
+    # Agent registration tools
+    elif name == "agent_register":
+        args = ["register", arguments["name"]]
+        if arguments.get("project"):
+            args.extend(["-p", arguments["project"]])
+        return run_tool("agent", args, cwd)
+
+    elif name == "agent_unregister":
+        return run_tool("agent", ["unregister", arguments["name"]])
+
+    elif name == "agent_whoami":
+        return run_tool("agent", ["whoami"])
 
     # Agent snapshot tools
     elif name == "agent_snapshot":

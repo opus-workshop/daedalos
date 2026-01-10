@@ -517,6 +517,120 @@ cmd_restore() {
     snapshot_restore "$@"
 }
 
+# Command: register - register current terminal as an agent
+cmd_register() {
+    local name=""
+    local project=""
+    local agent_type="claude-code"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--name) name="$2"; shift 2 ;;
+            -p|--project) project="$2"; shift 2 ;;
+            --type) agent_type="$2"; shift 2 ;;
+            -*) die "Unknown option: $1" ;;
+            *)
+                if [[ -z "$name" ]]; then
+                    name="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Default project to current directory
+    if [[ -z "$project" ]]; then
+        project="$(pwd)"
+    fi
+    project="$(cd "$project" && pwd)"
+
+    # Generate name if not provided
+    if [[ -z "$name" ]]; then
+        local base_name
+        base_name=$(basename "$project")
+        local counter=1
+        name="${base_name}"
+        while agents_exists "$name"; do
+            name="${base_name}-${counter}"
+            ((counter++))
+        done
+    fi
+
+    # Validate name
+    validate_name "$name"
+
+    # Check if already registered
+    if agents_exists "$name"; then
+        die "Agent already exists: $name"
+    fi
+
+    # Check slot availability
+    if agents_at_limit; then
+        die "Agent limit reached. Kill an existing agent first."
+    fi
+
+    # Create the external agent entry
+    agents_create_external "$name" "$project" "$agent_type"
+
+    # Export environment variables for this session
+    export DAEDALOS_AGENT_NAME="$name"
+    export DAEDALOS_DATA_DIR="$DATA_DIR"
+    export DAEDALOS_MESSAGES_DIR="${DATA_DIR}/messages"
+    export DAEDALOS_SHARED_DIR="${DATA_DIR}/shared"
+
+    success "Registered as: $name (slot $(agents_get "$name" | jq -r '.slot'))"
+    echo ""
+    echo "To use messaging in this shell:"
+    echo "  export DAEDALOS_AGENT_NAME=$name"
+    echo ""
+    echo "Or add to your shell rc file to persist."
+}
+
+# Command: unregister - unregister current terminal
+cmd_unregister() {
+    local name="${1:-${DAEDALOS_AGENT_NAME:-}}"
+
+    if [[ -z "$name" ]]; then
+        die "Not registered. Provide agent name or set DAEDALOS_AGENT_NAME."
+    fi
+
+    if ! agents_exists "$name"; then
+        die "Agent not found: $name"
+    fi
+
+    # Only allow unregistering external agents
+    if ! agents_is_external "$name"; then
+        die "Cannot unregister tmux-managed agent. Use 'agent kill' instead."
+    fi
+
+    agents_delete "$name"
+    unset DAEDALOS_AGENT_NAME
+
+    success "Unregistered: $name"
+}
+
+# Command: whoami - show current agent identity
+cmd_whoami() {
+    local name
+    name=$(agents_whoami) || {
+        echo "Not registered as an agent."
+        echo ""
+        echo "Register with: agent register <name>"
+        return 1
+    }
+
+    local agent
+    agent=$(agents_get "$name")
+    local slot project agent_type
+    slot=$(echo "$agent" | jq -r '.slot')
+    project=$(echo "$agent" | jq -r '.project')
+    agent_type=$(echo "$agent" | jq -r '.agent_type // "tmux"')
+
+    echo "${C_BOLD}$name${C_RESET} (slot $slot)"
+    echo "  Type: $agent_type"
+    echo "  Project: $project"
+}
+
 # Command: send - send message to another agent
 cmd_send() {
     local to=""
@@ -830,6 +944,11 @@ SNAPSHOT COMMANDS:
     snapshot delete <name>  Delete a snapshot
     restore <snapshot>      Restore agents from snapshot
 
+REGISTRATION (for Claude Code terminals, etc.):
+    register [name]         Register current terminal as an agent
+    unregister [name]       Unregister current terminal
+    whoami                  Show current agent identity
+
 COMMUNICATION COMMANDS:
     send <agent> <msg>      Send message to an agent
     inbox <agent>           Check agent's messages
@@ -962,6 +1081,10 @@ main() {
         snapshot)     shift; cmd_snapshot "$@" ;;
         restore)      shift; cmd_restore "$@" ;;
         templates)    shift; cmd_templates "$@" ;;
+        # External agent registration (Claude Code, etc.)
+        register)     shift; cmd_register "$@" ;;
+        unregister)   shift; cmd_unregister "$@" ;;
+        whoami)       shift; cmd_whoami "$@" ;;
         # Communication commands
         send)         shift; cmd_send "$@" ;;
         inbox)        shift; cmd_inbox "$@" ;;
