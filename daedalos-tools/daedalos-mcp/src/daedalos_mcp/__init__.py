@@ -4,18 +4,107 @@ import asyncio
 import json
 import subprocess
 import os
+import logging
 from pathlib import Path
 from typing import Any
+from pydantic import AnyUrl
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
+from mcp.server.session import ServerSession
 from mcp.types import (
     Tool,
     TextContent,
     CallToolResult,
     Resource,
     TextResourceContents,
+    ServerNotification,
+    ResourceUpdatedNotification,
+    ResourceUpdatedNotificationParams,
 )
+
+logger = logging.getLogger(__name__)
+
+# Subscription manager for resource updates
+class SubscriptionManager:
+    """Manages resource subscriptions and file watching."""
+
+    def __init__(self):
+        self.subscriptions: dict[str, set] = {}  # uri -> set of sessions
+        self.sessions: dict[int, ServerSession] = {}  # id -> session
+        self.watcher_task: asyncio.Task | None = None
+        self.messages_dir = Path.home() / ".local/share/daedalos/agent/messages"
+        self._last_mtime: float = 0
+
+    def subscribe(self, uri: str, session: ServerSession) -> None:
+        """Subscribe a session to a resource URI."""
+        if uri not in self.subscriptions:
+            self.subscriptions[uri] = set()
+        session_id = id(session)
+        self.subscriptions[uri].add(session_id)
+        self.sessions[session_id] = session
+        logger.info(f"Subscribed to {uri}")
+
+        # Start watcher if this is an inbox subscription
+        if "inbox" in uri and self.watcher_task is None:
+            self.watcher_task = asyncio.create_task(self._watch_messages())
+
+    def unsubscribe(self, uri: str, session: ServerSession) -> None:
+        """Unsubscribe a session from a resource URI."""
+        session_id = id(session)
+        if uri in self.subscriptions:
+            self.subscriptions[uri].discard(session_id)
+            if not self.subscriptions[uri]:
+                del self.subscriptions[uri]
+        logger.info(f"Unsubscribed from {uri}")
+
+    async def notify(self, uri: str) -> None:
+        """Notify all subscribers that a resource has been updated."""
+        if uri not in self.subscriptions:
+            return
+
+        for session_id in list(self.subscriptions[uri]):
+            session = self.sessions.get(session_id)
+            if session:
+                try:
+                    await session.send_resource_updated(AnyUrl(uri))
+                    logger.info(f"Sent update notification for {uri}")
+                except Exception as e:
+                    logger.error(f"Failed to send notification: {e}")
+                    # Remove dead session
+                    self.subscriptions[uri].discard(session_id)
+
+    async def _watch_messages(self) -> None:
+        """Watch the messages directory for changes."""
+        logger.info("Starting message watcher")
+        while True:
+            try:
+                await asyncio.sleep(2)  # Check every 2 seconds
+
+                if not self.messages_dir.exists():
+                    continue
+
+                # Check for any new/modified message files
+                current_mtime = 0
+                for f in self.messages_dir.iterdir():
+                    if f.is_file():
+                        mtime = f.stat().st_mtime
+                        if mtime > current_mtime:
+                            current_mtime = mtime
+
+                if current_mtime > self._last_mtime:
+                    self._last_mtime = current_mtime
+                    await self.notify("daedalos://inbox")
+
+            except asyncio.CancelledError:
+                logger.info("Message watcher cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Watcher error: {e}")
+                await asyncio.sleep(5)
+
+# Global subscription manager
+_subscriptions = SubscriptionManager()
 
 
 # Tool definitions
@@ -1450,6 +1539,18 @@ def create_server() -> Server:
             )
         else:
             raise ValueError(f"Unknown resource: {uri}")
+
+    @server.subscribe_resource()
+    async def subscribe_resource(uri: AnyUrl) -> None:
+        """Handle resource subscription requests."""
+        session = server.request_context.session
+        _subscriptions.subscribe(str(uri), session)
+
+    @server.unsubscribe_resource()
+    async def unsubscribe_resource(uri: AnyUrl) -> None:
+        """Handle resource unsubscription requests."""
+        session = server.request_context.session
+        _subscriptions.unsubscribe(str(uri), session)
 
     return server
 
