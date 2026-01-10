@@ -9,7 +9,15 @@ set -euo pipefail
 SANDBOX_VERSION="1.0.0"
 SANDBOX_ROOT="${SANDBOX_ROOT:-$HOME/.local/share/daedalos/sandbox}"
 SANDBOX_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/daedalos/sandbox"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Resolve symlinks to get the real script location
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 LIB_DIR="$(dirname "$SCRIPT_DIR")/lib"
 
 # Ensure directories exist

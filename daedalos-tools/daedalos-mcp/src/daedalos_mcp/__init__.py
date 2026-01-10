@@ -976,7 +976,7 @@ async def handle_tool(name: str, arguments: dict[str, Any]) -> str:
 
     # Error-db tools
     elif name == "error_match":
-        return run_tool("error-db", ["match", arguments["error"]])
+        return run_tool("error-db", ["search", arguments["error"]])
 
     elif name == "error_add":
         args = ["add", arguments["pattern"], "--solution", arguments["solution"]]

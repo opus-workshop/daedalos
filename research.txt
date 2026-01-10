@@ -1612,3 +1612,92 @@ Supervision (3):
   observe, gates, journal
 
 ================================================================================
+SESSION: 2026-01-10 - Symlink Resolution Bug Fixes
+================================================================================
+
+Fixed a systemic bug where CLI tools failed when run via symlinks from ~/.local/bin.
+
+THE BUG:
+--------
+
+When a tool is symlinked from ~/.local/bin to daedalos-tools/, the script's
+BASH_SOURCE[0] returns the symlink path, not the target. This caused PYTHONPATH
+and LIB_DIR to point to wrong locations:
+
+  ~/.local/bin/error-db  ->  SCRIPT_DIR = ~/.local/bin/  (WRONG!)
+  Should be:              ->  SCRIPT_DIR = .../error-db/bin/  (CORRECT)
+
+THE FIX:
+--------
+
+Added symlink resolution loop to affected scripts:
+
+  SCRIPT_PATH="${BASH_SOURCE[0]}"
+  while [[ -L "$SCRIPT_PATH" ]]; do
+      SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+      SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+      [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+  done
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+TOOLS FIXED:
+------------
+
+1. error-db  - Was completely broken via MCP/symlink
+2. verify    - Would fail to find lib/pipelines
+3. sandbox   - Would fail to find lib/
+4. scratch   - Would fail to find lib/common.sh
+5. codex     - Would fail to find src/ module
+
+MCP SERVER FIX:
+---------------
+
+Also fixed daedalos-mcp error_match tool - was calling "match" subcommand
+but the actual CLI uses "search":
+
+  Before: run_tool("error-db", ["match", arguments["error"]])
+  After:  run_tool("error-db", ["search", arguments["error"]])
+
+VERIFICATION:
+-------------
+
+All tools now work correctly when called via symlink:
+  ~/.local/bin/error-db search "ModuleNotFoundError"
+  ~/.local/bin/verify --help
+  ~/.local/bin/sandbox --help
+  ~/.local/bin/scratch --help
+  ~/.local/bin/codex --help
+
+NOTE: The loop tool was already fixed (mentioned in research.txt SESSION: 2026-01-09).
+Other tools using similar patterns (observe, context, project, etc.) already had
+proper symlink resolution from initial implementation.
+
+ERROR-DB EXPANSION:
+-------------------
+
+Populated error-db with 15 new patterns (18 -> 33 total):
+
+JavaScript/Node.js:
+  - TypeError: Cannot read properties of undefined/null
+  - ReferenceError: X is not defined
+  - Uncaught SyntaxError: Unexpected token
+  - npm ERR! code ERESOLVE
+  - Error: listen EADDRINUSE
+
+Python:
+  - AttributeError: X object has no attribute
+  - KeyError
+  - TypeError: takes X positional arguments but Y were given
+  - ImportError: cannot import name
+
+Docker:
+  - Cannot connect to the Docker daemon
+  - Error response from daemon: Conflict. Container name
+
+Git:
+  - error: failed to push some refs
+  - error: Your local changes would be overwritten
+
+Each pattern has a helpful solution explaining the cause and fix.
+
+================================================================================
