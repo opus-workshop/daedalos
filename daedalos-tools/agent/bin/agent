@@ -657,16 +657,17 @@ cmd_send() {
         die "Usage: agent send <to_agent> <message>"
     fi
 
-    # Identify "from" as current agent (or default to "user")
-    local from="${DAEDALOS_AGENT_NAME:-user}"
+    # Auto-register if needed, get identity
+    local from
+    from=$(agents_ensure_identity) || from="anonymous"
 
     comms_send "$to" "$from" "$msg_type" "$content"
-    success "Message sent to: $to"
+    success "Message sent to: $to (from: $from)"
 }
 
 # Command: inbox - check messages
 cmd_inbox() {
-    local agent="${DAEDALOS_AGENT_NAME:-}"
+    local agent=""
     local all=false
     local as_json=false
 
@@ -680,8 +681,9 @@ cmd_inbox() {
         esac
     done
 
+    # Auto-register if needed
     if [[ -z "$agent" ]]; then
-        die "Usage: agent inbox <agent_name> or set DAEDALOS_AGENT_NAME"
+        agent=$(agents_ensure_identity) || die "Could not determine agent identity. Use: agent inbox <name>"
     fi
 
     local args=("$agent")
@@ -693,7 +695,7 @@ cmd_inbox() {
 
 # Command: help - request help from another agent
 cmd_request_help() {
-    local from="${DAEDALOS_AGENT_NAME:-user}"
+    local from=""
     local task=""
     local template=""
 
@@ -710,6 +712,11 @@ cmd_request_help() {
         die "Usage: agent request-help <task_description>"
     fi
 
+    # Auto-register if needed
+    if [[ -z "$from" ]]; then
+        from=$(agents_ensure_identity) || from="anonymous"
+    fi
+
     local args=("$from" "$task")
     [[ -n "$template" ]] && args+=("--template" "$template")
 
@@ -718,7 +725,7 @@ cmd_request_help() {
 
 # Command: share - share file with agents
 cmd_share() {
-    local from="${DAEDALOS_AGENT_NAME:-user}"
+    local from=""
     local file=""
     local to=""
     local name=""
@@ -737,6 +744,11 @@ cmd_share() {
         die "Usage: agent share <file_path>"
     fi
 
+    # Auto-register if needed
+    if [[ -z "$from" ]]; then
+        from=$(agents_ensure_identity) || from="anonymous"
+    fi
+
     local args=("$from" "$file")
     [[ -n "$to" ]] && args+=("--to" "$to")
     [[ -n "$name" ]] && args+=("--name" "$name")
@@ -753,7 +765,7 @@ cmd_artifacts() {
 
 # Command: broadcast - send to all agents
 cmd_broadcast() {
-    local from="${DAEDALOS_AGENT_NAME:-user}"
+    local from=""
     local message=""
 
     while [[ $# -gt 0 ]]; do
@@ -766,6 +778,11 @@ cmd_broadcast() {
 
     if [[ -z "$message" ]]; then
         die "Usage: agent broadcast <message>"
+    fi
+
+    # Auto-register if needed
+    if [[ -z "$from" ]]; then
+        from=$(agents_ensure_identity) || from="anonymous"
     fi
 
     comms_broadcast "$from" "$message"

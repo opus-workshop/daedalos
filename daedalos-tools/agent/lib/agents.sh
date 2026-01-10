@@ -357,12 +357,33 @@ agents_is_external() {
     fi
 }
 
-# Get current agent name from environment or PID
+# Get identity file path for a project
+_agents_identity_file() {
+    local project="${1:-$(pwd)}"
+    # Use project path hash for global identity storage
+    local hash
+    hash=$(echo "$project" | sha256sum | head -c 12)
+    echo "${DATA_DIR}/identities/${hash}"
+}
+
+# Get current agent name from environment, identity file, or PID
 agents_whoami() {
     # First check environment variable
     if [[ -n "${DAEDALOS_AGENT_NAME:-}" ]]; then
         echo "$DAEDALOS_AGENT_NAME"
         return 0
+    fi
+
+    # Check project identity file
+    local identity_file
+    identity_file=$(_agents_identity_file)
+    if [[ -f "$identity_file" ]]; then
+        local name
+        name=$(cat "$identity_file")
+        if agents_exists "$name"; then
+            echo "$name"
+            return 0
+        fi
     fi
 
     # Fall back to finding agent by PID
@@ -386,6 +407,60 @@ agents_whoami() {
         return 0
     fi
 
+    return 1
+}
+
+# Auto-register current terminal if not already registered
+# Returns the agent name (existing or newly created)
+agents_auto_register() {
+    local project="${1:-$(pwd)}"
+    project="$(cd "$project" 2>/dev/null && pwd)" || project="$(pwd)"
+
+    # Check if already registered
+    local existing
+    existing=$(agents_whoami 2>/dev/null) && {
+        # Update heartbeat and return existing
+        agents_heartbeat "$existing"
+        echo "$existing"
+        return 0
+    }
+
+    # Generate a unique name based on project
+    local base_name
+    base_name=$(basename "$project")
+    local counter=1
+    local name="${base_name}"
+    while agents_exists "$name"; do
+        name="${base_name}-${counter}"
+        ((counter++))
+    done
+
+    # Check slot availability
+    if agents_at_limit; then
+        # Can't auto-register, no slots
+        return 1
+    fi
+
+    # Create the agent
+    mkdir -p "${DATA_DIR}/identities"
+    agents_create_external "$name" "$project" "claude-code"
+
+    # Save identity file
+    local identity_file
+    identity_file=$(_agents_identity_file "$project")
+    echo "$name" > "$identity_file"
+
+    echo "$name"
+}
+
+# Get current identity, auto-registering if needed
+agents_ensure_identity() {
+    local name
+    name=$(agents_whoami 2>/dev/null) || name=$(agents_auto_register)
+    if [[ -n "$name" ]]; then
+        echo "$name"
+        return 0
+    fi
     return 1
 }
 

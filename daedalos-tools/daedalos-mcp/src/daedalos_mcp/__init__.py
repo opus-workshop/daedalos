@@ -357,10 +357,9 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "agent": {"type": "string", "description": "Agent name to check inbox"},
+                "agent": {"type": "string", "description": "Agent name to check inbox (auto-registers if not specified)"},
                 "all": {"type": "boolean", "description": "Show all messages including read", "default": False},
             },
-            "required": ["agent"],
         },
     ),
     Tool(
@@ -1091,7 +1090,9 @@ async def handle_tool(name: str, arguments: dict[str, Any]) -> str:
         return run_tool("agent", ["send", arguments["to"], arguments["message"]])
 
     elif name == "agent_inbox":
-        args = ["inbox", arguments["agent"]]
+        args = ["inbox"]
+        if arguments.get("agent"):
+            args.append(arguments["agent"])
         if arguments.get("all"):
             args.append("--all")
         return run_tool("agent", args)
