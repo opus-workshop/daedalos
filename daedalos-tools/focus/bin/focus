@@ -1,0 +1,434 @@
+#!/usr/bin/env bash
+# focus - Distraction blocking and deep work for Daedalos
+#
+# Help humans stay focused during development.
+
+set -eo pipefail
+
+FOCUS_VERSION="1.0.0"
+
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/daedalos/focus"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/daedalos"
+
+mkdir -p "$DATA_DIR"
+
+# Colors
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    MAGENTA='\033[0;35m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' DIM='' NC=''
+fi
+
+log_error() { echo -e "${RED}error:${NC} $*" >&2; }
+log_success() { echo -e "${GREEN}✓${NC} $*"; }
+log_info() { echo -e "${BLUE}info:${NC} $*"; }
+
+cmd_help() {
+    cat << 'EOF'
+focus - Distraction blocking and deep work for Daedalos
+
+USAGE:
+    focus <command> [args...]
+
+COMMANDS:
+    start [MINS]     Start a focus session (default: 25 mins)
+    stop             End current focus session
+    status           Show focus session status
+    break [MINS]     Take a break (default: 5 mins)
+    stats            Show focus statistics
+    block            Block distracting apps/sites
+    unblock          Unblock everything
+
+PRESETS:
+    --pomodoro       25 min focus, 5 min break
+    --deep           90 min focus, 20 min break
+    --quick          15 min focus, 3 min break
+
+OPTIONS:
+    --task "DESC"    What you're working on
+    --notify         Notify when session ends
+    --block          Block distractions during session
+
+EXAMPLES:
+    focus start                      # Start 25 min session
+    focus start 45 --task "Feature"  # 45 min with description
+    focus start --deep               # 90 min deep work
+    focus break                      # Take a 5 min break
+    focus stats                      # View statistics
+
+TECHNIQUES:
+    Pomodoro:  25 min work, 5 min break, repeat
+    Deep Work: 90 min focused, 20 min break
+    Timeboxing: Fixed time for specific task
+
+INTEGRATION:
+    - notify: Alerts when sessions start/end
+    - journal: Logs focus sessions
+    - gates: Can require focus mode for certain tasks
+
+EOF
+}
+
+# Get current focus session
+get_current_session() {
+    local session_file="$DATA_DIR/current_session"
+    if [[ -f "$session_file" ]]; then
+        cat "$session_file"
+    fi
+}
+
+# Save current session
+save_session() {
+    local start_time="$1"
+    local duration="$2"
+    local task="$3"
+    local session_type="$4"
+
+    cat > "$DATA_DIR/current_session" << EOF
+{
+    "start": $start_time,
+    "duration": $duration,
+    "task": "$task",
+    "type": "$session_type"
+}
+EOF
+}
+
+# Clear current session
+clear_session() {
+    rm -f "$DATA_DIR/current_session"
+}
+
+# Record completed session
+record_session() {
+    local start_time="$1"
+    local end_time="$2"
+    local duration="$3"
+    local task="$4"
+    local completed="$5"
+
+    local date_str=$(date +%Y-%m-%d)
+    local log_file="$DATA_DIR/sessions-$date_str.jsonl"
+
+    echo "{\"start\": $start_time, \"end\": $end_time, \"duration\": $duration, \"task\": \"$task\", \"completed\": $completed}" >> "$log_file"
+}
+
+cmd_start() {
+    local duration=25
+    local task=""
+    local session_type="pomodoro"
+    local do_block=false
+    local do_notify=true
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --pomodoro) duration=25; session_type="pomodoro"; shift ;;
+            --deep) duration=90; session_type="deep"; shift ;;
+            --quick) duration=15; session_type="quick"; shift ;;
+            --task) task="$2"; shift 2 ;;
+            --block) do_block=true; shift ;;
+            --notify) do_notify=true; shift ;;
+            --no-notify) do_notify=false; shift ;;
+            [0-9]*) duration="$1"; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    # Check for existing session
+    local current=$(get_current_session)
+    if [[ -n "$current" ]]; then
+        log_error "Focus session already active"
+        cmd_status
+        exit 1
+    fi
+
+    local start_time=$(date +%s)
+    local end_time=$((start_time + duration * 60))
+
+    # Save session
+    save_session "$start_time" "$duration" "$task" "$session_type"
+
+    # Block distractions if requested
+    if [[ "$do_block" == "true" ]]; then
+        cmd_block --quiet
+    fi
+
+    log_success "Focus session started"
+    echo ""
+    echo -e "${BOLD}${MAGENTA}🎯 FOCUS MODE${NC}"
+    echo ""
+    echo -e "  ${CYAN}Duration:${NC} $duration minutes"
+    echo -e "  ${CYAN}Type:${NC}     $session_type"
+    [[ -n "$task" ]] && echo -e "  ${CYAN}Task:${NC}     $task"
+    echo -e "  ${CYAN}Ends at:${NC}  $(date -r $end_time '+%H:%M' 2>/dev/null || date -d "@$end_time" '+%H:%M' 2>/dev/null)"
+    echo ""
+
+    # Notify
+    if [[ "$do_notify" == "true" ]] && command -v notify &>/dev/null; then
+        notify "Focus session started: $duration minutes" --title "🎯 Focus" 2>/dev/null &
+    fi
+
+    # Log to journal
+    if command -v journal &>/dev/null; then
+        journal log "Focus session started: $duration min ${task:+- $task}" "focus" "focus_start" 2>/dev/null || true
+    fi
+
+    # Set up end notification (background)
+    (
+        sleep $((duration * 60))
+        if [[ -f "$DATA_DIR/current_session" ]]; then
+            if command -v notify &>/dev/null; then
+                notify "Focus session complete! Take a break." --title "🎯 Focus Complete" --sound true 2>/dev/null
+            fi
+            # Auto-record completion
+            record_session "$start_time" "$(date +%s)" "$duration" "$task" "true"
+            clear_session
+            if command -v journal &>/dev/null; then
+                journal log "Focus session completed: $duration min" "focus" "focus_complete" 2>/dev/null || true
+            fi
+        fi
+    ) &
+
+    echo "Run 'focus status' to check progress"
+    echo "Run 'focus stop' to end early"
+}
+
+cmd_stop() {
+    local current=$(get_current_session)
+
+    if [[ -z "$current" ]]; then
+        log_info "No active focus session"
+        return
+    fi
+
+    local start_time=$(echo "$current" | grep -o '"start": [0-9]*' | grep -o '[0-9]*')
+    local duration=$(echo "$current" | grep -o '"duration": [0-9]*' | grep -o '[0-9]*')
+    local task=$(echo "$current" | grep -o '"task": "[^"]*"' | cut -d'"' -f4)
+
+    local end_time=$(date +%s)
+    local elapsed=$(( (end_time - start_time) / 60 ))
+
+    # Record partial session
+    record_session "$start_time" "$end_time" "$elapsed" "$task" "false"
+    clear_session
+
+    # Unblock if needed
+    cmd_unblock --quiet 2>/dev/null || true
+
+    log_success "Focus session ended"
+    echo "Completed: $elapsed of $duration minutes"
+
+    # Log to journal
+    if command -v journal &>/dev/null; then
+        journal log "Focus session stopped early: $elapsed min" "focus" "focus_stop" 2>/dev/null || true
+    fi
+}
+
+cmd_status() {
+    local current=$(get_current_session)
+
+    if [[ -z "$current" ]]; then
+        echo "No active focus session"
+        echo ""
+        echo "Start one with: focus start"
+        return
+    fi
+
+    local start_time=$(echo "$current" | grep -o '"start": [0-9]*' | grep -o '[0-9]*')
+    local duration=$(echo "$current" | grep -o '"duration": [0-9]*' | grep -o '[0-9]*')
+    local task=$(echo "$current" | grep -o '"task": "[^"]*"' | cut -d'"' -f4)
+    local session_type=$(echo "$current" | grep -o '"type": "[^"]*"' | cut -d'"' -f4)
+
+    local now=$(date +%s)
+    local elapsed=$(( (now - start_time) / 60 ))
+    local remaining=$((duration - elapsed))
+
+    if [[ $remaining -lt 0 ]]; then
+        remaining=0
+    fi
+
+    local progress=$((elapsed * 100 / duration))
+    [[ $progress -gt 100 ]] && progress=100
+
+    # Progress bar
+    local bar_width=30
+    local filled=$((bar_width * progress / 100))
+    local empty=$((bar_width - filled))
+    local bar=$(printf "%${filled}s" | tr ' ' '█')$(printf "%${empty}s" | tr ' ' '░')
+
+    echo -e "${BOLD}${MAGENTA}🎯 FOCUS MODE ACTIVE${NC}"
+    echo ""
+    echo -e "  ${CYAN}Progress:${NC} [$bar] $progress%"
+    echo -e "  ${CYAN}Elapsed:${NC}  $elapsed minutes"
+    echo -e "  ${CYAN}Remaining:${NC} $remaining minutes"
+    [[ -n "$task" ]] && echo -e "  ${CYAN}Task:${NC}     $task"
+    echo ""
+
+    if [[ $remaining -eq 0 ]]; then
+        echo -e "${GREEN}Session complete! Take a break.${NC}"
+    fi
+}
+
+cmd_break() {
+    local duration="${1:-5}"
+
+    echo -e "${BOLD}${GREEN}☕ BREAK TIME${NC}"
+    echo ""
+    echo "Take a $duration minute break!"
+    echo ""
+    echo "Suggestions:"
+    echo "  • Stretch or walk around"
+    echo "  • Get water or a snack"
+    echo "  • Look away from screen"
+    echo "  • Take deep breaths"
+    echo ""
+
+    # Notify
+    if command -v notify &>/dev/null; then
+        notify "Break time: $duration minutes" --title "☕ Break" 2>/dev/null &
+    fi
+
+    # Log to journal
+    if command -v journal &>/dev/null; then
+        journal log "Break started: $duration min" "focus" "break_start" 2>/dev/null || true
+    fi
+
+    # Set up break end notification
+    (
+        sleep $((duration * 60))
+        if command -v notify &>/dev/null; then
+            notify "Break over! Ready to focus again?" --title "⏰ Break Over" 2>/dev/null
+        fi
+    ) &
+
+    echo "Break ends in $duration minutes"
+}
+
+cmd_stats() {
+    local days="${1:-7}"
+
+    echo -e "${BOLD}Focus Statistics (Last $days days)${NC}"
+    echo ""
+
+    local total_sessions=0
+    local total_minutes=0
+    local completed_sessions=0
+
+    for i in $(seq 0 $((days - 1))); do
+        local date_str=$(date -v-${i}d +%Y-%m-%d 2>/dev/null || date -d "-$i days" +%Y-%m-%d 2>/dev/null)
+        local log_file="$DATA_DIR/sessions-$date_str.jsonl"
+
+        if [[ -f "$log_file" ]]; then
+            while IFS= read -r line; do
+                local dur=$(echo "$line" | grep -o '"duration": [0-9]*' | grep -o '[0-9]*')
+                local completed=$(echo "$line" | grep -o '"completed": [a-z]*' | grep -o '[a-z]*$')
+
+                total_sessions=$((total_sessions + 1))
+                total_minutes=$((total_minutes + dur))
+                [[ "$completed" == "true" ]] && completed_sessions=$((completed_sessions + 1))
+            done < "$log_file"
+        fi
+    done
+
+    local hours=$((total_minutes / 60))
+    local mins=$((total_minutes % 60))
+    local completion_rate=0
+    [[ $total_sessions -gt 0 ]] && completion_rate=$((completed_sessions * 100 / total_sessions))
+
+    echo -e "  ${CYAN}Total Sessions:${NC}    $total_sessions"
+    echo -e "  ${CYAN}Completed:${NC}         $completed_sessions ($completion_rate%)"
+    echo -e "  ${CYAN}Total Focus Time:${NC}  ${hours}h ${mins}m"
+    echo ""
+
+    if [[ $total_sessions -gt 0 ]]; then
+        local avg=$((total_minutes / total_sessions))
+        echo -e "  ${CYAN}Average Session:${NC}   $avg minutes"
+    fi
+}
+
+cmd_block() {
+    local quiet=false
+    [[ "$1" == "--quiet" ]] && quiet=true
+
+    # This is a placeholder - actual blocking depends on OS
+    # On macOS, could use /etc/hosts or Screen Time
+    # On Linux, could use /etc/hosts or firewall rules
+
+    local block_file="$DATA_DIR/blocking_active"
+    touch "$block_file"
+
+    if [[ "$quiet" == "false" ]]; then
+        log_success "Distraction blocking enabled"
+        echo ""
+        echo "Note: Full blocking requires additional setup:"
+        echo "  macOS: Use Screen Time or edit /etc/hosts"
+        echo "  Linux: Use /etc/hosts or firewall rules"
+        echo ""
+        echo "The 'focus' tool tracks that blocking should be active."
+    fi
+}
+
+cmd_unblock() {
+    local quiet=false
+    [[ "$1" == "--quiet" ]] && quiet=true
+
+    rm -f "$DATA_DIR/blocking_active"
+
+    if [[ "$quiet" == "false" ]]; then
+        log_success "Distraction blocking disabled"
+    fi
+}
+
+main() {
+    local cmd="${1:-help}"
+
+    case "$cmd" in
+        help|--help|-h)
+            cmd_help
+            ;;
+        start|s)
+            shift
+            cmd_start "$@"
+            ;;
+        stop|end)
+            cmd_stop
+            ;;
+        status|st)
+            cmd_status
+            ;;
+        break|b)
+            shift
+            cmd_break "$@"
+            ;;
+        stats|statistics)
+            shift
+            cmd_stats "$@"
+            ;;
+        block)
+            shift
+            cmd_block "$@"
+            ;;
+        unblock)
+            shift
+            cmd_unblock "$@"
+            ;;
+        version|--version|-V)
+            echo "focus $FOCUS_VERSION"
+            ;;
+        *)
+            log_error "Unknown command: $cmd"
+            echo "Run 'focus help' for usage"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

@@ -1,0 +1,665 @@
+#!/usr/bin/env bash
+# metrics - Productivity statistics for Daedalos
+#
+# Aggregate and visualize development activity.
+
+set -eo pipefail
+
+METRICS_VERSION="1.0.0"
+
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/daedalos"
+METRICS_DIR="$DATA_DIR/metrics"
+mkdir -p "$METRICS_DIR"
+
+# Colors
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    MAGENTA='\033[0;35m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' DIM='' NC=''
+fi
+
+cmd_help() {
+    cat << 'EOF'
+metrics - Productivity statistics for Daedalos
+
+USAGE:
+    metrics <command> [args...]
+
+COMMANDS:
+    today            Today's activity summary
+    week             This week's summary
+    month            This month's summary
+    commits          Git commit statistics
+    focus            Focus session statistics
+    loops            Loop iteration statistics
+    activity         Raw activity timeline
+    trends           Show trends over time
+    export           Export metrics data
+
+TIME RANGES:
+    --days N         Look back N days (default: 7)
+    --since DATE     Start from specific date
+    --until DATE     End at specific date
+
+OPTIONS:
+    --project PATH   Limit to specific project
+    --json           Output as JSON
+    --csv            Output as CSV
+    --quiet          Minimal output
+
+EXAMPLES:
+    metrics today                    # Today's summary
+    metrics week                     # This week
+    metrics commits --days 30        # Commits over 30 days
+    metrics focus                    # Focus session stats
+    metrics trends --days 90         # 90-day trends
+    metrics export --csv > data.csv  # Export data
+
+DATA SOURCES:
+    - git: Commits, lines changed, files touched
+    - journal: Events, tool usage, errors
+    - focus: Focus sessions, breaks, completion rate
+    - loops: Iterations, success/failure, time to fix
+
+EOF
+}
+
+# Get date N days ago (cross-platform)
+date_ago() {
+    local days="$1"
+    date -v-${days}d +%Y-%m-%d 2>/dev/null || date -d "-$days days" +%Y-%m-%d 2>/dev/null
+}
+
+# Get git stats for date range
+get_git_stats() {
+    local since="${1:-7 days ago}"
+    local until="${2:-now}"
+    local project="${3:-}"
+
+    local git_dir="${project:-.}"
+
+    if ! git -C "$git_dir" rev-parse --git-dir &>/dev/null; then
+        echo "0 0 0 0"
+        return
+    fi
+
+    local commits=$(git -C "$git_dir" log --since="$since" --until="$until" --oneline 2>/dev/null | wc -l | tr -d ' ')
+    local insertions=$(git -C "$git_dir" log --since="$since" --until="$until" --shortstat 2>/dev/null | grep "insertion" | awk '{sum += $4} END {print sum+0}')
+    local deletions=$(git -C "$git_dir" log --since="$since" --until="$until" --shortstat 2>/dev/null | grep "deletion" | awk '{sum += $6} END {print sum+0}')
+    local files=$(git -C "$git_dir" log --since="$since" --until="$until" --name-only --pretty=format: 2>/dev/null | sort -u | grep -c . || echo 0)
+
+    echo "$commits $insertions $deletions $files"
+}
+
+# Get journal event count
+get_journal_events() {
+    local hours="${1:-24}"
+    local category="${2:-}"
+
+    local journal_dir="$DATA_DIR/journal"
+    local count=0
+
+    if [[ -d "$journal_dir" ]]; then
+        local since=$(date -v-${hours}H +%s 2>/dev/null || date -d "-$hours hours" +%s 2>/dev/null)
+
+        for file in "$journal_dir"/*.jsonl; do
+            [[ -f "$file" ]] || continue
+            while IFS= read -r line; do
+                local ts=$(echo "$line" | grep -o '"timestamp": [0-9]*' | grep -o '[0-9]*')
+                if [[ -n "$ts" ]] && [[ "$ts" -ge "$since" ]]; then
+                    if [[ -z "$category" ]] || echo "$line" | grep -q "\"category\": \"$category\""; then
+                        count=$((count + 1))
+                    fi
+                fi
+            done < "$file"
+        done
+    fi
+
+    echo "$count"
+}
+
+# Get focus stats
+get_focus_stats() {
+    local days="${1:-7}"
+
+    local focus_dir="$DATA_DIR/focus"
+    local total_sessions=0
+    local total_minutes=0
+    local completed=0
+
+    for i in $(seq 0 $((days - 1))); do
+        local date_str=$(date_ago "$i")
+        local log_file="$focus_dir/sessions-$date_str.jsonl"
+
+        if [[ -f "$log_file" ]]; then
+            while IFS= read -r line; do
+                local dur=$(echo "$line" | grep -o '"duration": [0-9]*' | grep -o '[0-9]*')
+                local comp=$(echo "$line" | grep -o '"completed": [a-z]*' | grep -o '[a-z]*$')
+
+                total_sessions=$((total_sessions + 1))
+                total_minutes=$((total_minutes + dur))
+                [[ "$comp" == "true" ]] && completed=$((completed + 1))
+            done < "$log_file"
+        fi
+    done
+
+    echo "$total_sessions $total_minutes $completed"
+}
+
+# Draw a simple bar chart
+draw_bar() {
+    local value="$1"
+    local max="$2"
+    local width="${3:-30}"
+    local char="${4:-█}"
+
+    [[ "$max" -eq 0 ]] && max=1
+    local filled=$((value * width / max))
+    [[ "$filled" -gt "$width" ]] && filled="$width"
+
+    printf "%${filled}s" | tr ' ' "$char"
+}
+
+cmd_today() {
+    local as_json=false
+    [[ "$1" == "--json" ]] && as_json=true
+
+    echo -e "${BOLD}Today's Activity${NC}"
+    echo -e "${DIM}$(date '+%A, %B %d, %Y')${NC}"
+    echo ""
+
+    # Git activity
+    read -r commits insertions deletions files <<< $(get_git_stats "today" "now")
+
+    echo -e "${CYAN}Git Activity${NC}"
+    echo -e "  Commits:     $commits"
+    echo -e "  Lines added: $insertions"
+    echo -e "  Lines removed: $deletions"
+    echo -e "  Files touched: $files"
+    echo ""
+
+    # Journal events
+    local events=$(get_journal_events 24)
+    local errors=$(get_journal_events 24 "error")
+
+    echo -e "${CYAN}Events${NC}"
+    echo -e "  Total events: $events"
+    echo -e "  Errors: $errors"
+    echo ""
+
+    # Focus sessions
+    read -r focus_sessions focus_minutes focus_completed <<< $(get_focus_stats 1)
+    local focus_hours=$((focus_minutes / 60))
+    local focus_mins=$((focus_minutes % 60))
+
+    echo -e "${CYAN}Focus${NC}"
+    echo -e "  Sessions: $focus_sessions ($focus_completed completed)"
+    echo -e "  Time: ${focus_hours}h ${focus_mins}m"
+    echo ""
+
+    # Productivity score (simple heuristic)
+    local score=0
+    [[ "$commits" -gt 0 ]] && score=$((score + 20))
+    [[ "$commits" -gt 5 ]] && score=$((score + 10))
+    [[ "$focus_completed" -gt 0 ]] && score=$((score + 20))
+    [[ "$focus_minutes" -gt 60 ]] && score=$((score + 20))
+    [[ "$focus_minutes" -gt 180 ]] && score=$((score + 10))
+    [[ "$errors" -lt 5 ]] && score=$((score + 10))
+    [[ "$insertions" -gt "$deletions" ]] && score=$((score + 10))
+
+    local score_color="$RED"
+    [[ "$score" -ge 40 ]] && score_color="$YELLOW"
+    [[ "$score" -ge 70 ]] && score_color="$GREEN"
+
+    echo -e "${BOLD}Productivity Score: ${score_color}${score}/100${NC}"
+}
+
+cmd_week() {
+    local as_json=false
+    [[ "$1" == "--json" ]] && as_json=true
+
+    echo -e "${BOLD}This Week's Activity${NC}"
+    echo ""
+
+    # Daily breakdown
+    echo -e "${CYAN}Daily Commits${NC}"
+
+    local max_commits=1
+    local daily_commits=()
+
+    for i in $(seq 6 -1 0); do
+        local date_str=$(date_ago "$i")
+        local commits=$(git log --since="$date_str 00:00" --until="$date_str 23:59" --oneline 2>/dev/null | wc -l | tr -d ' ')
+        daily_commits+=("$commits")
+        [[ "$commits" -gt "$max_commits" ]] && max_commits="$commits"
+    done
+
+    local days=("Mon" "Tue" "Wed" "Thu" "Fri" "Sat" "Sun")
+    local today_dow=$(date +%u)
+
+    for i in $(seq 0 6); do
+        local day_idx=$(( (today_dow - 6 + i + 7) % 7 ))
+        local commits="${daily_commits[$i]}"
+        local bar=$(draw_bar "$commits" "$max_commits" 20)
+        printf "  %s: ${GREEN}%-20s${NC} %d\n" "${days[$day_idx]}" "$bar" "$commits"
+    done
+    echo ""
+
+    # Weekly totals
+    read -r total_commits insertions deletions files <<< $(get_git_stats "7 days ago" "now")
+
+    echo -e "${CYAN}Week Totals${NC}"
+    echo -e "  Total commits: $total_commits"
+    echo -e "  Lines changed: $((insertions + deletions))"
+    echo -e "  Net lines: $((insertions - deletions))"
+    echo ""
+
+    # Focus stats
+    read -r focus_sessions focus_minutes focus_completed <<< $(get_focus_stats 7)
+    local focus_hours=$((focus_minutes / 60))
+    local completion_rate=0
+    [[ "$focus_sessions" -gt 0 ]] && completion_rate=$((focus_completed * 100 / focus_sessions))
+
+    echo -e "${CYAN}Focus Stats${NC}"
+    echo -e "  Sessions: $focus_sessions"
+    echo -e "  Completion rate: $completion_rate%"
+    echo -e "  Total focus time: ${focus_hours}h"
+}
+
+cmd_month() {
+    local as_json=false
+    [[ "$1" == "--json" ]] && as_json=true
+
+    echo -e "${BOLD}This Month's Activity${NC}"
+    echo ""
+
+    # Weekly breakdown
+    echo -e "${CYAN}Weekly Commits${NC}"
+
+    local max_commits=1
+    local weekly_commits=()
+
+    for week in 3 2 1 0; do
+        local start=$((week * 7 + 7))
+        local end=$((week * 7))
+        local since=$(date_ago "$start")
+        local until_date=$(date_ago "$end")
+        local commits=$(git log --since="$since" --until="$until_date" --oneline 2>/dev/null | wc -l | tr -d ' ')
+        weekly_commits+=("$commits")
+        [[ "$commits" -gt "$max_commits" ]] && max_commits="$commits"
+    done
+
+    for i in $(seq 0 3); do
+        local week_num=$((4 - i))
+        local commits="${weekly_commits[$i]}"
+        local bar=$(draw_bar "$commits" "$max_commits" 25)
+        printf "  Week %d: ${GREEN}%-25s${NC} %d\n" "$week_num" "$bar" "$commits"
+    done
+    echo ""
+
+    # Monthly totals
+    read -r total_commits insertions deletions files <<< $(get_git_stats "30 days ago" "now")
+
+    echo -e "${CYAN}Month Totals${NC}"
+    echo -e "  Total commits: $total_commits"
+    echo -e "  Lines added: $insertions"
+    echo -e "  Lines removed: $deletions"
+    echo -e "  Files touched: $files"
+    echo ""
+
+    # Focus stats
+    read -r focus_sessions focus_minutes focus_completed <<< $(get_focus_stats 30)
+    local focus_hours=$((focus_minutes / 60))
+
+    echo -e "${CYAN}Focus Stats${NC}"
+    echo -e "  Sessions: $focus_sessions"
+    echo -e "  Total focus time: ${focus_hours}h"
+    echo -e "  Average per day: $((focus_minutes / 30))m"
+}
+
+cmd_commits() {
+    local days=7
+    local project=""
+    local as_json=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --days) days="$2"; shift 2 ;;
+            --project) project="$2"; shift 2 ;;
+            --json) as_json=true; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    echo -e "${BOLD}Commit Statistics (${days} days)${NC}"
+    echo ""
+
+    read -r total_commits insertions deletions files <<< $(get_git_stats "$days days ago" "now" "$project")
+
+    echo -e "${CYAN}Overview${NC}"
+    echo -e "  Total commits: $total_commits"
+    echo -e "  Lines added: ${GREEN}+$insertions${NC}"
+    echo -e "  Lines removed: ${RED}-$deletions${NC}"
+    echo -e "  Net change: $((insertions - deletions))"
+    echo -e "  Files modified: $files"
+    echo ""
+
+    # Commits by hour
+    echo -e "${CYAN}Commits by Hour${NC}"
+
+    local hour_counts=()
+    for h in $(seq 0 23); do
+        hour_counts[$h]=0
+    done
+
+    git log --since="$days days ago" --format="%H" 2>/dev/null | while read -r hour; do
+        hour=$((10#$hour))  # Remove leading zero
+        hour_counts[$hour]=$((${hour_counts[$hour]:-0} + 1))
+    done
+
+    # Find peak hours
+    local peak_hour=0
+    local peak_count=0
+    for h in $(seq 0 23); do
+        local count=$(git log --since="$days days ago" --format="%H" 2>/dev/null | grep -c "^$(printf '%02d' $h)" || echo 0)
+        if [[ "$count" -gt "$peak_count" ]]; then
+            peak_count="$count"
+            peak_hour="$h"
+        fi
+    done
+
+    echo -e "  Peak hour: ${peak_hour}:00 ($peak_count commits)"
+    echo ""
+
+    # Top committers (if multiple)
+    echo -e "${CYAN}Contributors${NC}"
+    git log --since="$days days ago" --format="%an" 2>/dev/null | sort | uniq -c | sort -rn | head -5 | while read -r count name; do
+        echo -e "  $name: $count commits"
+    done
+}
+
+cmd_focus() {
+    local days=7
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --days) days="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    echo -e "${BOLD}Focus Statistics (${days} days)${NC}"
+    echo ""
+
+    read -r total_sessions total_minutes completed <<< $(get_focus_stats "$days")
+
+    local hours=$((total_minutes / 60))
+    local mins=$((total_minutes % 60))
+    local completion_rate=0
+    [[ "$total_sessions" -gt 0 ]] && completion_rate=$((completed * 100 / total_sessions))
+    local avg_per_day=$((total_minutes / days))
+
+    echo -e "${CYAN}Overview${NC}"
+    echo -e "  Total sessions: $total_sessions"
+    echo -e "  Completed: $completed ($completion_rate%)"
+    echo -e "  Total time: ${hours}h ${mins}m"
+    echo -e "  Average per day: ${avg_per_day}m"
+    echo ""
+
+    # Completion rate bar
+    echo -e "${CYAN}Completion Rate${NC}"
+    local bar=$(draw_bar "$completion_rate" 100 30)
+    echo -e "  [${GREEN}$bar${NC}$(printf '%*s' $((30 - completion_rate * 30 / 100)) | tr ' ' '░')] $completion_rate%"
+    echo ""
+
+    # Daily breakdown
+    echo -e "${CYAN}Daily Focus Time${NC}"
+
+    local max_minutes=1
+    for i in $(seq 0 $((days < 7 ? days - 1 : 6))); do
+        local date_str=$(date_ago "$i")
+        local day_file="$DATA_DIR/focus/sessions-$date_str.jsonl"
+        local day_mins=0
+
+        if [[ -f "$day_file" ]]; then
+            while IFS= read -r line; do
+                local dur=$(echo "$line" | grep -o '"duration": [0-9]*' | grep -o '[0-9]*')
+                day_mins=$((day_mins + dur))
+            done < "$day_file"
+        fi
+
+        [[ "$day_mins" -gt "$max_minutes" ]] && max_minutes="$day_mins"
+    done
+
+    for i in $(seq $((days < 7 ? days - 1 : 6)) -1 0); do
+        local date_str=$(date_ago "$i")
+        local day_name=$(date -v-${i}d +%a 2>/dev/null || date -d "-$i days" +%a 2>/dev/null)
+        local day_file="$DATA_DIR/focus/sessions-$date_str.jsonl"
+        local day_mins=0
+
+        if [[ -f "$day_file" ]]; then
+            while IFS= read -r line; do
+                local dur=$(echo "$line" | grep -o '"duration": [0-9]*' | grep -o '[0-9]*')
+                day_mins=$((day_mins + dur))
+            done < "$day_file"
+        fi
+
+        local bar=$(draw_bar "$day_mins" "$max_minutes" 20)
+        printf "  %s: ${MAGENTA}%-20s${NC} %dm\n" "$day_name" "$bar" "$day_mins"
+    done
+}
+
+cmd_activity() {
+    local hours=24
+    local category=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --hours) hours="$2"; shift 2 ;;
+            --category) category="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    echo -e "${BOLD}Activity Timeline (${hours}h)${NC}"
+    echo ""
+
+    local journal_dir="$DATA_DIR/journal"
+    local since=$(date -v-${hours}H +%s 2>/dev/null || date -d "-$hours hours" +%s 2>/dev/null)
+
+    if [[ -d "$journal_dir" ]]; then
+        for file in "$journal_dir"/*.jsonl; do
+            [[ -f "$file" ]] || continue
+            while IFS= read -r line; do
+                local ts=$(echo "$line" | grep -o '"timestamp": [0-9]*' | grep -o '[0-9]*')
+                if [[ -n "$ts" ]] && [[ "$ts" -ge "$since" ]]; then
+                    local cat=$(echo "$line" | grep -o '"category": "[^"]*"' | cut -d'"' -f4)
+                    local msg=$(echo "$line" | grep -o '"message": "[^"]*"' | cut -d'"' -f4)
+                    local time_str=$(date -r "$ts" '+%H:%M' 2>/dev/null || date -d "@$ts" '+%H:%M' 2>/dev/null)
+
+                    if [[ -z "$category" ]] || [[ "$cat" == "$category" ]]; then
+                        local cat_color="$DIM"
+                        case "$cat" in
+                            error) cat_color="$RED" ;;
+                            success) cat_color="$GREEN" ;;
+                            focus) cat_color="$MAGENTA" ;;
+                            git) cat_color="$CYAN" ;;
+                        esac
+
+                        echo -e "  ${DIM}$time_str${NC} ${cat_color}[$cat]${NC} $msg"
+                    fi
+                fi
+            done < "$file"
+        done | sort
+    else
+        echo "No journal data available"
+    fi
+}
+
+cmd_trends() {
+    local days=30
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --days) days="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    echo -e "${BOLD}Trends (${days} days)${NC}"
+    echo ""
+
+    # Compare this period to previous period
+    local current_commits=$(git log --since="$days days ago" --oneline 2>/dev/null | wc -l | tr -d ' ')
+    local prev_commits=$(git log --since="$((days * 2)) days ago" --until="$days days ago" --oneline 2>/dev/null | wc -l | tr -d ' ')
+
+    local commit_change=0
+    [[ "$prev_commits" -gt 0 ]] && commit_change=$(( (current_commits - prev_commits) * 100 / prev_commits ))
+
+    local trend_icon="→"
+    local trend_color="$YELLOW"
+    if [[ "$commit_change" -gt 10 ]]; then
+        trend_icon="↑"
+        trend_color="$GREEN"
+    elif [[ "$commit_change" -lt -10 ]]; then
+        trend_icon="↓"
+        trend_color="$RED"
+    fi
+
+    echo -e "${CYAN}Commit Trend${NC}"
+    echo -e "  Current period: $current_commits commits"
+    echo -e "  Previous period: $prev_commits commits"
+    echo -e "  Change: ${trend_color}${trend_icon} ${commit_change}%${NC}"
+    echo ""
+
+    # Focus trend
+    read -r current_focus_sessions current_focus_mins _ <<< $(get_focus_stats "$days")
+
+    echo -e "${CYAN}Focus Trend${NC}"
+    echo -e "  Focus sessions: $current_focus_sessions"
+    echo -e "  Focus time: $((current_focus_mins / 60))h"
+}
+
+cmd_export() {
+    local format="json"
+    local days=30
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) format="json"; shift ;;
+            --csv) format="csv"; shift ;;
+            --days) days="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ "$format" == "csv" ]]; then
+        echo "date,commits,insertions,deletions,focus_sessions,focus_minutes"
+
+        for i in $(seq $((days - 1)) -1 0); do
+            local date_str=$(date_ago "$i")
+
+            # Git stats for day
+            local commits=$(git log --since="$date_str 00:00" --until="$date_str 23:59" --oneline 2>/dev/null | wc -l | tr -d ' ')
+            local insertions=$(git log --since="$date_str 00:00" --until="$date_str 23:59" --shortstat 2>/dev/null | grep "insertion" | awk '{sum += $4} END {print sum+0}')
+            local deletions=$(git log --since="$date_str 00:00" --until="$date_str 23:59" --shortstat 2>/dev/null | grep "deletion" | awk '{sum += $6} END {print sum+0}')
+
+            # Focus stats for day
+            local focus_sessions=0
+            local focus_minutes=0
+            local focus_file="$DATA_DIR/focus/sessions-$date_str.jsonl"
+
+            if [[ -f "$focus_file" ]]; then
+                while IFS= read -r line; do
+                    local dur=$(echo "$line" | grep -o '"duration": [0-9]*' | grep -o '[0-9]*')
+                    focus_sessions=$((focus_sessions + 1))
+                    focus_minutes=$((focus_minutes + dur))
+                done < "$focus_file"
+            fi
+
+            echo "$date_str,$commits,$insertions,$deletions,$focus_sessions,$focus_minutes"
+        done
+    else
+        echo "{"
+        echo "  \"period\": \"$days days\","
+        echo "  \"generated\": \"$(date -Iseconds)\","
+        echo "  \"daily\": ["
+
+        local first=true
+        for i in $(seq $((days - 1)) -1 0); do
+            local date_str=$(date_ago "$i")
+
+            local commits=$(git log --since="$date_str 00:00" --until="$date_str 23:59" --oneline 2>/dev/null | wc -l | tr -d ' ')
+
+            [[ "$first" == "true" ]] || echo ","
+            first=false
+            echo -n "    {\"date\": \"$date_str\", \"commits\": $commits}"
+        done
+
+        echo ""
+        echo "  ]"
+        echo "}"
+    fi
+}
+
+main() {
+    local cmd="${1:-today}"
+
+    case "$cmd" in
+        help|--help|-h)
+            cmd_help
+            ;;
+        today|t)
+            shift
+            cmd_today "$@"
+            ;;
+        week|w)
+            shift
+            cmd_week "$@"
+            ;;
+        month|m)
+            shift
+            cmd_month "$@"
+            ;;
+        commits|c)
+            shift
+            cmd_commits "$@"
+            ;;
+        focus|f)
+            shift
+            cmd_focus "$@"
+            ;;
+        activity|a)
+            shift
+            cmd_activity "$@"
+            ;;
+        trends)
+            shift
+            cmd_trends "$@"
+            ;;
+        export)
+            shift
+            cmd_export "$@"
+            ;;
+        version|--version|-V)
+            echo "metrics $METRICS_VERSION"
+            ;;
+        *)
+            log_error "Unknown command: $cmd"
+            echo "Run 'metrics help' for usage"
+            exit 1
+            ;;
+    esac
+}
+
+log_error() { echo -e "${RED}error:${NC} $*" >&2; }
+
+main "$@"

@@ -1,0 +1,674 @@
+#!/usr/bin/env bash
+# backup - Project backup for Daedalos
+#
+# Create and manage project backups.
+
+set -eo pipefail
+
+BACKUP_VERSION="1.0.0"
+
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/daedalos/backup"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/daedalos/backup"
+BACKUP_DIR="${DAEDALOS_BACKUP_DIR:-$DATA_DIR/archives}"
+
+mkdir -p "$BACKUP_DIR" "$CONFIG_DIR"
+
+# Colors
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' DIM='' NC=''
+fi
+
+log_error() { echo -e "${RED}error:${NC} $*" >&2; }
+log_success() { echo -e "${GREEN}✓${NC} $*"; }
+log_info() { echo -e "${BLUE}info:${NC} $*"; }
+log_warn() { echo -e "${YELLOW}!${NC} $*"; }
+
+cmd_help() {
+    cat << 'EOF'
+backup - Project backup for Daedalos
+
+USAGE:
+    backup <command> [args...]
+
+COMMANDS:
+    create [PATH]        Create a backup of project
+    restore <BACKUP>     Restore from backup
+    list                 List available backups
+    show <BACKUP>        Show backup details
+    delete <BACKUP>      Delete a backup
+    schedule             Configure automatic backups
+    prune                Remove old backups
+    export <BACKUP>      Export backup to file
+    import <FILE>        Import backup from file
+
+BACKUP TYPES:
+    --full               Full backup (default)
+    --incremental        Only changed files since last backup
+    --git                Git bundle (includes history)
+
+OPTIONS:
+    --name NAME          Custom backup name
+    --compress           Compress backup (gzip)
+    --encrypt            Encrypt with age
+    --exclude PATTERN    Exclude files matching pattern
+    --remote HOST        Backup to remote host
+
+EXAMPLES:
+    backup create                        # Backup current project
+    backup create ~/myproject            # Backup specific project
+    backup create --name "pre-refactor"  # Named backup
+    backup list                          # Show backups
+    backup restore myproject-20240115    # Restore backup
+    backup prune --keep 10               # Keep last 10 backups
+
+AUTOMATIC BACKUPS:
+    backup schedule --daily              # Daily at midnight
+    backup schedule --hourly             # Every hour
+    backup schedule --on-commit          # After each commit
+
+STORAGE:
+    Local: ~/.local/share/daedalos/backup/archives/
+    Remote: Configure with 'remote' tool
+
+INTEGRATION:
+    - undo: Complements file-level undo
+    - git: Can backup as git bundles
+    - secrets: Encrypted backups use secrets vault
+    - journal: Logs backup operations
+
+EOF
+}
+
+# Generate backup name
+generate_name() {
+    local project="${1:-$(basename "$PWD")}"
+    local timestamp=$(date +%Y%m%d-%H%M%S)
+    echo "${project}-${timestamp}"
+}
+
+# Get project root (git root or current dir)
+get_project_root() {
+    local path="${1:-$PWD}"
+    cd "$path"
+    git rev-parse --show-toplevel 2>/dev/null || echo "$path"
+}
+
+# Get default excludes
+get_default_excludes() {
+    cat << 'EOF'
+.git
+node_modules
+__pycache__
+*.pyc
+.venv
+venv
+.env
+target
+dist
+build
+.cache
+.DS_Store
+*.log
+EOF
+}
+
+cmd_create() {
+    local path=""
+    local name=""
+    local backup_type="full"
+    local compress=true
+    local encrypt=false
+    local excludes=()
+    local remote=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name|-n) name="$2"; shift 2 ;;
+            --full) backup_type="full"; shift ;;
+            --incremental) backup_type="incremental"; shift ;;
+            --git) backup_type="git"; shift ;;
+            --compress) compress=true; shift ;;
+            --no-compress) compress=false; shift ;;
+            --encrypt) encrypt=true; shift ;;
+            --exclude) excludes+=("$2"); shift 2 ;;
+            --remote) remote="$2"; shift 2 ;;
+            -*) shift ;;
+            *) path="$1"; shift ;;
+        esac
+    done
+
+    path="${path:-$PWD}"
+    path=$(get_project_root "$path")
+    local project=$(basename "$path")
+
+    name="${name:-$(generate_name "$project")}"
+
+    echo -e "${BOLD}Creating Backup${NC}"
+    echo -e "  ${CYAN}Project:${NC} $project"
+    echo -e "  ${CYAN}Path:${NC} $path"
+    echo -e "  ${CYAN}Type:${NC} $backup_type"
+    echo ""
+
+    local backup_file="$BACKUP_DIR/$name"
+
+    if [[ "$backup_type" == "git" ]]; then
+        # Git bundle backup
+        if ! git -C "$path" rev-parse --git-dir &>/dev/null; then
+            log_error "Not a git repository"
+            exit 1
+        fi
+
+        backup_file="${backup_file}.bundle"
+        log_info "Creating git bundle..."
+        git -C "$path" bundle create "$backup_file" --all
+
+    else
+        # Tar backup
+        backup_file="${backup_file}.tar"
+        [[ "$compress" == "true" ]] && backup_file="${backup_file}.gz"
+
+        # Build exclude list
+        local exclude_args=()
+        for pattern in $(get_default_excludes); do
+            exclude_args+=("--exclude=$pattern")
+        done
+        for pattern in "${excludes[@]}"; do
+            exclude_args+=("--exclude=$pattern")
+        done
+
+        log_info "Creating archive..."
+
+        if [[ "$compress" == "true" ]]; then
+            tar -czf "$backup_file" -C "$(dirname "$path")" "${exclude_args[@]}" "$(basename "$path")"
+        else
+            tar -cf "$backup_file" -C "$(dirname "$path")" "${exclude_args[@]}" "$(basename "$path")"
+        fi
+    fi
+
+    # Encrypt if requested
+    if [[ "$encrypt" == "true" ]]; then
+        if command -v age &>/dev/null && command -v secrets &>/dev/null; then
+            log_info "Encrypting backup..."
+            local key=$(secrets key 2>/dev/null)
+            if [[ -n "$key" ]]; then
+                age -r "$key" -o "${backup_file}.age" "$backup_file"
+                rm "$backup_file"
+                backup_file="${backup_file}.age"
+            else
+                log_warn "No encryption key found, skipping encryption"
+            fi
+        else
+            log_warn "age/secrets not available, skipping encryption"
+        fi
+    fi
+
+    # Copy to remote if specified
+    if [[ -n "$remote" ]]; then
+        if command -v remote &>/dev/null; then
+            log_info "Copying to remote: $remote"
+            remote sync "$remote" "$backup_file" --to 2>/dev/null || true
+        fi
+    fi
+
+    # Record metadata
+    cat > "${backup_file%.tar*}.meta.json" << EOF
+{
+    "name": "$name",
+    "project": "$project",
+    "path": "$path",
+    "type": "$backup_type",
+    "created": $(date +%s),
+    "created_at": "$(date -Iseconds)",
+    "size": $(stat -f%z "$backup_file" 2>/dev/null || stat -c%s "$backup_file" 2>/dev/null),
+    "compressed": $compress,
+    "encrypted": $encrypt
+}
+EOF
+
+    local size=$(du -h "$backup_file" | cut -f1)
+
+    log_success "Backup created: $name"
+    echo -e "  ${CYAN}File:${NC} $backup_file"
+    echo -e "  ${CYAN}Size:${NC} $size"
+
+    # Log to journal
+    if command -v journal &>/dev/null; then
+        journal log "Created backup: $name ($size)" "backup" "backup_create" 2>/dev/null || true
+    fi
+}
+
+cmd_restore() {
+    local backup_name="$1"
+    local target="${2:-}"
+    local force=false
+
+    [[ "$1" == "--force" ]] && { force=true; backup_name="$2"; target="${3:-}"; }
+
+    if [[ -z "$backup_name" ]]; then
+        log_error "Backup name required"
+        echo "Usage: backup restore <BACKUP> [TARGET]"
+        echo "Run 'backup list' to see available backups"
+        exit 1
+    fi
+
+    # Find backup file
+    local backup_file=""
+    for ext in ".tar.gz" ".tar" ".bundle" ".tar.gz.age" ".tar.age" ".bundle.age"; do
+        if [[ -f "$BACKUP_DIR/${backup_name}${ext}" ]]; then
+            backup_file="$BACKUP_DIR/${backup_name}${ext}"
+            break
+        fi
+    done
+
+    if [[ -z "$backup_file" ]] || [[ ! -f "$backup_file" ]]; then
+        log_error "Backup not found: $backup_name"
+        exit 1
+    fi
+
+    # Load metadata
+    local meta_file="${backup_file%.tar*}.meta.json"
+    [[ "$backup_file" == *.bundle* ]] && meta_file="${backup_file%.bundle*}.meta.json"
+
+    local project=""
+    if [[ -f "$meta_file" ]]; then
+        project=$(grep '"project"' "$meta_file" | cut -d'"' -f4)
+    fi
+
+    target="${target:-$project}"
+    target="${target:-.}"
+
+    if [[ -e "$target" ]] && [[ "$force" != "true" ]]; then
+        log_warn "Target exists: $target"
+        read -p "Overwrite? [y/N] " -n 1 -r
+        echo
+        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+    fi
+
+    echo -e "${BOLD}Restoring Backup${NC}"
+    echo -e "  ${CYAN}Backup:${NC} $backup_name"
+    echo -e "  ${CYAN}Target:${NC} $target"
+    echo ""
+
+    # Decrypt if needed
+    local work_file="$backup_file"
+    if [[ "$backup_file" == *.age ]]; then
+        if command -v age &>/dev/null && command -v secrets &>/dev/null; then
+            log_info "Decrypting backup..."
+            local identity=$(~/.local/share/daedalos/secrets/keys/identity.key 2>/dev/null)
+            if [[ -f "$identity" ]]; then
+                work_file="${backup_file%.age}"
+                age -d -i "$identity" -o "$work_file" "$backup_file"
+            else
+                log_error "No decryption key found"
+                exit 1
+            fi
+        fi
+    fi
+
+    # Restore based on type
+    if [[ "$work_file" == *.bundle ]]; then
+        log_info "Restoring git bundle..."
+        mkdir -p "$target"
+        git clone "$work_file" "$target"
+    else
+        log_info "Extracting archive..."
+        mkdir -p "$target"
+        tar -xf "$work_file" -C "$(dirname "$target")"
+    fi
+
+    # Clean up decrypted temp file
+    [[ "$work_file" != "$backup_file" ]] && rm -f "$work_file"
+
+    log_success "Backup restored to: $target"
+
+    # Log to journal
+    if command -v journal &>/dev/null; then
+        journal log "Restored backup: $backup_name" "backup" "backup_restore" 2>/dev/null || true
+    fi
+}
+
+cmd_list() {
+    local project_filter=""
+    local as_json=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project) project_filter="$2"; shift 2 ;;
+            --json) as_json=true; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ ! -d "$BACKUP_DIR" ]] || [[ -z "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]]; then
+        echo "No backups found"
+        return
+    fi
+
+    echo -e "${BOLD}Available Backups${NC}"
+    echo ""
+
+    # Find all meta files and sort by date
+    find "$BACKUP_DIR" -name "*.meta.json" -type f 2>/dev/null | while read -r meta_file; do
+        local name=$(grep '"name"' "$meta_file" | cut -d'"' -f4)
+        local project=$(grep '"project"' "$meta_file" | cut -d'"' -f4)
+        local created=$(grep '"created_at"' "$meta_file" | cut -d'"' -f4)
+        local size=$(grep '"size"' "$meta_file" | grep -o '[0-9]*')
+        local backup_type=$(grep '"type"' "$meta_file" | cut -d'"' -f4)
+
+        # Apply filter
+        if [[ -n "$project_filter" ]] && [[ "$project" != "$project_filter" ]]; then
+            continue
+        fi
+
+        # Format size
+        local size_human=""
+        if [[ -n "$size" ]]; then
+            if [[ "$size" -gt 1073741824 ]]; then
+                size_human="$((size / 1073741824))G"
+            elif [[ "$size" -gt 1048576 ]]; then
+                size_human="$((size / 1048576))M"
+            elif [[ "$size" -gt 1024 ]]; then
+                size_human="$((size / 1024))K"
+            else
+                size_human="${size}B"
+            fi
+        fi
+
+        echo -e "  ${GREEN}$name${NC}"
+        echo -e "    ${DIM}Project:${NC} $project"
+        echo -e "    ${DIM}Type:${NC} $backup_type | ${DIM}Size:${NC} $size_human"
+        echo -e "    ${DIM}Created:${NC} $created"
+        echo ""
+    done
+}
+
+cmd_show() {
+    local name="$1"
+
+    if [[ -z "$name" ]]; then
+        log_error "Backup name required"
+        exit 1
+    fi
+
+    local meta_file=""
+    for ext in ".tar.gz" ".tar" ".bundle" ".tar.gz.age"; do
+        local base="${ext%.age}"
+        if [[ -f "$BACKUP_DIR/${name}${base}.meta.json" ]]; then
+            meta_file="$BACKUP_DIR/${name}${base}.meta.json"
+            break
+        fi
+    done
+
+    if [[ -z "$meta_file" ]] || [[ ! -f "$meta_file" ]]; then
+        log_error "Backup not found: $name"
+        exit 1
+    fi
+
+    echo -e "${BOLD}Backup Details: $name${NC}"
+    echo ""
+    cat "$meta_file" | python3 -m json.tool 2>/dev/null || cat "$meta_file"
+}
+
+cmd_delete() {
+    local name="$1"
+    local force=false
+
+    [[ "$1" == "--force" ]] && { force=true; name="$2"; }
+
+    if [[ -z "$name" ]]; then
+        log_error "Backup name required"
+        exit 1
+    fi
+
+    # Find all files for this backup
+    local files=($(find "$BACKUP_DIR" -name "${name}*" -type f 2>/dev/null))
+
+    if [[ ${#files[@]} -eq 0 ]]; then
+        log_error "Backup not found: $name"
+        exit 1
+    fi
+
+    if [[ "$force" != "true" ]]; then
+        echo "Files to delete:"
+        for f in "${files[@]}"; do
+            echo "  $(basename "$f")"
+        done
+        read -p "Delete these files? [y/N] " -n 1 -r
+        echo
+        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+    fi
+
+    for f in "${files[@]}"; do
+        rm -f "$f"
+    done
+
+    log_success "Backup deleted: $name"
+}
+
+cmd_prune() {
+    local keep=10
+    local dry_run=false
+    local project=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --keep) keep="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            --project) project="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    echo -e "${BOLD}Pruning Backups${NC}"
+    echo -e "  ${CYAN}Keep:${NC} $keep most recent"
+    [[ -n "$project" ]] && echo -e "  ${CYAN}Project:${NC} $project"
+    echo ""
+
+    # Group backups by project
+    local projects=$(find "$BACKUP_DIR" -name "*.meta.json" -exec grep -l '"project"' {} \; 2>/dev/null | \
+        xargs -I{} grep '"project"' {} | cut -d'"' -f4 | sort -u)
+
+    for proj in $projects; do
+        [[ -n "$project" ]] && [[ "$proj" != "$project" ]] && continue
+
+        # Get backups for this project sorted by date (oldest first)
+        local backups=($(find "$BACKUP_DIR" -name "*.meta.json" -exec grep -l "\"project\": \"$proj\"" {} \; 2>/dev/null | \
+            xargs -I{} sh -c 'echo "$(grep "created\":" "{}" | grep -o "[0-9]*") {}"' | \
+            sort -n | head -n -$keep | cut -d' ' -f2-))
+
+        for meta in "${backups[@]}"; do
+            [[ -z "$meta" ]] && continue
+            local name=$(grep '"name"' "$meta" | cut -d'"' -f4)
+
+            if [[ "$dry_run" == "true" ]]; then
+                echo "Would delete: $name"
+            else
+                cmd_delete --force "$name" 2>/dev/null || true
+            fi
+        done
+    done
+
+    [[ "$dry_run" != "true" ]] && log_success "Pruning complete"
+}
+
+cmd_export() {
+    local name="$1"
+    local output="${2:-}"
+
+    if [[ -z "$name" ]]; then
+        log_error "Backup name required"
+        exit 1
+    fi
+
+    # Find backup file
+    local backup_file=""
+    for ext in ".tar.gz" ".tar" ".bundle" ".tar.gz.age"; do
+        if [[ -f "$BACKUP_DIR/${name}${ext}" ]]; then
+            backup_file="$BACKUP_DIR/${name}${ext}"
+            break
+        fi
+    done
+
+    if [[ -z "$backup_file" ]]; then
+        log_error "Backup not found: $name"
+        exit 1
+    fi
+
+    output="${output:-$(basename "$backup_file")}"
+
+    cp "$backup_file" "$output"
+
+    # Also copy metadata
+    local meta_file="${backup_file%.tar*}.meta.json"
+    [[ "$backup_file" == *.bundle* ]] && meta_file="${backup_file%.bundle*}.meta.json"
+    [[ -f "$meta_file" ]] && cp "$meta_file" "${output%.tar*}.meta.json"
+
+    log_success "Exported to: $output"
+}
+
+cmd_import() {
+    local file="$1"
+
+    if [[ -z "$file" ]] || [[ ! -f "$file" ]]; then
+        log_error "Backup file required"
+        exit 1
+    fi
+
+    local dest="$BACKUP_DIR/$(basename "$file")"
+
+    if [[ -f "$dest" ]]; then
+        log_warn "Backup already exists"
+        read -p "Overwrite? [y/N] " -n 1 -r
+        echo
+        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+    fi
+
+    cp "$file" "$dest"
+
+    # Import metadata if present
+    local meta_file="${file%.tar*}.meta.json"
+    [[ "$file" == *.bundle* ]] && meta_file="${file%.bundle*}.meta.json"
+    [[ -f "$meta_file" ]] && cp "$meta_file" "$BACKUP_DIR/"
+
+    log_success "Imported: $(basename "$file")"
+}
+
+cmd_schedule() {
+    local interval=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --daily) interval="daily"; shift ;;
+            --hourly) interval="hourly"; shift ;;
+            --on-commit) interval="on-commit"; shift ;;
+            --disable) interval="disable"; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ -z "$interval" ]]; then
+        echo -e "${BOLD}Backup Schedule${NC}"
+        echo ""
+        echo "Configure automatic backups:"
+        echo "  backup schedule --daily       # Daily at midnight"
+        echo "  backup schedule --hourly      # Every hour"
+        echo "  backup schedule --on-commit   # Git post-commit hook"
+        echo "  backup schedule --disable     # Disable automatic backups"
+        return
+    fi
+
+    case "$interval" in
+        daily|hourly)
+            log_info "Automatic backups require cron/launchd setup"
+            echo ""
+            echo "Add to crontab:"
+            if [[ "$interval" == "daily" ]]; then
+                echo "  0 0 * * * $HOME/.local/bin/backup create $PWD"
+            else
+                echo "  0 * * * * $HOME/.local/bin/backup create $PWD"
+            fi
+            ;;
+        on-commit)
+            if git rev-parse --git-dir &>/dev/null; then
+                local hook_file="$(git rev-parse --git-dir)/hooks/post-commit"
+                echo '#!/bin/bash' > "$hook_file"
+                echo 'backup create --name "post-commit-$(date +%Y%m%d%H%M%S)"' >> "$hook_file"
+                chmod +x "$hook_file"
+                log_success "Git post-commit hook installed"
+            else
+                log_error "Not in a git repository"
+            fi
+            ;;
+        disable)
+            if git rev-parse --git-dir &>/dev/null; then
+                rm -f "$(git rev-parse --git-dir)/hooks/post-commit"
+                log_success "Backup hook removed"
+            fi
+            ;;
+    esac
+}
+
+main() {
+    local cmd="${1:-help}"
+
+    case "$cmd" in
+        help|--help|-h)
+            cmd_help
+            ;;
+        create|c|new)
+            shift
+            cmd_create "$@"
+            ;;
+        restore|r)
+            shift
+            cmd_restore "$@"
+            ;;
+        list|ls|l)
+            shift
+            cmd_list "$@"
+            ;;
+        show|info)
+            shift
+            cmd_show "$@"
+            ;;
+        delete|rm|del)
+            shift
+            cmd_delete "$@"
+            ;;
+        prune|clean)
+            shift
+            cmd_prune "$@"
+            ;;
+        export)
+            shift
+            cmd_export "$@"
+            ;;
+        import)
+            shift
+            cmd_import "$@"
+            ;;
+        schedule)
+            shift
+            cmd_schedule "$@"
+            ;;
+        version|--version|-V)
+            echo "backup $BACKUP_VERSION"
+            ;;
+        *)
+            log_error "Unknown command: $cmd"
+            echo "Run 'backup help' for usage"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

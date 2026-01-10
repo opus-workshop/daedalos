@@ -1,0 +1,390 @@
+#!/usr/bin/env bash
+# daedalos - Unified entry point for all Daedalos tools
+#
+# A Linux distribution designed BY AI, FOR AI development.
+
+set -eo pipefail
+
+DAEDALOS_VERSION="1.0.0"
+DAEDALOS_TOOLS_DIR="${HOME}/.local/bin"
+
+# Colors
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    MAGENTA='\033[0;35m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' DIM='' NC=''
+fi
+
+# Tool descriptions
+get_tool_desc() {
+    case "$1" in
+        loop)     echo "Iterate until promise met - THE CORE" ;;
+        verify)   echo "Universal lint/type/build/test runner" ;;
+        undo)     echo "File-level undo with timeline" ;;
+        sandbox)  echo "Ephemeral experiment environments" ;;
+        project)  echo "Pre-computed codebase intelligence" ;;
+        codex)    echo "Semantic code search" ;;
+        context)  echo "Context window management" ;;
+        error-db) echo "Error pattern database" ;;
+        agent)    echo "Multi-agent orchestration" ;;
+        mcp-hub)  echo "MCP server management" ;;
+        lsp-pool) echo "Pre-warmed language servers" ;;
+        scratch)  echo "Project-scoped ephemeral environments" ;;
+        observe)  echo "Real-time TUI dashboard" ;;
+        gates)    echo "Configurable approval checkpoints" ;;
+        journal)  echo "Narrative reconstruction - what happened?" ;;
+        *)        echo "" ;;
+    esac
+}
+
+# All tools in order
+ALL_TOOLS="loop verify undo sandbox project codex context error-db agent mcp-hub lsp-pool scratch observe gates journal"
+
+log_error() { echo -e "${RED}error:${NC} $*" >&2; }
+log_info() { echo -e "${BLUE}info:${NC} $*"; }
+log_success() { echo -e "${GREEN}✓${NC} $*"; }
+log_warn() { echo -e "${YELLOW}!${NC} $*"; }
+
+# Check if a tool is installed
+tool_exists() {
+    local tool="$1"
+    [[ -x "${DAEDALOS_TOOLS_DIR}/${tool}" ]]
+}
+
+# Get tool path
+tool_path() {
+    echo "${DAEDALOS_TOOLS_DIR}/$1"
+}
+
+cmd_help() {
+    cat <<EOF
+${BOLD}${CYAN}
+    ____                  __      __
+   / __ \____ ____  ____/ /___ _/ /___  _____
+  / / / / __ \`/ _ \/ __  / __ \`/ / __ \/ ___/
+ / /_/ / /_/ /  __/ /_/ / /_/ / / /_/ (__  )
+/_____/\__,_/\___/\__,_/\__,_/_/\____/____/
+${NC}
+${DIM}A Linux distribution designed BY AI, FOR AI development.${NC}
+
+${BOLD}USAGE${NC}
+    daedalos <tool> [args...]    Run a Daedalos tool
+    daedalos <command>           Run a meta-command
+
+${BOLD}THE CORE${NC}
+    ${CYAN}loop${NC}          $(get_tool_desc loop)
+                  ${DIM}loop start "fix tests" --promise "pytest"${NC}
+
+${BOLD}SAFETY & VERIFICATION${NC}
+    ${CYAN}verify${NC}        $(get_tool_desc verify)
+    ${CYAN}undo${NC}          $(get_tool_desc undo)
+    ${CYAN}sandbox${NC}       $(get_tool_desc sandbox)
+
+${BOLD}INTELLIGENCE${NC}
+    ${CYAN}project${NC}       $(get_tool_desc project)
+    ${CYAN}codex${NC}         $(get_tool_desc codex)
+    ${CYAN}context${NC}       $(get_tool_desc context)
+    ${CYAN}error-db${NC}      $(get_tool_desc error-db)
+
+${BOLD}INFRASTRUCTURE${NC}
+    ${CYAN}agent${NC}         $(get_tool_desc agent)
+    ${CYAN}mcp-hub${NC}       $(get_tool_desc mcp-hub)
+    ${CYAN}lsp-pool${NC}      $(get_tool_desc lsp-pool)
+
+${BOLD}UTILITY${NC}
+    ${CYAN}scratch${NC}       $(get_tool_desc scratch)
+
+${BOLD}SUPERVISION${NC}
+    ${CYAN}observe${NC}       $(get_tool_desc observe)
+                  ${DIM}Real-time dashboard for loops, agents, daemons${NC}
+    ${CYAN}gates${NC}         $(get_tool_desc gates)
+                  ${DIM}Control AI autonomy: autonomous → supervised → manual${NC}
+    ${CYAN}journal${NC}       $(get_tool_desc journal)
+                  ${DIM}Answer "what happened?" with coherent timelines${NC}
+
+${BOLD}META-COMMANDS${NC}
+    ${MAGENTA}status${NC}        Show status of all Daedalos services
+    ${MAGENTA}doctor${NC}        Verify installation and diagnose issues
+    ${MAGENTA}tools${NC}         List all tools with installation status
+    ${MAGENTA}version${NC}       Show version information
+
+${BOLD}PHILOSOPHY${NC}
+    "A loop is not a feature. A loop is how intelligent work gets done."
+
+    • ${BOLD}Iterate until done${NC} - Single-pass inference is a myth
+    • ${BOLD}Checkpoints everywhere${NC} - Every iteration has a rollback
+    • ${BOLD}Agent agnostic${NC} - Works with any AI coding agent
+    • ${BOLD}FOSS by design${NC} - No vendor lock-in
+
+${BOLD}QUICK START${NC}
+    daedalos loop start "implement feature" --promise "npm test"
+    daedalos verify --quick
+    daedalos undo checkpoint "before-refactor"
+    daedalos codex search "authentication"
+
+${BOLD}DOCUMENTATION${NC}
+    https://github.com/daedalos/daedalos
+
+EOF
+}
+
+cmd_tools() {
+    local as_json=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) as_json=true; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ "$as_json" == true ]]; then
+        echo "["
+        local first=true
+        for tool in $ALL_TOOLS; do
+            [[ "$first" == true ]] || echo ","
+            first=false
+            local installed=$(tool_exists "$tool" && echo "true" || echo "false")
+            local path=$(tool_path "$tool")
+            local desc=$(get_tool_desc "$tool")
+            echo "  {\"name\": \"$tool\", \"description\": \"$desc\", \"installed\": $installed, \"path\": \"$path\"}"
+        done
+        echo "]"
+        return
+    fi
+
+    echo "${BOLD}Daedalos Tools${NC}"
+    echo "==============="
+    echo ""
+
+    local installed=0
+    local missing=0
+
+    for tool in $ALL_TOOLS; do
+        local desc=$(get_tool_desc "$tool")
+        if tool_exists "$tool"; then
+            log_success "${CYAN}${tool}${NC} - ${desc}"
+            ((installed++)) || true
+        else
+            log_warn "${DIM}${tool}${NC} - ${desc} ${RED}(not installed)${NC}"
+            ((missing++)) || true
+        fi
+    done
+
+    echo ""
+    echo "${installed} installed, ${missing} missing"
+
+    if [[ $missing -gt 0 ]]; then
+        echo ""
+        echo "Run ${BOLD}daedalos doctor${NC} to diagnose installation issues."
+    fi
+}
+
+cmd_status() {
+    echo "${BOLD}Daedalos Status${NC}"
+    echo "================"
+    echo ""
+
+    # Check loop daemon
+    echo -n "Loop daemon:     "
+    if pgrep -f "loopd" >/dev/null 2>&1; then
+        log_success "running"
+    else
+        echo "${DIM}stopped${NC}"
+    fi
+
+    # Check MCP Hub
+    echo -n "MCP Hub:         "
+    if [[ -S "/run/daedalos/mcp-hub.sock" ]] || [[ -S "${HOME}/.local/share/daedalos/mcp-hub/mcp-hub.sock" ]]; then
+        log_success "running"
+    else
+        echo "${DIM}stopped${NC}"
+    fi
+
+    # Check LSP Pool
+    echo -n "LSP Pool:        "
+    if [[ -S "/run/daedalos/lsp-pool.sock" ]] || [[ -S "${HOME}/.local/share/daedalos/lsp-pool/lsp-pool.sock" ]]; then
+        log_success "running"
+    else
+        echo "${DIM}stopped${NC}"
+    fi
+
+    # Check undo daemon
+    echo -n "Undo daemon:     "
+    if pgrep -f "undod" >/dev/null 2>&1; then
+        log_success "running"
+    else
+        echo "${DIM}stopped${NC}"
+    fi
+
+    echo ""
+
+    # Active loops
+    if tool_exists "loop"; then
+        echo "${BOLD}Active Loops${NC}"
+        "$(tool_path loop)" list 2>/dev/null || echo "${DIM}No active loops${NC}"
+    fi
+
+    echo ""
+
+    # Active agents
+    if tool_exists "agent"; then
+        echo "${BOLD}Active Agents${NC}"
+        "$(tool_path agent)" list 2>/dev/null || echo "${DIM}No active agents${NC}"
+    fi
+}
+
+cmd_doctor() {
+    echo "${BOLD}Daedalos Doctor${NC}"
+    echo "================"
+    echo ""
+
+    local issues=0
+
+    # Check tools directory
+    echo "${BOLD}Checking installation...${NC}"
+    if [[ -d "$DAEDALOS_TOOLS_DIR" ]]; then
+        log_success "Tools directory exists: $DAEDALOS_TOOLS_DIR"
+    else
+        log_warn "Tools directory missing: $DAEDALOS_TOOLS_DIR"
+        ((issues++)) || true
+    fi
+
+    # Check each tool
+    echo ""
+    echo "${BOLD}Checking tools...${NC}"
+    for tool in $ALL_TOOLS; do
+        if tool_exists "$tool"; then
+            log_success "$tool"
+        else
+            log_warn "$tool - not found"
+            ((issues++)) || true
+        fi
+    done
+
+    # Check data directories
+    echo ""
+    echo "${BOLD}Checking data directories...${NC}"
+    for dir in "${HOME}/.local/share/daedalos" "${HOME}/.config/daedalos"; do
+        if [[ -d "$dir" ]]; then
+            log_success "$dir"
+        else
+            log_warn "$dir - will be created on first use"
+        fi
+    done
+
+    # Check dependencies
+    echo ""
+    echo "${BOLD}Checking dependencies...${NC}"
+    for dep in python3 sqlite3 tmux git; do
+        if command -v "$dep" >/dev/null 2>&1; then
+            log_success "$dep"
+        else
+            log_warn "$dep - not found"
+            ((issues++)) || true
+        fi
+    done
+
+    # Optional dependencies
+    echo ""
+    echo "${BOLD}Optional dependencies...${NC}"
+    for dep in btrfs fuse-overlayfs; do
+        if command -v "$dep" >/dev/null 2>&1; then
+            log_success "$dep"
+        else
+            echo "${DIM}$dep - not found (optional)${NC}"
+        fi
+    done
+
+    # Python modules
+    for mod in psutil click yaml; do
+        if python3 -c "import $mod" 2>/dev/null; then
+            log_success "python: $mod"
+        else
+            echo "${DIM}python: $mod - not found (optional)${NC}"
+        fi
+    done
+
+    echo ""
+    if [[ $issues -eq 0 ]]; then
+        log_success "All checks passed!"
+    else
+        log_warn "$issues issues found"
+        echo ""
+        echo "To fix missing tools, run the install scripts in daedalos-tools/"
+    fi
+}
+
+cmd_version() {
+    echo "daedalos $DAEDALOS_VERSION"
+    echo ""
+    echo "Tools:"
+    for tool in loop verify undo agent mcp-hub lsp-pool; do
+        if tool_exists "$tool"; then
+            local ver=$("$(tool_path "$tool")" --version 2>/dev/null || "$(tool_path "$tool")" version 2>/dev/null || echo "installed")
+            echo "  $tool: $ver"
+        fi
+    done
+}
+
+# Check if command is a known tool
+is_tool() {
+    local cmd="$1"
+    for tool in $ALL_TOOLS; do
+        [[ "$tool" == "$cmd" ]] && return 0
+    done
+    return 1
+}
+
+# Dispatch to tool or meta-command
+main() {
+    local cmd="${1:-help}"
+
+    case "$cmd" in
+        # Meta-commands
+        help|--help|-h)
+            cmd_help
+            ;;
+        tools)
+            shift
+            cmd_tools "$@"
+            ;;
+        status)
+            cmd_status
+            ;;
+        doctor)
+            cmd_doctor
+            ;;
+        version|--version|-V)
+            cmd_version
+            ;;
+
+        # Tool dispatch
+        *)
+            if is_tool "$cmd"; then
+                if tool_exists "$cmd"; then
+                    shift
+                    exec "$(tool_path "$cmd")" "$@"
+                else
+                    log_error "Tool '$cmd' is not installed"
+                    echo "Run ${BOLD}daedalos doctor${NC} to check installation"
+                    exit 1
+                fi
+            else
+                log_error "Unknown command: $cmd"
+                echo "Run ${BOLD}daedalos help${NC} for usage"
+                exit 1
+            fi
+            ;;
+    esac
+}
+
+main "$@"

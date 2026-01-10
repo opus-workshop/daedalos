@@ -384,6 +384,189 @@ Pattern-matched error explanations and suggested fixes.
     error recent                      Recent errors with solutions
 
 ================================================================================
+                              HUMAN-FOCUSED TOOLS
+================================================================================
+
+Daedalos is AI-native, but humans are still in the loop. These tools support
+the human side of development—collaboration, productivity, and oversight.
+
+--------------------------------------------------------------------------------
+DEVELOPER EXPERIENCE
+--------------------------------------------------------------------------------
+
+ENV - Project Environment Switching
+    env enter [PATH]                  Activate project environment
+    env leave                         Deactivate current environment
+    env current                       Show active environment
+    env list                          List recent environments
+    env detect                        Auto-detect project type
+    env hook                          Shell integration hook
+
+    Automatic detection for: Node.js, Python, Rust, Go, Ruby, Swift, etc.
+    Integrates with: direnv, .envrc, .daedalos/env.sh
+
+NOTIFY - Desktop Notifications
+    notify "<message>"                Send notification
+    notify success "<message>"        Success notification (green)
+    notify error "<message>"          Error notification (red)
+    notify watch "<command>"          Run command, notify on completion
+    notify progress "<msg>" N         Show progress (N%)
+
+    Cross-platform: macOS (osascript), Linux (notify-send), WSL (PowerShell)
+
+SESSION - Terminal Session Management
+    session save [NAME]               Save current session
+    session restore [NAME]            Restore session
+    session list                      List saved sessions
+    session auto                      Enable auto-save
+
+    Captures: cwd, env vars, shell history, git state, tmux layout
+
+SECRETS - Local Secrets Vault
+    secrets set <KEY> [VALUE]         Store a secret (prompts if no value)
+    secrets get <KEY>                 Retrieve a secret
+    secrets list                      List all secret keys
+    secrets env [PREFIX]              Output as environment variables
+    secrets inject "<command>"        Run command with secrets in env
+
+    Encryption: age (X25519 + ChaCha20-Poly1305)
+    Namespaced keys: api/openai, db/postgres, aws/access_key
+
+--------------------------------------------------------------------------------
+COLLABORATION
+--------------------------------------------------------------------------------
+
+PAIR - Pair Programming
+    pair start [NAME]                 Start a pair session (tmux)
+    pair join <NAME>                  Join existing session
+    pair invite                       Generate invite command
+    pair list                         List active sessions
+    pair end                          End session
+
+    Modes: --driver, --navigator, --equal
+    Supports tmate for public sharing
+
+HANDOFF - Context Summaries
+    handoff create [NAME]             Create handoff summary
+    handoff receive [NAME]            View handoff summary
+    handoff list                      List available handoffs
+    handoff status                    Quick status for handoff
+
+    Aggregates: git commits, journal events, environment state
+    Use cases: end of day, human↔AI transitions, team handoffs
+
+REVIEW - Human Code Review
+    review request [REF]              Request review for changes
+    review start [ID]                 Start reviewing
+    review approve [ID]               Approve changes
+    review reject [ID]                Reject with comments
+    review list                       List pending reviews
+
+    Integrates with gates for mandatory review workflows
+
+--------------------------------------------------------------------------------
+PRODUCTIVITY
+--------------------------------------------------------------------------------
+
+FOCUS - Distraction Blocking & Deep Work
+    focus start [MINS]                Start focus session (default: 25)
+    focus stop                        End session early
+    focus status                      Show progress
+    focus break [MINS]                Take a break (default: 5)
+    focus stats                       Show statistics
+
+    Presets: --pomodoro (25/5), --deep (90/20), --quick (15/3)
+    Notifies when sessions complete
+
+METRICS - Productivity Statistics
+    metrics today                     Today's activity summary
+    metrics week                      This week's summary
+    metrics commits                   Git commit statistics
+    metrics focus                     Focus session statistics
+    metrics trends                    Show trends over time
+    metrics export                    Export as JSON/CSV
+
+    Sources: git, journal, focus sessions, loop iterations
+
+TEMPLATE - Project Scaffolding
+    template new <TEMPLATE> <NAME>    Create project from template
+    template list                     List available templates
+    template add <PATH>               Add directory as template
+    template vars <TEMPLATE>          Show template variables
+
+    Built-in: bash-tool, python-cli, daedalos-tool
+    Variables: {{NAME}}, {{AUTHOR}}, {{DATE}}, {{DESCRIPTION}}
+
+--------------------------------------------------------------------------------
+SYSTEM INTEGRATION
+--------------------------------------------------------------------------------
+
+CONTAINER - Docker/Podman Management
+    container status                  Show runtime status
+    container ps                      List containers
+    container run <IMAGE>             Run interactively
+    container dev [IMAGE]             Start development container
+    container exec <CONT>             Execute in container
+    container build [PATH]            Build from Dockerfile
+    container clean                   Remove unused
+
+    Auto-detects Docker or Podman
+    container dev auto-detects project type for image selection
+
+REMOTE - SSH & Remote Development
+    remote connect <HOST>             Connect to remote host
+    remote add <NAME>                 Add new remote host
+    remote list                       List configured hosts
+    remote sync <HOST> [PATH]         Sync files to/from remote
+    remote tunnel <HOST>              Create SSH tunnel
+    remote exec <HOST> <CMD>          Execute command remotely
+    remote dev <HOST>                 Start remote dev session
+
+    Hosts stored in: ~/.config/daedalos/remote/hosts.json
+
+BACKUP - Project Backup
+    backup create [PATH]              Create backup of project
+    backup restore <BACKUP>           Restore from backup
+    backup list                       List available backups
+    backup prune                      Remove old backups
+    backup schedule                   Configure automatic backups
+
+    Types: --full, --incremental, --git (bundle)
+    Options: --compress, --encrypt (age), --remote <HOST>
+
+--------------------------------------------------------------------------------
+SUPERVISION SPECTRUM
+--------------------------------------------------------------------------------
+
+For managing AI autonomy levels:
+
+OBSERVE - Watch Mode
+    observe start                     Start recording events
+    observe stop                      Stop and show summary
+    observe replay [SESSION]          Replay events
+    observe search <QUERY>            Search events
+
+GATES - Permission Gates
+    gates status                      Show gate configuration
+    gates set <GATE> <ACTION>         Configure gate behavior
+    gates level <LEVEL>               Set supervision level
+    gates approve <ID>                Approve pending action
+    gates deny <ID>                   Deny pending action
+
+    Levels: autonomous, supervised, collaborative, locked
+    Gates: file_write, file_delete, git_push, shell_execute, etc.
+
+JOURNAL - Activity Logging
+    journal log "<message>"           Log an event
+    journal show                      Show recent events
+    journal events                    List events with filters
+    journal search <QUERY>            Search journal
+    journal stats                     Show statistics
+
+    Categories: info, success, error, warning, debug
+    Auto-logged: tool usage, errors, milestones
+
+================================================================================
                               AGENT ENGINES
 ================================================================================
 

@@ -23,9 +23,14 @@ class ServerState:
     memory_mb: float = 0.0
     started_at: float = field(default_factory=time.time)
     last_query: float = field(default_factory=time.time)
-    status: str = "initializing"  # initializing, warm, busy, error
+    status: str = "initializing"  # initializing, warm, busy, error, unhealthy
     request_id: int = 0
     pending_requests: Dict[int, asyncio.Future] = field(default_factory=dict)
+    # Health monitoring
+    last_health_check: float = field(default_factory=time.time)
+    health_failures: int = 0
+    restart_count: int = 0
+    stderr_log: List[str] = field(default_factory=list)
 
     @property
     def key(self) -> str:
@@ -369,6 +374,86 @@ class ServerManager:
         keys = list(self.servers.keys())
         for key in keys:
             await self._stop_server(key)
+
+    async def check_health(self, server: ServerState) -> bool:
+        """Check if a server is responsive."""
+        if not server.process or server.process.returncode is not None:
+            return False
+
+        try:
+            # Send a simple request to check if server is alive
+            # Use $/alive or just check if we can read capabilities
+            request = {
+                "jsonrpc": "2.0",
+                "id": server.next_request_id(),
+                "method": "$/alive",  # Some servers support this
+                "params": {},
+            }
+
+            # Try with short timeout
+            response = await asyncio.wait_for(
+                self._send_request(server, request),
+                timeout=5.0
+            )
+
+            # Even if server doesn't support $/alive, non-timeout means it's alive
+            server.last_health_check = time.time()
+            server.health_failures = 0
+            return True
+
+        except asyncio.TimeoutError:
+            server.health_failures += 1
+            return False
+        except Exception:
+            server.health_failures += 1
+            return False
+
+    async def restart_server(self, key: str) -> bool:
+        """Restart a server."""
+        if key not in self.servers:
+            return False
+
+        server = self.servers[key]
+        language = server.language
+        project = server.project
+        restart_count = server.restart_count + 1
+
+        await self._stop_server(key)
+        success = await self.warm(language, project)
+
+        if success and key in self.servers:
+            self.servers[key].restart_count = restart_count
+
+        return success
+
+    def get_server_logs(self, key: str) -> List[str]:
+        """Get stderr logs for a server."""
+        if key not in self.servers:
+            return []
+        return self.servers[key].stderr_log[-100:]  # Last 100 lines
+
+    async def _collect_stderr(self, server: ServerState):
+        """Collect stderr from server process."""
+        if not server.process or not server.process.stderr:
+            return
+
+        try:
+            while True:
+                line = await asyncio.wait_for(
+                    server.process.stderr.readline(),
+                    timeout=0.1
+                )
+                if not line:
+                    break
+                decoded = line.decode("utf-8", errors="replace").rstrip()
+                server.stderr_log.append(decoded)
+                # Keep only last 1000 lines
+                if len(server.stderr_log) > 1000:
+                    server.stderr_log = server.stderr_log[-500:]
+        except asyncio.TimeoutError:
+            pass
+        except Exception:
+            pass
 
 
 # CLI entry point

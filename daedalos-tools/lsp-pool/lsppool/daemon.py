@@ -16,6 +16,10 @@ from .servers import ServerManager
 class LSPPoolDaemon:
     """Daemon managing pool of language servers."""
 
+    HEALTH_CHECK_INTERVAL = 30  # seconds
+    MAX_HEALTH_FAILURES = 3
+    MAX_RESTARTS = 3
+
     def __init__(self, config: Optional[Config] = None, socket_path: Optional[Path] = None):
         self.config = config or get_config()
         self.socket_path = socket_path or SOCKET_PATH
@@ -24,6 +28,8 @@ class LSPPoolDaemon:
         self._server: Optional[asyncio.Server] = None
         self._running = False
         self._pid_file = DATA_DIR / "daemon.pid"
+        self._health_task: Optional[asyncio.Task] = None
+        self._stderr_tasks: dict = {}
 
     async def start(self):
         """Start the pool daemon."""
@@ -64,11 +70,14 @@ class LSPPoolDaemon:
 
         # Start background tasks
         idle_task = asyncio.create_task(self._idle_cleanup_loop())
+        self._health_task = asyncio.create_task(self._health_check_loop())
 
         async with self._server:
             await self._server.serve_forever()
 
         idle_task.cancel()
+        if self._health_task:
+            self._health_task.cancel()
 
     async def stop(self):
         """Stop the daemon."""
@@ -151,6 +160,20 @@ class LSPPoolDaemon:
         elif req_type == "predict":
             predictions = self.predictor.predict(request.get("n", 5))
             return {"success": True, "predictions": predictions}
+
+        elif req_type == "logs":
+            key = request.get("key")
+            if not key:
+                return {"success": False, "error": "Missing server key"}
+            logs = self.server_manager.get_server_logs(key)
+            return {"success": True, "logs": logs}
+
+        elif req_type == "restart":
+            key = request.get("key")
+            if not key:
+                return {"success": False, "error": "Missing server key"}
+            success = await self.server_manager.restart_server(key)
+            return {"success": success}
 
         elif req_type == "stop":
             asyncio.create_task(self.stop())
@@ -365,6 +388,60 @@ class LSPPoolDaemon:
             for key in idle_servers:
                 print(f"Evicting idle server: {key}")
                 await self.server_manager._stop_server(key)
+
+    async def _health_check_loop(self):
+        """Periodically check server health and restart unhealthy ones."""
+        while self._running:
+            try:
+                await asyncio.sleep(self.HEALTH_CHECK_INTERVAL)
+                await self._check_all_servers()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"Health check error: {e}", file=sys.stderr)
+
+    async def _check_all_servers(self):
+        """Check health of all running servers."""
+        import time
+
+        for key, server in list(self.server_manager.servers.items()):
+            # Collect stderr
+            await self.server_manager._collect_stderr(server)
+
+            # Check if process died
+            if server.process and server.process.returncode is not None:
+                print(f"Server crashed: {key} (exit code: {server.process.returncode})")
+                server.status = "unhealthy"
+                server.health_failures = self.MAX_HEALTH_FAILURES
+                await self._handle_unhealthy(key, server)
+                continue
+
+            # Health check via LSP
+            healthy = await self.server_manager.check_health(server)
+
+            if not healthy:
+                server.health_failures += 1
+                print(f"Health check failed for {key} ({server.health_failures}/{self.MAX_HEALTH_FAILURES})")
+
+                if server.health_failures >= self.MAX_HEALTH_FAILURES:
+                    server.status = "unhealthy"
+                    await self._handle_unhealthy(key, server)
+            else:
+                server.status = "warm"
+                server.last_health_check = time.time()
+
+    async def _handle_unhealthy(self, key: str, server):
+        """Handle an unhealthy server - try restart or remove."""
+        if server.restart_count < self.MAX_RESTARTS:
+            print(f"Restarting unhealthy server: {key}")
+            success = await self.server_manager.restart_server(key)
+            if success:
+                print(f"Server restarted: {key}")
+            else:
+                print(f"Failed to restart: {key}")
+        else:
+            print(f"Max restarts reached for {key}, removing")
+            await self.server_manager._stop_server(key)
 
     def _is_running(self) -> bool:
         """Check if daemon is already running."""

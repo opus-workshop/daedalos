@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# observe - Real-time TUI dashboard for Daedalos
+#
+# Watch loops, agents, daemons, and file changes in real-time.
+
+set -eo pipefail
+
+OBSERVE_VERSION="1.0.0"
+
+# Get the real path, following symlinks
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+LIB_DIR="$(dirname "$SCRIPT_DIR")/lib"
+
+export PYTHONPATH="${PYTHONPATH:-}:$LIB_DIR"
+
+cmd_help() {
+    cat << 'EOF'
+observe - Real-time TUI dashboard for Daedalos
+
+USAGE:
+    observe [options]
+
+OPTIONS:
+    --help, -h       Show this help
+    --version        Show version
+
+KEYBOARD SHORTCUTS:
+    q                Quit
+    r                Refresh now
+    p                Pause/resume updates
+    l                Focus loops panel
+    a                Focus agents panel
+    d                Focus daemons panel
+    e                Focus event log
+    ?                Show help
+
+PANELS:
+    Daemons          Status of loop, mcp-hub, lsp-pool, undo daemons
+    Active Loops     Currently running iteration loops
+    Active Agents    Spawned Claude Code agents
+    Event Log        Recent events and changes
+
+DESCRIPTION:
+    Observe provides real-time visibility into all Daedalos activity.
+    Use it to monitor AI agents, track loop progress, and see what's
+    happening across your development environment.
+
+    Updates every 2 seconds. Press 'p' to pause updates.
+
+EXAMPLES:
+    observe              # Launch the dashboard
+    observe --help       # Show this help
+
+PART OF DAEDALOS
+    Tools designed BY AI, FOR AI development.
+EOF
+}
+
+main() {
+    case "${1:-}" in
+        --help|-h)
+            cmd_help
+            ;;
+        --version|-V|version)
+            echo "observe $OBSERVE_VERSION"
+            ;;
+        "")
+            # Check for textual
+            if ! python3 -c "import textual" 2>/dev/null; then
+                echo "error: textual not installed"
+                echo "Run: pip install textual"
+                exit 1
+            fi
+
+            # Run the TUI
+            cd "$LIB_DIR"
+            python3 -c "from app import main; main()"
+            ;;
+        *)
+            echo "Unknown option: $1"
+            cmd_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

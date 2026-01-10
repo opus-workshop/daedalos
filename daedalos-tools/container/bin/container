@@ -1,0 +1,545 @@
+#!/usr/bin/env bash
+# container - Docker/Podman management for Daedalos
+#
+# Unified interface for container operations.
+
+set -eo pipefail
+
+CONTAINER_VERSION="1.0.0"
+
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/daedalos/container"
+mkdir -p "$DATA_DIR"
+
+# Colors
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' DIM='' NC=''
+fi
+
+log_error() { echo -e "${RED}error:${NC} $*" >&2; }
+log_success() { echo -e "${GREEN}✓${NC} $*"; }
+log_info() { echo -e "${BLUE}info:${NC} $*"; }
+log_warn() { echo -e "${YELLOW}!${NC} $*"; }
+
+# Detect container runtime
+detect_runtime() {
+    if command -v podman &>/dev/null; then
+        echo "podman"
+    elif command -v docker &>/dev/null; then
+        echo "docker"
+    else
+        echo ""
+    fi
+}
+
+RUNTIME=$(detect_runtime)
+
+cmd_help() {
+    cat << 'EOF'
+container - Docker/Podman management for Daedalos
+
+USAGE:
+    container <command> [args...]
+
+COMMANDS:
+    status           Show container runtime status
+    ps               List running containers
+    images           List images
+    run <IMAGE>      Run a container interactively
+    exec <CONT>      Execute command in container
+    logs <CONT>      Show container logs
+    stop <CONT>      Stop a container
+    rm <CONT>        Remove a container
+    build [PATH]     Build image from Dockerfile
+    dev [IMAGE]      Start development container
+    clean            Remove stopped containers and unused images
+    compose          Docker/Podman compose wrapper
+
+DEV CONTAINERS:
+    container dev                    # Auto-detect and start
+    container dev node:20            # Use specific image
+    container dev --mount .:/app     # Custom mount
+
+COMPOSE SHORTCUTS:
+    container up                     # compose up -d
+    container down                   # compose down
+    container restart                # compose restart
+
+OPTIONS:
+    --runtime RUNTIME    Force docker or podman
+    --name NAME          Container name
+    --mount SRC:DST      Mount directory
+    --port HOST:CONT     Port mapping
+    --env KEY=VALUE      Environment variable
+
+EXAMPLES:
+    container ps                             # List containers
+    container run ubuntu                     # Start Ubuntu interactively
+    container dev --mount .:/workspace       # Dev container with mount
+    container exec myapp bash                # Shell into container
+    container logs myapp -f                  # Follow logs
+    container clean                          # Cleanup unused
+
+INTEGRATION:
+    - env: Dev containers inherit project environment
+    - secrets: Can inject secrets into containers
+    - journal: Logs container operations
+
+EOF
+}
+
+check_runtime() {
+    if [[ -z "$RUNTIME" ]]; then
+        log_error "No container runtime found"
+        echo ""
+        echo "Install Docker or Podman:"
+        echo "  Docker: https://docs.docker.com/get-docker/"
+        echo "  Podman: brew install podman / apt install podman"
+        exit 1
+    fi
+}
+
+cmd_status() {
+    echo -e "${BOLD}Container Runtime Status${NC}"
+    echo ""
+
+    if [[ -z "$RUNTIME" ]]; then
+        log_error "No container runtime found"
+        return 1
+    fi
+
+    echo -e "${CYAN}Runtime:${NC} $RUNTIME"
+    echo -e "${CYAN}Version:${NC} $($RUNTIME --version)"
+    echo ""
+
+    # Check if daemon is running
+    if $RUNTIME info &>/dev/null; then
+        log_success "Daemon is running"
+
+        # Show summary
+        local containers=$($RUNTIME ps -q 2>/dev/null | wc -l | tr -d ' ')
+        local images=$($RUNTIME images -q 2>/dev/null | wc -l | tr -d ' ')
+
+        echo ""
+        echo -e "${CYAN}Running containers:${NC} $containers"
+        echo -e "${CYAN}Images:${NC} $images"
+    else
+        log_error "Daemon is not running"
+        echo ""
+        echo "Start with:"
+        if [[ "$RUNTIME" == "podman" ]]; then
+            echo "  podman machine start"
+        else
+            echo "  sudo systemctl start docker"
+        fi
+    fi
+}
+
+cmd_ps() {
+    check_runtime
+
+    local all=false
+    [[ "$1" == "-a" ]] || [[ "$1" == "--all" ]] && all=true
+
+    echo -e "${BOLD}Containers${NC}"
+    echo ""
+
+    if [[ "$all" == "true" ]]; then
+        $RUNTIME ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+    else
+        $RUNTIME ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+    fi
+}
+
+cmd_images() {
+    check_runtime
+
+    echo -e "${BOLD}Images${NC}"
+    echo ""
+
+    $RUNTIME images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}"
+}
+
+cmd_run() {
+    check_runtime
+
+    local image=""
+    local name=""
+    local mounts=()
+    local ports=()
+    local envs=()
+    local interactive=true
+    local detach=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) name="$2"; shift 2 ;;
+            --mount|-v) mounts+=("-v" "$2"); shift 2 ;;
+            --port|-p) ports+=("-p" "$2"); shift 2 ;;
+            --env|-e) envs+=("-e" "$2"); shift 2 ;;
+            --detach|-d) detach=true; interactive=false; shift ;;
+            -*) shift ;;
+            *) image="$1"; shift ;;
+        esac
+    done
+
+    if [[ -z "$image" ]]; then
+        log_error "Image required"
+        echo "Usage: container run <IMAGE> [OPTIONS]"
+        exit 1
+    fi
+
+    local cmd=("$RUNTIME" "run")
+
+    [[ -n "$name" ]] && cmd+=("--name" "$name")
+    [[ "$interactive" == "true" ]] && cmd+=("-it")
+    [[ "$detach" == "true" ]] && cmd+=("-d")
+
+    cmd+=("${mounts[@]}" "${ports[@]}" "${envs[@]}")
+    cmd+=("--rm" "$image")
+
+    log_info "Running: ${cmd[*]}"
+
+    "${cmd[@]}"
+}
+
+cmd_exec() {
+    check_runtime
+
+    local container="$1"
+    shift
+
+    if [[ -z "$container" ]]; then
+        log_error "Container name required"
+        exit 1
+    fi
+
+    local cmd="${*:-/bin/bash}"
+
+    $RUNTIME exec -it "$container" $cmd
+}
+
+cmd_logs() {
+    check_runtime
+
+    local container="$1"
+    local follow=false
+    local tail=""
+
+    shift || true
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f|--follow) follow=true; shift ;;
+            --tail) tail="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ -z "$container" ]]; then
+        log_error "Container name required"
+        exit 1
+    fi
+
+    local cmd=("$RUNTIME" "logs")
+    [[ "$follow" == "true" ]] && cmd+=("-f")
+    [[ -n "$tail" ]] && cmd+=("--tail" "$tail")
+    cmd+=("$container")
+
+    "${cmd[@]}"
+}
+
+cmd_stop() {
+    check_runtime
+
+    local container="$1"
+
+    if [[ -z "$container" ]]; then
+        log_error "Container name required"
+        exit 1
+    fi
+
+    $RUNTIME stop "$container"
+    log_success "Stopped: $container"
+}
+
+cmd_rm() {
+    check_runtime
+
+    local container="$1"
+    local force=false
+
+    [[ "$1" == "-f" ]] && { force=true; container="$2"; }
+
+    if [[ -z "$container" ]]; then
+        log_error "Container name required"
+        exit 1
+    fi
+
+    if [[ "$force" == "true" ]]; then
+        $RUNTIME rm -f "$container"
+    else
+        $RUNTIME rm "$container"
+    fi
+
+    log_success "Removed: $container"
+}
+
+cmd_build() {
+    check_runtime
+
+    local path="${1:-.}"
+    local tag=""
+    local dockerfile="Dockerfile"
+
+    shift || true
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -t|--tag) tag="$2"; shift 2 ;;
+            -f|--file) dockerfile="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    # Auto-detect tag from directory name
+    if [[ -z "$tag" ]]; then
+        tag=$(basename "$PWD"):latest
+    fi
+
+    log_info "Building image: $tag"
+
+    $RUNTIME build -t "$tag" -f "$dockerfile" "$path"
+
+    log_success "Built: $tag"
+}
+
+cmd_dev() {
+    check_runtime
+
+    local image=""
+    local name="dev-$(basename "$PWD")"
+    local mounts=("-v" "$PWD:/workspace")
+    local ports=()
+    local shell="/bin/bash"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) name="$2"; shift 2 ;;
+            --mount|-v) mounts+=("-v" "$2"); shift 2 ;;
+            --port|-p) ports+=("-p" "$2"); shift 2 ;;
+            --shell) shell="$2"; shift 2 ;;
+            -*) shift ;;
+            *) image="$1"; shift ;;
+        esac
+    done
+
+    # Auto-detect image from project
+    if [[ -z "$image" ]]; then
+        if [[ -f "package.json" ]]; then
+            image="node:20"
+        elif [[ -f "requirements.txt" ]] || [[ -f "pyproject.toml" ]]; then
+            image="python:3.11"
+        elif [[ -f "Cargo.toml" ]]; then
+            image="rust:latest"
+        elif [[ -f "go.mod" ]]; then
+            image="golang:latest"
+        else
+            image="ubuntu:latest"
+        fi
+        log_info "Auto-detected image: $image"
+    fi
+
+    # Check if container already exists
+    if $RUNTIME ps -a --format "{{.Names}}" | grep -q "^${name}$"; then
+        log_info "Attaching to existing container: $name"
+        $RUNTIME start "$name" 2>/dev/null || true
+        $RUNTIME exec -it "$name" "$shell"
+        return
+    fi
+
+    log_info "Starting dev container: $name"
+
+    local cmd=("$RUNTIME" "run" "-it" "--name" "$name")
+    cmd+=("${mounts[@]}" "${ports[@]}")
+    cmd+=("-w" "/workspace")
+    cmd+=("$image" "$shell")
+
+    "${cmd[@]}"
+}
+
+cmd_clean() {
+    check_runtime
+
+    local dry_run=false
+    [[ "$1" == "--dry-run" ]] && dry_run=true
+
+    echo -e "${BOLD}Cleaning up containers and images${NC}"
+    echo ""
+
+    # Remove stopped containers
+    local stopped=$($RUNTIME ps -a -q -f status=exited 2>/dev/null | wc -l | tr -d ' ')
+
+    if [[ "$stopped" -gt 0 ]]; then
+        if [[ "$dry_run" == "true" ]]; then
+            echo "Would remove $stopped stopped containers"
+        else
+            $RUNTIME container prune -f
+            log_success "Removed $stopped stopped containers"
+        fi
+    else
+        echo "No stopped containers"
+    fi
+
+    # Remove dangling images
+    local dangling=$($RUNTIME images -q -f dangling=true 2>/dev/null | wc -l | tr -d ' ')
+
+    if [[ "$dangling" -gt 0 ]]; then
+        if [[ "$dry_run" == "true" ]]; then
+            echo "Would remove $dangling dangling images"
+        else
+            $RUNTIME image prune -f
+            log_success "Removed $dangling dangling images"
+        fi
+    else
+        echo "No dangling images"
+    fi
+
+    # Show space reclaimed
+    if [[ "$dry_run" != "true" ]]; then
+        echo ""
+        $RUNTIME system df 2>/dev/null || true
+    fi
+}
+
+cmd_compose() {
+    check_runtime
+
+    local compose_cmd=""
+
+    if [[ "$RUNTIME" == "podman" ]]; then
+        if command -v podman-compose &>/dev/null; then
+            compose_cmd="podman-compose"
+        else
+            log_error "podman-compose not found"
+            echo "Install with: pip install podman-compose"
+            exit 1
+        fi
+    else
+        if command -v docker-compose &>/dev/null; then
+            compose_cmd="docker-compose"
+        elif docker compose version &>/dev/null; then
+            compose_cmd="docker compose"
+        else
+            log_error "docker-compose not found"
+            exit 1
+        fi
+    fi
+
+    $compose_cmd "$@"
+}
+
+cmd_up() {
+    cmd_compose up -d "$@"
+}
+
+cmd_down() {
+    cmd_compose down "$@"
+}
+
+cmd_restart() {
+    cmd_compose restart "$@"
+}
+
+main() {
+    local cmd="${1:-help}"
+
+    # Handle --runtime flag
+    if [[ "$1" == "--runtime" ]]; then
+        RUNTIME="$2"
+        shift 2
+        cmd="${1:-help}"
+    fi
+
+    case "$cmd" in
+        help|--help|-h)
+            cmd_help
+            ;;
+        status|st)
+            cmd_status
+            ;;
+        ps|list|ls)
+            shift
+            cmd_ps "$@"
+            ;;
+        images|img)
+            cmd_images
+            ;;
+        run|r)
+            shift
+            cmd_run "$@"
+            ;;
+        exec|e)
+            shift
+            cmd_exec "$@"
+            ;;
+        logs|l)
+            shift
+            cmd_logs "$@"
+            ;;
+        stop)
+            shift
+            cmd_stop "$@"
+            ;;
+        rm|remove)
+            shift
+            cmd_rm "$@"
+            ;;
+        build|b)
+            shift
+            cmd_build "$@"
+            ;;
+        dev|d)
+            shift
+            cmd_dev "$@"
+            ;;
+        clean|prune)
+            shift
+            cmd_clean "$@"
+            ;;
+        compose|c)
+            shift
+            cmd_compose "$@"
+            ;;
+        up)
+            shift
+            cmd_up "$@"
+            ;;
+        down)
+            shift
+            cmd_down "$@"
+            ;;
+        restart)
+            shift
+            cmd_restart "$@"
+            ;;
+        version|--version|-V)
+            echo "container $CONTAINER_VERSION"
+            ;;
+        *)
+            # Pass through to runtime
+            check_runtime
+            $RUNTIME "$@"
+            ;;
+    esac
+}
+
+main "$@"

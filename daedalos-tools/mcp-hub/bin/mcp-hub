@@ -75,6 +75,76 @@ cmd_config() {
     python3 -m mcphub.config "$@"
 }
 
+cmd_warm() {
+    python3 -m mcphub.daemon warm "$@"
+}
+
+cmd_logs() {
+    python3 -m mcphub.daemon logs "$@"
+}
+
+cmd_restart() {
+    python3 -m mcphub.daemon restart "$@"
+}
+
+cmd_reload() {
+    python3 -m mcphub.daemon reload "$@"
+}
+
+cmd_auth() {
+    local server="$1"
+    shift
+
+    if [[ -z "$server" ]]; then
+        echo "Usage: mcp-hub auth <server> [--token TOKEN]"
+        exit 1
+    fi
+
+    # Check for --token argument
+    local token=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --token)
+                token="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    # Get server info
+    local info
+    info=$(python3 -c "
+from mcphub.registry import ServerRegistry
+r = ServerRegistry()
+s = r.get('$server')
+if s:
+    print(','.join(s.auth_env_vars) if s.auth_env_vars else '')
+")
+
+    if [[ -z "$info" ]]; then
+        echo "Server '$server' not found or has no auth requirements"
+        exit 1
+    fi
+
+    echo "Configuring authentication for: $server"
+    echo "Required environment variables: $info"
+    echo ""
+
+    if [[ -n "$token" ]]; then
+        # Store in config
+        python3 -m mcphub.config set "servers.$server.env.${info%%,*}" "$token"
+        echo "Token stored in config"
+    else
+        echo "To set credentials, either:"
+        echo "  1. Set environment variable: export $info=<your-token>"
+        echo "  2. Use: mcp-hub auth $server --token <token>"
+        echo "  3. Edit config: mcp-hub config set servers.$server.env.$info <token>"
+    fi
+}
+
 cmd_help() {
     cat << 'EOF'
 mcp-hub - MCP Server Hub
@@ -86,6 +156,12 @@ DAEMON COMMANDS:
   start [--foreground]       Start the hub daemon
   stop                       Stop the daemon
   status [--json]            Show daemon status
+  reload                     Reload config without restart
+
+SERVER MANAGEMENT:
+  warm <servers...>          Pre-start servers for fast response
+  restart <server>           Restart a running server
+  logs <server> [-n N]       View server logs
 
 REGISTRY COMMANDS:
   list [--category X]        List available servers
@@ -97,6 +173,10 @@ REGISTRY COMMANDS:
   info <name>                Show server details
   tools                      List all available tools
 
+AUTHENTICATION:
+  auth <server>              Configure server authentication
+  auth <server> --token X    Set auth token for server
+
 ROUTING COMMANDS:
   call <tool> [--args]       Call an MCP tool
 
@@ -107,9 +187,11 @@ CONFIG COMMANDS:
 
 EXAMPLES:
   mcp-hub start --foreground
+  mcp-hub warm filesystem github
+  mcp-hub auth github --token ghp_xxxxx
   mcp-hub list
-  mcp-hub enable filesystem
   mcp-hub call read_file --path /etc/hosts
+  mcp-hub logs filesystem -n 20
   mcp-hub status
 
 PART OF DAEDALOS
@@ -122,6 +204,10 @@ main() {
         start)      shift; cmd_start "$@" ;;
         stop)       shift; cmd_stop "$@" ;;
         status)     shift; cmd_status "$@" ;;
+        reload)     shift; cmd_reload "$@" ;;
+        warm)       shift; cmd_warm "$@" ;;
+        restart)    shift; cmd_restart "$@" ;;
+        logs)       shift; cmd_logs "$@" ;;
         list)       shift; cmd_list "$@" ;;
         search)     shift; cmd_search "$@" ;;
         install)    shift; cmd_install "$@" ;;
@@ -132,6 +218,7 @@ main() {
         info)       shift; cmd_info "$@" ;;
         call)       shift; cmd_call "$@" ;;
         config)     shift; cmd_config "$@" ;;
+        auth)       shift; cmd_auth "$@" ;;
         version)    echo "mcp-hub $MCPHUB_VERSION" ;;
         help|--help|-h) cmd_help ;;
         *)          echo "Unknown command: $1"; cmd_help; exit 1 ;;

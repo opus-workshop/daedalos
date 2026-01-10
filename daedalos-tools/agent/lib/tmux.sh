@@ -22,8 +22,13 @@ tmux_session_exists() {
     tmux has-session -t "$session" 2>/dev/null
 }
 
-# Create a new tmux session
+# Create a new tmux session with agent environment
 # Usage: tmux_create_session <session_name> <working_dir> [command...]
+# Environment variables set automatically:
+#   DAEDALOS_AGENT_NAME - The agent's name
+#   DAEDALOS_AGENT_SESSION - The tmux session name
+#   DAEDALOS_AGENT_SLOT - The agent's slot number
+#   DAEDALOS_DATA_DIR - Path to agent data directory
 tmux_create_session() {
     local session="$1"
     local working_dir="$2"
@@ -35,16 +40,31 @@ tmux_create_session() {
         return 1
     fi
 
+    # Extract agent name from session name
+    local agent_name="${session#${TMUX_SESSION_PREFIX}}"
+
     # Create detached session
     tmux new-session -d -s "$session" -c "$working_dir"
 
     # Set session options
     tmux set-option -t "$session" remain-on-exit off
 
+    # Set agent environment variables
+    tmux set-environment -t "$session" DAEDALOS_AGENT_NAME "$agent_name"
+    tmux set-environment -t "$session" DAEDALOS_AGENT_SESSION "$session"
+    tmux set-environment -t "$session" DAEDALOS_DATA_DIR "$DATA_DIR"
+    tmux set-environment -t "$session" DAEDALOS_MESSAGES_DIR "${DATA_DIR}/messages"
+    tmux set-environment -t "$session" DAEDALOS_SIGNALS_DIR "${DATA_DIR}/signals"
+    tmux set-environment -t "$session" DAEDALOS_SHARED_DIR "${DATA_DIR}/shared"
+
+    # Create signals directory for this agent
+    mkdir -p "${DATA_DIR}/signals/${agent_name}"
+
     # If command provided, send it to the session
     if [[ ${#cmd[@]} -gt 0 ]]; then
-        # Build command string
-        local cmd_str="${cmd[*]}"
+        # Build command string with env vars exported
+        local env_exports="export DAEDALOS_AGENT_NAME='${agent_name}' DAEDALOS_AGENT_SESSION='${session}' DAEDALOS_DATA_DIR='${DATA_DIR}' && "
+        local cmd_str="${env_exports}${cmd[*]}"
         tmux send-keys -t "$session" "$cmd_str" Enter
     fi
 
@@ -242,4 +262,24 @@ tmux_set_title() {
     if tmux_session_exists "$session"; then
         tmux rename-window -t "$session" "$title"
     fi
+}
+
+# Set additional environment variable in a session
+# Usage: tmux_set_env <session> <var_name> <value>
+tmux_set_env() {
+    local session="$1"
+    local var_name="$2"
+    local value="$3"
+
+    if tmux_session_exists "$session"; then
+        tmux set-environment -t "$session" "$var_name" "$value"
+    fi
+}
+
+# Set the slot number for an agent session
+tmux_set_slot() {
+    local session="$1"
+    local slot="$2"
+
+    tmux_set_env "$session" "DAEDALOS_AGENT_SLOT" "$slot"
 }

@@ -1,0 +1,408 @@
+#!/usr/bin/env bash
+# handoff - Context summaries for shift changes
+#
+# Generate summaries when handing off between humans or AI.
+
+set -eo pipefail
+
+HANDOFF_VERSION="1.0.0"
+
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/daedalos/handoff"
+mkdir -p "$DATA_DIR"
+
+# Colors
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' DIM='' NC=''
+fi
+
+log_error() { echo -e "${RED}error:${NC} $*" >&2; }
+log_success() { echo -e "${GREEN}✓${NC} $*"; }
+
+cmd_help() {
+    cat << 'EOF'
+handoff - Context summaries for shift changes
+
+USAGE:
+    handoff <command> [args...]
+
+COMMANDS:
+    create [NAME]    Create a handoff summary
+    receive [NAME]   View a handoff summary
+    list             List available handoffs
+    status           Quick status for handoff
+
+WHAT'S CAPTURED:
+    - Current task/goal
+    - Recent changes (from journal/git)
+    - Blockers and issues
+    - Next steps
+    - Open questions
+    - Important context
+
+OPTIONS:
+    --to <NAME>      Who you're handing off to
+    --hours N        Hours of activity to summarize (default: 8)
+    --verbose        Include more details
+    --format FMT     Output format: text, markdown, json
+
+EXAMPLES:
+    handoff create                  # Create summary
+    handoff create "end-of-day"     # Named handoff
+    handoff receive "end-of-day"    # View handoff
+    handoff status                  # Quick current status
+
+USE CASES:
+    - End of work day → start of next day
+    - Human → AI agent handoff
+    - AI agent → human review
+    - Between team members
+
+INTEGRATION:
+    Aggregates from:
+    - journal: Recent events
+    - git: Recent commits and changes
+    - session: Current state
+    - agent: Agent activity
+
+EOF
+}
+
+# Get recent git activity
+get_git_summary() {
+    local hours="${1:-8}"
+
+    if ! git rev-parse --git-dir &>/dev/null; then
+        return
+    fi
+
+    echo "## Git Activity"
+    echo ""
+
+    # Recent commits
+    local since="$hours hours ago"
+    local commits=$(git log --oneline --since="$since" 2>/dev/null | head -10)
+
+    if [[ -n "$commits" ]]; then
+        echo "### Recent Commits"
+        echo '```'
+        echo "$commits"
+        echo '```'
+        echo ""
+    fi
+
+    # Current branch and status
+    echo "### Current State"
+    echo "- Branch: $(git branch --show-current)"
+    echo "- Status: $(git status --porcelain 2>/dev/null | wc -l | tr -d ' ') files changed"
+
+    local ahead=$(git rev-list --count @{u}..HEAD 2>/dev/null || echo "0")
+    local behind=$(git rev-list --count HEAD..@{u} 2>/dev/null || echo "0")
+    [[ "$ahead" != "0" ]] && echo "- $ahead commits ahead of remote"
+    [[ "$behind" != "0" ]] && echo "- $behind commits behind remote"
+
+    echo ""
+}
+
+# Get recent journal events
+get_journal_summary() {
+    local hours="${1:-8}"
+
+    if ! command -v journal &>/dev/null; then
+        return
+    fi
+
+    echo "## Recent Activity"
+    echo ""
+
+    local events=$(~/.local/bin/journal events -h "$hours" 2>/dev/null | head -20)
+
+    if [[ -n "$events" ]]; then
+        echo '```'
+        echo "$events"
+        echo '```'
+    else
+        echo "_No journal events in the last $hours hours_"
+    fi
+    echo ""
+}
+
+# Get current environment
+get_env_summary() {
+    echo "## Environment"
+    echo ""
+    echo "- **Directory**: $PWD"
+    echo "- **Project**: ${DAEDALOS_PROJECT_NAME:-$(basename "$PWD")}"
+
+    if [[ -n "$DAEDALOS_PROJECT_TYPE" ]]; then
+        echo "- **Type**: $DAEDALOS_PROJECT_TYPE"
+    fi
+
+    # Check for active loops
+    if command -v loop &>/dev/null; then
+        local loop_status=$(~/.local/bin/loop status 2>/dev/null | head -1)
+        if [[ -n "$loop_status" ]] && [[ "$loop_status" != *"No active"* ]]; then
+            echo "- **Active Loop**: $loop_status"
+        fi
+    fi
+
+    # Check for active agents
+    if command -v agent &>/dev/null; then
+        local agent_count=$(~/.local/bin/agent list 2>/dev/null | grep -c "●" || echo "0")
+        if [[ "$agent_count" != "0" ]]; then
+            echo "- **Active Agents**: $agent_count"
+        fi
+    fi
+
+    echo ""
+}
+
+cmd_create() {
+    local name="${1:-handoff-$(date +%Y%m%d-%H%M)}"
+    local to=""
+    local hours=8
+    local verbose=false
+
+    shift || true
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --to) to="$2"; shift 2 ;;
+            --hours) hours="$2"; shift 2 ;;
+            --verbose|-v) verbose=true; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    local output_file="$DATA_DIR/$name.md"
+
+    # Build handoff document
+    {
+        echo "# Handoff: $name"
+        echo ""
+        echo "**Created**: $(date '+%Y-%m-%d %H:%M')"
+        echo "**From**: $USER"
+        [[ -n "$to" ]] && echo "**To**: $to"
+        echo "**Hours covered**: $hours"
+        echo ""
+
+        echo "---"
+        echo ""
+
+        # Current task section (prompt user)
+        echo "## Current Task"
+        echo ""
+        echo "_What are you working on?_"
+        echo ""
+        echo "> "
+        echo ""
+
+        # Environment
+        get_env_summary
+
+        # Git
+        get_git_summary "$hours"
+
+        # Journal
+        get_journal_summary "$hours"
+
+        echo "## Blockers & Issues"
+        echo ""
+        echo "_Any blockers or known issues?_"
+        echo ""
+        echo "- "
+        echo ""
+
+        echo "## Next Steps"
+        echo ""
+        echo "_What should be done next?_"
+        echo ""
+        echo "1. "
+        echo ""
+
+        echo "## Open Questions"
+        echo ""
+        echo "_Anything uncertain or needing decision?_"
+        echo ""
+        echo "- "
+        echo ""
+
+        echo "## Important Context"
+        echo ""
+        echo "_Anything else the next person should know?_"
+        echo ""
+        echo "> "
+        echo ""
+
+        echo "---"
+        echo ""
+        echo "_Generated by Daedalos handoff_"
+
+    } > "$output_file"
+
+    log_success "Handoff created: $name"
+    echo ""
+    echo "Edit to add your notes:"
+    echo "  ${EDITOR:-vim} $output_file"
+    echo ""
+    echo "Or view raw summary:"
+    echo "  handoff receive $name"
+
+    # Open for editing
+    if [[ -t 1 ]]; then
+        read -p "Open for editing? [Y/n] " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            ${EDITOR:-vim} "$output_file"
+        fi
+    fi
+
+    # Log to journal
+    if command -v journal &>/dev/null; then
+        journal log "Created handoff: $name" "handoff" "handoff_create" 2>/dev/null || true
+    fi
+}
+
+cmd_receive() {
+    local name="$1"
+
+    if [[ -z "$name" ]]; then
+        # Show most recent
+        name=$(ls -t "$DATA_DIR"/*.md 2>/dev/null | head -1 | xargs -I{} basename {} .md)
+    fi
+
+    if [[ -z "$name" ]]; then
+        log_error "No handoffs available"
+        echo "Create one with: handoff create"
+        exit 1
+    fi
+
+    local file="$DATA_DIR/$name.md"
+
+    if [[ ! -f "$file" ]]; then
+        # Try with .md extension
+        file="$DATA_DIR/$name"
+        if [[ ! -f "$file" ]]; then
+            log_error "Handoff not found: $name"
+            exit 1
+        fi
+    fi
+
+    # Display with formatting if available
+    if command -v glow &>/dev/null; then
+        glow "$file"
+    elif command -v bat &>/dev/null; then
+        bat --style=plain "$file"
+    else
+        cat "$file"
+    fi
+
+    # Log to journal
+    if command -v journal &>/dev/null; then
+        journal log "Received handoff: $name" "handoff" "handoff_receive" 2>/dev/null || true
+    fi
+}
+
+cmd_list() {
+    if [[ ! -d "$DATA_DIR" ]] || [[ -z "$(ls -A "$DATA_DIR"/*.md 2>/dev/null)" ]]; then
+        echo "No handoffs available"
+        return
+    fi
+
+    echo -e "${BOLD}Available Handoffs${NC}"
+    echo ""
+
+    for file in $(ls -t "$DATA_DIR"/*.md 2>/dev/null); do
+        local name=$(basename "$file" .md)
+        local date=$(head -5 "$file" | grep "Created" | sed 's/.*: //')
+        local from=$(head -5 "$file" | grep "From" | sed 's/.*: //')
+
+        echo -e "  ${CYAN}$name${NC}"
+        [[ -n "$date" ]] && echo -e "    ${DIM}Date:${NC} $date"
+        [[ -n "$from" ]] && echo -e "    ${DIM}From:${NC} $from"
+        echo ""
+    done
+}
+
+cmd_status() {
+    local hours="${1:-4}"
+
+    echo -e "${BOLD}Quick Status${NC}"
+    echo ""
+
+    # Current location
+    echo -e "${CYAN}Location:${NC} $PWD"
+    echo ""
+
+    # Git status
+    if git rev-parse --git-dir &>/dev/null; then
+        echo -e "${CYAN}Git:${NC}"
+        echo "  Branch: $(git branch --show-current)"
+        local changes=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+        echo "  Changed: $changes files"
+        local recent=$(git log --oneline -1 2>/dev/null)
+        [[ -n "$recent" ]] && echo "  Last commit: $recent"
+        echo ""
+    fi
+
+    # Recent activity count
+    if command -v journal &>/dev/null; then
+        local event_count=$(~/.local/bin/journal events -h "$hours" 2>/dev/null | wc -l | tr -d ' ')
+        echo -e "${CYAN}Activity:${NC} $event_count events in last $hours hours"
+    fi
+
+    # Active processes
+    if command -v loop &>/dev/null; then
+        if ~/.local/bin/loop status 2>/dev/null | grep -q "active"; then
+            echo -e "${CYAN}Loop:${NC} Active"
+        fi
+    fi
+
+    if command -v agent &>/dev/null; then
+        local agents=$(~/.local/bin/agent list 2>/dev/null | grep -c "●" || echo "0")
+        [[ "$agents" != "0" ]] && echo -e "${CYAN}Agents:${NC} $agents active"
+    fi
+}
+
+main() {
+    local cmd="${1:-help}"
+
+    case "$cmd" in
+        help|--help|-h)
+            cmd_help
+            ;;
+        create|new|make)
+            shift
+            cmd_create "$@"
+            ;;
+        receive|view|show|get)
+            shift
+            cmd_receive "$@"
+            ;;
+        list|ls)
+            cmd_list
+            ;;
+        status|s)
+            shift
+            cmd_status "$@"
+            ;;
+        version|--version|-V)
+            echo "handoff $HANDOFF_VERSION"
+            ;;
+        *)
+            log_error "Unknown command: $cmd"
+            echo "Run 'handoff help' for usage"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

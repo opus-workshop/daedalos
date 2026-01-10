@@ -685,3 +685,930 @@ Which automatically:
 Each stage is a real Claude agent in a tmux session.
 
 ================================================================================
+SESSION: 2026-01-10 - Agent Polishing & Coordination Primitives
+================================================================================
+
+Comprehensive polish pass on the agent orchestration system. Added coordination
+primitives, improved status detection, and enhanced templates.
+
+AGENT SELF-AWARENESS:
+---------------------
+
+Agents now know who they are via environment variables:
+  DAEDALOS_AGENT_NAME      - Agent's name
+  DAEDALOS_AGENT_SESSION   - tmux session name
+  DAEDALOS_DATA_DIR        - Agent's data directory
+  DAEDALOS_MESSAGES_DIR    - Message queue location
+  DAEDALOS_SIGNALS_DIR     - Signal/lock directory
+  DAEDALOS_SHARED_DIR      - Shared artifacts location
+  DAEDALOS_SLOT            - Agent's slot number
+
+COORDINATION PRIMITIVES (daedalos-tools/agent/lib/signals.sh):
+--------------------------------------------------------------
+
+1. COMPLETION SIGNALS
+   agent signal complete [data]    # Signal work complete
+   agent signal wait <name>        # Wait for agent to complete
+   agent signal check <name>       # Check completion status (non-blocking)
+
+2. RESOURCE LOCKS
+   agent lock acquire <resource>   # Acquire exclusive lock
+   agent lock release <resource>   # Release lock
+   agent lock list                 # List all locks
+
+3. TASK CLAIMS
+   agent claim create <task>       # Claim ownership of task
+   agent claim release <task>      # Release claim
+   agent claim list                # List all claims
+
+These primitives enable:
+  - Sequential workflows that wait for predecessors
+  - Parallel workflows that aggregate results
+  - Preventing duplicate work on same task
+  - Exclusive access to shared resources
+
+LIFECYCLE HOOKS (daedalos-tools/agent/lib/hooks.sh):
+----------------------------------------------------
+
+Event-driven automation for agent lifecycle:
+
+Events:
+  on_spawn               - Agent created
+  on_complete            - Agent signaled completion
+  on_error               - Agent encountered error
+  on_kill                - Agent was killed
+  on_workflow_complete   - Workflow finished
+
+Commands:
+  agent hooks list [event]           # List hooks
+  agent hooks create <event> <name>  # Create hook from template
+  agent hooks add <event> <script>   # Add existing script as hook
+  agent hooks remove <event> <name>  # Remove hook
+  agent hooks enable <event> <name>  # Enable disabled hook
+  agent hooks disable <event> <name> # Disable hook
+
+Hook Environment:
+  DAEDALOS_EVENT           - Event name
+  DAEDALOS_AGENT_NAME      - Agent name
+  DAEDALOS_HOOK_DATA       - Additional event data
+  DAEDALOS_AGENT_PROJECT   - Agent's project
+  DAEDALOS_AGENT_TEMPLATE  - Agent's template
+  DAEDALOS_AGENT_STATUS    - Agent's status
+
+WORKFLOW IMPROVEMENTS:
+----------------------
+
+1. OUTPUT CAPTURE
+   - Uses signal_wait for proper synchronization
+   - Captures agent output on completion
+   - Aggregates parallel results to aggregated.txt
+
+2. ERROR RECOVERY
+   - Per-stage retry logic (default 2 retries)
+   - Failure strategies: retry, skip, abort, fallback
+   - Configurable timeouts (default 600s per stage)
+
+3. CONTEXT PASSING
+   - Predecessors pass context to successors
+   - exploration_summary, implementation_plan, etc.
+   - Stored in workflow run directory
+
+STATUS DETECTION IMPROVEMENTS:
+------------------------------
+
+Enhanced Claude Code output analysis:
+  - ANSI escape code stripping for clean pattern matching
+  - Spinner detection (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏)
+  - Tool call detection [Read], [Write], [Edit], etc.
+  - Cost/token display detection
+  - Question/prompt detection
+  - Error message patterns
+  - Processing indicators
+
+TEMPLATE ENHANCEMENTS:
+----------------------
+
+All templates now include:
+  - system_prompt: Role guidance for the agent
+  - allowed_tools: Tools the agent should use
+  - denied_tools: Tools to avoid
+  - on_complete: Next action after completion
+
+New Templates:
+  - planner: Designs implementation plans (no editing tools)
+  - tester: Test-focused work (verification emphasis)
+
+Updated Templates:
+  - explorer: Codebase exploration (read-only)
+  - implementer: Code changes (full tools)
+  - reviewer: Code review (read-only, detailed feedback)
+  - debugger: Bug investigation (systematic approach)
+  - watcher: File monitoring (passive observation)
+
+MCP SERVER ADDITIONS:
+---------------------
+
+9 new tools for coordination:
+  - agent_signal_complete   # Signal work done
+  - agent_signal_wait       # Wait for completion
+  - agent_signal_check      # Check completion
+  - agent_lock_acquire      # Get exclusive lock
+  - agent_lock_release      # Release lock
+  - agent_lock_list         # List locks
+  - agent_claim_create      # Claim task
+  - agent_claim_release     # Release claim
+  - agent_claim_list        # List claims
+
+FILES CREATED/MODIFIED:
+-----------------------
+
+Created:
+  daedalos-tools/agent/lib/signals.sh   # Coordination primitives
+  daedalos-tools/agent/lib/hooks.sh     # Lifecycle hooks
+  daedalos-tools/agent/templates/planner.json
+  daedalos-tools/agent/templates/tester.json
+
+Modified:
+  daedalos-tools/agent/bin/agent        # New commands + help
+  daedalos-tools/agent/lib/tmux.sh      # Env var injection
+  daedalos-tools/agent/lib/status.sh    # Improved detection
+  daedalos-tools/agent/lib/workflow.sh  # Output capture + retries
+  daedalos-tools/agent/lib/templates.sh # New field handlers
+  daedalos-tools/agent/templates/*.json # System prompts
+  daedalos-tools/daedalos-mcp/src/daedalos_mcp/__init__.py
+
+ARCHITECTURAL NOTES:
+--------------------
+
+The agent system now has three coordination layers:
+
+1. SIGNALS - Synchronization (wait for completion)
+2. LOCKS   - Exclusivity (prevent concurrent access)
+3. CLAIMS  - Ownership (prevent duplicate work)
+
+All use file-based state in ~/.local/share/daedalos/agent/signals/
+with atomic operations via flock for safety.
+
+================================================================================
+SESSION: 2026-01-10 - MCP Hub Polish
+================================================================================
+
+Comprehensive polish pass on the MCP Hub server management system. Added health
+monitoring, server management commands, and expanded the server registry.
+
+HEALTH MONITORING:
+------------------
+
+Daemon now includes continuous health monitoring:
+  - Periodic health checks every 30 seconds
+  - Detects unresponsive servers (3 failures = unhealthy)
+  - Automatic restart on failure (up to 3 attempts)
+  - Stderr log collection for debugging
+
+Server Process tracking now includes:
+  - health_failures: Count of consecutive health check failures
+  - restart_count: Number of automatic restarts
+  - last_health_check: Timestamp of last check
+  - stderr_log: Rolling buffer of last 100 stderr lines
+
+NEW COMMANDS:
+-------------
+
+Server Management:
+  mcp-hub warm <servers...>     Pre-start servers for fast response
+  mcp-hub restart <server>      Restart a running server
+  mcp-hub logs <server> [-n N]  View server stderr logs
+  mcp-hub reload                Reload config without restart
+
+Authentication:
+  mcp-hub auth <server>         Show auth requirements
+  mcp-hub auth <server> --token Set auth token in config
+
+PROJECT-LEVEL CONFIG:
+---------------------
+
+MCP Hub now searches for .daedalos/mcp.yaml in the current project:
+  - Walks up from cwd to find project root
+  - Project config overrides system config
+  - Allows per-project server settings
+
+Example .daedalos/mcp.yaml:
+  servers:
+    postgres:
+      env:
+        POSTGRES_CONNECTION_STRING: postgresql://localhost/mydb
+    custom-server:
+      command: ["python", "./tools/mcp_server.py"]
+      auto_start: true
+
+EXPANDED SERVER REGISTRY:
+-------------------------
+
+Added 8 new built-in servers (14 total):
+  - postgres:            PostgreSQL database operations
+  - puppeteer:           Browser automation and scraping
+  - slack:               Slack workspace operations
+  - google-drive:        Google Drive file operations
+  - google-maps:         Location and directions
+  - time:                Timezone operations
+  - sequential-thinking: Step-by-step reasoning
+  - git:                 Git repository operations
+
+Categories: core, data, browser, communication, storage, location, utility,
+            reasoning, development, search, network, integrations
+
+MCP SERVER ADDITIONS:
+---------------------
+
+6 new tools for hub control:
+  - mcp_hub_status:  Get daemon and server status
+  - mcp_hub_warm:    Pre-start servers
+  - mcp_hub_list:    List available servers
+  - mcp_hub_restart: Restart a server
+  - mcp_hub_logs:    Get server logs
+  - mcp_hub_call:    Call a tool through the hub
+
+FILES MODIFIED:
+---------------
+
+daedalos-tools/mcp-hub/mcphub/daemon.py:
+  - Added health check loop and auto-restart
+  - Added stderr log collection
+  - Added warm, logs, restart, reload request handlers
+  - Enhanced status output with health info
+
+daedalos-tools/mcp-hub/mcphub/config.py:
+  - Added project-level config discovery
+  - Searches up from cwd for .daedalos/mcp.yaml
+
+daedalos-tools/mcp-hub/mcphub/registry.py:
+  - Added 8 new built-in server definitions
+
+daedalos-tools/mcp-hub/bin/mcp-hub:
+  - Added warm, logs, restart, reload, auth commands
+  - Updated help with new command categories
+
+daedalos-tools/daedalos-mcp/src/daedalos_mcp/__init__.py:
+  - Added 6 MCP Hub control tools
+
+AUTONOMY RULE ADDED:
+--------------------
+
+Added to .claude/CLAUDE.md:
+  "When asked 'what do you want to work on?' or similar - just pick
+   something interesting and start working on it. Don't ask for
+   confirmation. The question itself is permission."
+
+================================================================================
+SESSION: 2026-01-10 - TDD & Refactor Workflows
+================================================================================
+
+Added new workflow definitions and MCP integration for test-driven development
+and safe refactoring patterns.
+
+NEW WORKFLOWS:
+--------------
+
+1. TDD WORKFLOW (tdd.yaml)
+
+   Test-driven development - write tests FIRST, then implement:
+
+   Stages:
+     plan       -> Planner designs test cases (read-only)
+     test_first -> Tester writes failing tests
+     implement  -> Implementer makes tests pass
+     verify     -> Tester confirms all tests pass + coverage
+
+   Context passing:
+     plan -> test_plan -> test_first
+     test_first -> tests_written -> implement
+     implement -> implementation_summary -> verify
+
+   Philosophy:
+     Tests are the specification. Write them before code.
+     Implementation is "just" making the tests pass.
+
+2. REFACTOR WORKFLOW (refactor.yaml)
+
+   Safe code transformation with regression protection:
+
+   Stages:
+     analyze       -> Explorer examines code to refactor
+     test_baseline -> Tester ensures coverage BEFORE changes
+     refactor      -> Implementer makes incremental changes
+     verify        -> Tester confirms no regressions
+
+   Context passing:
+     analyze -> analysis -> test_baseline
+     test_baseline -> test_baseline -> refactor
+     refactor -> refactor_summary -> verify
+
+   Philosophy:
+     Never refactor without tests. Baseline first.
+     Small incremental changes with verification.
+
+MCP SERVER ADDITIONS:
+---------------------
+
+4 new workflow tools:
+  - workflow_list:   List available workflows
+  - workflow_start:  Start a workflow pipeline
+  - workflow_status: Check workflow progress
+  - workflow_stop:   Stop a running workflow
+
+Updated agent_spawn template list to include:
+  - planner (design mode, read-only)
+  - tester (verification mode)
+
+CLI HELP UPDATES:
+-----------------
+
+Updated BUILT-IN WORKFLOWS section to include:
+  tdd      - Plan -> Test First -> Implement -> Verify
+  refactor - Analyze -> Test Baseline -> Refactor -> Verify
+
+FILES MODIFIED:
+---------------
+
+daedalos-tools/agent/lib/workflow.sh:
+  - Added tdd.yaml generation in workflow_init_defaults()
+  - Added refactor.yaml generation in workflow_init_defaults()
+
+daedalos-tools/daedalos-mcp/src/daedalos_mcp/__init__.py:
+  - Added workflow_list, workflow_start, workflow_status, workflow_stop tools
+  - Updated agent_spawn template description
+  - Added handlers for workflow tools
+
+daedalos-tools/agent/bin/agent:
+  - Updated help to list tdd and refactor workflows
+
+USAGE EXAMPLE:
+--------------
+
+  # TDD workflow for adding user authentication
+  agent workflow start tdd "Add user login with email/password"
+
+  # Workflow spawns:
+  #   1. planner to design test cases
+  #   2. tester to write failing tests
+  #   3. implementer to make tests pass
+  #   4. tester to verify + coverage
+
+  # Monitor progress
+  agent workflow status wf-abc12345
+
+  # Refactor workflow for cleaning up legacy code
+  agent workflow start refactor "Extract database access into repository pattern"
+
+  # Workflow ensures test coverage before ANY changes
+
+ARCHITECTURAL NOTE:
+-------------------
+
+These workflows leverage the new planner and tester templates:
+  - planner: CLAUDE_READONLY=1, no Edit/Write tools
+  - tester: Full access, verification-focused system prompt
+
+The TDD workflow embodies the Daedalos philosophy:
+  "A loop is how intelligent work gets done"
+
+TDD is literally:
+  1. Write test (RED)
+  2. Implement (GREEN)
+  3. Refactor (REFACTOR)
+
+Each stage is a "loop iteration" - the workflow IS the loop.
+
+================================================================================
+
+
+================================================================================
+SESSION: 2026-01-10 - LSP Pool Polish
+================================================================================
+
+Continued tool polish session, focusing on LSP Pool health monitoring.
+
+WHAT WAS DONE:
+--------------
+
+1. LSP POOL HEALTH MONITORING
+
+   Added health check infrastructure to servers.py:
+   - ServerState fields: last_health_check, health_failures, restart_count, stderr_log
+   - check_health(): Send LSP alive request with timeout
+   - restart_server(): Restart unhealthy servers
+   - get_server_logs(): Retrieve stderr logs for debugging
+   - _collect_stderr(): Background stderr collection
+
+   Added health check loop to daemon.py:
+   - _health_check_loop(): 30s interval health checks
+   - _check_all_servers(): Check each server, collect stderr
+   - _handle_unhealthy(): Auto-restart up to 3 times
+
+2. NEW CLI COMMANDS
+
+   bin/lsp-pool additions:
+   - logs <lang:project>      Show server stderr logs
+   - restart <lang:project>   Restart a server
+   - languages                List supported languages (was already added)
+   - detect <file>            Detect language for file (was already added)
+
+3. DAEDALOS-MCP LSP POOL TOOLS
+
+   8 new MCP tools for Claude integration:
+   - lsp_pool_status    - Daemon status
+   - lsp_pool_warm      - Pre-warm server
+   - lsp_pool_cool      - Stop servers
+   - lsp_pool_list      - List running servers
+   - lsp_pool_query     - Send LSP query (hover, definition, references, completion)
+   - lsp_pool_languages - List supported languages
+   - lsp_pool_logs      - Get server logs
+   - lsp_pool_restart   - Restart a server
+
+ARCHITECTURE NOTES:
+-------------------
+
+The LSP Pool now mirrors the MCP Hub architecture:
+- Health monitoring with configurable intervals
+- Auto-restart with failure counting
+- Stderr log collection for debugging
+- Graceful degradation (max restarts before removal)
+
+Health check flow:
+  1. Every 30s, check all servers
+  2. Send $/alive request with 5s timeout
+  3. On failure, increment health_failures
+  4. At 3 failures, mark unhealthy
+  5. Try restart up to 3 times
+  6. After max restarts, remove server
+
+FILES MODIFIED:
+---------------
+
+daedalos-tools/lsp-pool/lsppool/servers.py:
+  - Added health monitoring fields to ServerState
+  - Added check_health(), restart_server(), get_server_logs(), _collect_stderr()
+
+daedalos-tools/lsp-pool/lsppool/daemon.py:
+  - Added HEALTH_CHECK_INTERVAL, MAX_HEALTH_FAILURES, MAX_RESTARTS constants
+  - Added _health_check_loop(), _check_all_servers(), _handle_unhealthy()
+  - Added logs and restart request handlers
+
+daedalos-tools/lsp-pool/bin/lsp-pool:
+  - Added cmd_logs(), cmd_restart()
+  - Updated main() with logs, restart, languages, detect commands
+  - Updated help text
+
+daedalos-tools/daedalos-mcp/src/daedalos_mcp/__init__.py:
+  - Added 8 lsp_pool_* tool definitions
+  - Added handlers for all LSP Pool tools
+
+SUPPORTED LANGUAGES (21 total):
+-------------------------------
+
+typescript, python, rust, go, c, cpp, java, kotlin, swift,
+lua, ruby, elixir, zig, ocaml, haskell, bash, yaml, json,
+html, css, dockerfile, nix
+
+USAGE EXAMPLES:
+---------------
+
+  # Start the pool daemon
+  lsp-pool start --foreground
+
+  # Pre-warm TypeScript server
+  lsp-pool warm typescript /path/to/project
+
+  # Get hover info
+  lsp-pool query hover src/main.ts --line 42 --col 10
+
+  # Check server logs after crash
+  lsp-pool logs typescript:/path/to/project
+
+  # Restart unhealthy server
+  lsp-pool restart typescript:/path/to/project
+
+  # List all supported languages
+  lsp-pool languages
+
+================================================================================
+
+
+ADDITIONAL WORK:
+----------------
+
+Added sandbox tools to daedalos-mcp (8 tools):
+  - sandbox_create    - Create sandbox environment
+  - sandbox_list      - List all sandboxes
+  - sandbox_enter     - Enter sandbox
+  - sandbox_diff      - Show changes
+  - sandbox_promote   - Apply changes to source
+  - sandbox_discard   - Delete sandbox
+  - sandbox_info      - Show sandbox details
+  - sandbox_run       - Run command in sandbox
+
+TOTAL MCP TOOLS NOW EXPOSED:
+----------------------------
+
+Core tools (existing): ~35 tools
+  - loop_*, verify, undo_*, project_*, codex_*, context_*, error_*, scratch_*
+
+Agent orchestration (existing): ~25 tools
+  - agent_*, workflow_*
+
+MCP Hub (existing): 6 tools
+  - mcp_hub_*
+
+LSP Pool (new): 8 tools
+  - lsp_pool_*
+
+Sandbox (new): 8 tools
+  - sandbox_*
+
+Total: ~82 MCP tools for comprehensive Claude integration
+
+
+
+================================================================================
+SESSION CONTINUED: 2026-01-10 - Unified Daedalos Command
+================================================================================
+
+Created a unified `daedalos` meta-command that wraps all tools.
+
+WHAT WAS BUILT:
+---------------
+
+daedalos-tools/daedalos/bin/daedalos - Single entry point for all tools
+
+Features:
+  - Beautiful ASCII art banner
+  - Categorized tool listing (Core, Safety, Intelligence, Infrastructure, Utility)
+  - Tool dispatch (daedalos loop ... → loop ...)
+  - Meta-commands: help, tools, status, doctor, version
+  - Installation verification (doctor command)
+  - JSON output for tools listing
+
+Meta-commands:
+  daedalos help      Show comprehensive help with philosophy
+  daedalos tools     List all tools with installation status
+  daedalos status    Show daemon status (loop, mcp-hub, lsp-pool, undo)
+  daedalos doctor    Verify installation, check dependencies
+  daedalos version   Show version info
+
+Tool dispatch:
+  daedalos loop start "task" --promise "cmd"
+  daedalos verify --quick
+  daedalos agent spawn -n explorer
+
+IMPLEMENTATION NOTES:
+---------------------
+
+Avoided bash 4+ features (associative arrays) for macOS compatibility.
+Uses simple case statements and string lists instead.
+
+FILES CREATED:
+--------------
+
+daedalos-tools/daedalos/bin/daedalos - 380 lines
+  - Tool descriptions via get_tool_desc()
+  - ALL_TOOLS string for iteration
+  - cmd_help(), cmd_tools(), cmd_status(), cmd_doctor(), cmd_version()
+  - is_tool() and main() for dispatch
+
+Installed to ~/.local/bin/daedalos
+
+USAGE EXAMPLES:
+---------------
+
+  $ daedalos
+  # Shows beautiful help with ASCII banner
+
+  $ daedalos tools
+  # Lists all 12 tools with checkmarks
+
+  $ daedalos doctor
+  # Verifies installation, checks dependencies
+
+  $ daedalos loop start "fix tests" --promise "pytest"
+  # Dispatches to loop tool
+
+  $ daedalos status
+  # Shows daemon status
+
+SESSION SUMMARY:
+----------------
+
+This session accomplished:
+1. LSP Pool health monitoring (servers.py, daemon.py)
+2. LSP Pool CLI commands (logs, restart)
+3. LSP Pool MCP tools (8 tools)
+4. Sandbox MCP tools (8 tools)
+5. Unified daedalos meta-command
+
+Total MCP tools now: ~90
+All 12 Daedalos tools installed and working.
+
+================================================================================
+
+
+
+================================================================================
+SESSION CONTINUED: 2026-01-10 - Observe TUI Dashboard
+================================================================================
+
+Built the `observe` tool - real-time TUI dashboard for human visibility.
+
+DESIGN PRINCIPLE:
+-----------------
+
+"Daedalos should support any level of human-AI supervision."
+
+From fully autonomous to fully manual, humans need visibility into:
+- What is the AI doing?
+- What loops are running?
+- What agents are active?
+- What files are changing?
+
+WHAT WAS BUILT:
+---------------
+
+daedalos-tools/observe/
+├── bin/observe          # CLI entry point
+└── lib/app.py           # Textual TUI application
+
+Features:
+- Real-time daemon status (loop, mcp-hub, lsp-pool, undo)
+- Active loops table with task, status, iteration, duration
+- Active agents table with slot, name, template, status
+- Event log showing recent activity
+- 2-second auto-refresh (pausable)
+- Keyboard navigation
+
+Keyboard shortcuts:
+  q - Quit
+  r - Refresh now
+  p - Pause/resume updates
+  l - Focus loops panel
+  a - Focus agents panel
+  d - Focus daemons panel
+  e - Focus event log
+
+ARCHITECTURE:
+-------------
+
+Built with Textual (Python TUI framework):
+- Reactive widgets that auto-update
+- CSS-like styling for layout
+- Async data fetching from tools
+- Low resource usage
+
+The observe tool queries other tools for data:
+- `loop list --json` for active loops
+- `agent list --json` for active agents
+- Process checks for daemon status
+- Socket existence checks for services
+
+SUPERVISION SPECTRUM:
+---------------------
+
+This is the first step toward supporting the full spectrum:
+
+  AUTONOMOUS ─────────────────────────────────────── MANUAL
+       │                                                │
+       └── observe provides visibility at ALL levels ──┘
+
+Future additions:
+- gates/    Configurable approval checkpoints
+- handoff/  Human ↔ AI work handoff
+- journal/  What happened? narrative reconstruction
+
+TOOL COUNT:
+-----------
+
+Daedalos now has 13 tools:
+  loop, verify, undo, sandbox, project, codex, context,
+  error-db, agent, mcp-hub, lsp-pool, scratch, observe
+
+================================================================================
+
+
+## Supervision Spectrum - Built
+
+Daedalos now supports any level of human-AI supervision:
+
+### Tools Built
+
+1. **observe** - Real-time TUI dashboard (Textual-based)
+   - Daemon status monitoring (loop, mcp-hub, lsp-pool, undo)
+   - Active loops table with iteration tracking
+   - Active agents table with uptime
+   - Event log with keyboard shortcuts
+   - Pause/resume updates
+
+2. **gates** - Configurable approval checkpoints
+   - Five supervision levels: autonomous → supervised → collaborative → assisted → manual
+   - Per-action gates: allow, notify, approve, deny
+   - Sensitive path detection (*.env, secrets/*, etc.)
+   - Autonomy limits (max iterations, file changes, lines changed)
+   - Project-level overrides (.daedalos/supervision.yaml)
+   - Audit logging
+
+3. **journal** - Narrative reconstruction
+   - Aggregates events from all Daedalos tools
+   - "What happened?" command for coherent timelines
+   - Event filtering by source, type, time range
+   - Summary statistics with highlights
+   - Custom event logging
+
+### Supervision Levels
+
+- **autonomous**: AI runs freely, only catastrophic actions gated
+- **supervised**: AI runs, human gets notifications, can intervene
+- **collaborative**: AI proposes, human approves major actions
+- **assisted**: Human drives, AI suggests and helps
+- **manual**: AI only responds to direct commands
+
+### Gates Configuration
+
+```yaml
+# ~/.config/daedalos/supervision.yaml
+level: supervised
+
+gates:
+  file_delete: approve
+  git_push: approve
+  git_force_push: deny
+  loop_start: notify
+  agent_spawn: notify
+
+autonomy:
+  max_iterations: 50
+  max_file_changes: 100
+  sensitive_paths:
+    - "*.env"
+    - "**/secrets/**"
+```
+
+### Usage
+
+```bash
+# Observe
+daedalos observe              # Launch TUI dashboard
+
+# Gates
+daedalos gates level          # Show supervision level
+daedalos gates level assisted # Set to assisted mode
+daedalos gates check git_push # Check if git push allowed
+daedalos gates config         # Show full configuration
+
+# Journal
+daedalos journal              # What happened in the last hour?
+daedalos journal -h 8         # Last 8 hours
+daedalos journal summary      # Quick stats
+```
+
+### Total Tools: 15
+
+loop, verify, undo, sandbox, project, codex, context, error-db,
+agent, mcp-hub, lsp-pool, scratch, observe, gates, journal
+
+================================================================================
+SESSION: 2026-01-10 - Human-Focused Tools
+================================================================================
+
+Built 13 human-focused tools to complement the AI-focused infrastructure.
+Daedalos is AI-native, but humans are still in the loop.
+
+DESIGN PHILOSOPHY:
+------------------
+
+"AI-native doesn't mean human-excluded."
+
+Humans need tools for:
+- Developer experience (env switching, notifications, session restore)
+- Collaboration (pair programming, handoffs, code review)
+- Productivity (focus modes, metrics, templates)
+- System integration (containers, remote dev, backups)
+
+These tools integrate with the AI tools - journal logs events, notify alerts
+humans, review workflow integrates with gates, etc.
+
+TOOLS BUILT:
+------------
+
+### Developer Experience (4 tools)
+
+1. **env** - Project environment switching (like direnv)
+   - Auto-detect project type (Node, Python, Rust, Go, Ruby, Swift)
+   - Source .daedalos/env.sh or .envrc on directory change
+   - Shell hooks for bash/zsh/fish
+   - Integration with secrets for secure env vars
+
+2. **notify** - Cross-platform desktop notifications
+   - Backends: osascript (macOS), notify-send (Linux), WSL PowerShell
+   - notify watch "cmd" - run command, notify on completion
+   - notify progress "msg" 50 - show progress notifications
+   - Used by other tools (focus, review, etc.)
+
+3. **session** - Save/restore terminal sessions
+   - Captures: cwd, env vars, shell history, git state, tmux layout
+   - session save "pre-refactor" / session restore
+   - Import/export for sharing
+
+4. **secrets** - Local secrets vault with age encryption
+   - age (X25519 + ChaCha20-Poly1305) encryption
+   - Namespaced keys: api/openai, db/postgres
+   - secrets inject "npm start" - run with secrets in env
+   - secrets env api - export api/* as shell vars
+
+### Collaboration (3 tools)
+
+5. **pair** - Pair programming via shared tmux sessions
+   - pair start / pair join <name>
+   - Modes: --driver, --navigator, --equal
+   - Supports tmate for public sharing
+   - Local or SSH-based joining
+
+6. **handoff** - Context summaries for shift changes
+   - Aggregates: git commits, journal events, environment
+   - Generates markdown template with task, blockers, next steps
+   - Use cases: end of day, human↔AI transitions
+
+7. **review** - Human code review workflow
+   - review request → review start → review approve/reject
+   - Integrates with git diff for change viewing
+   - Connects to gates for mandatory review workflows
+
+### Productivity (3 tools)
+
+8. **focus** - Distraction blocking and deep work
+   - Pomodoro timer: focus start 25 / focus break 5
+   - Presets: --pomodoro (25/5), --deep (90/20), --quick (15/3)
+   - Progress bar, statistics, notifications
+   - Block/unblock distractions (placeholder for OS integration)
+
+9. **metrics** - Productivity statistics
+   - Sources: git commits, journal events, focus sessions
+   - metrics today / metrics week / metrics month
+   - Visualizations: bar charts, progress bars
+   - Export to JSON/CSV for analysis
+
+10. **template** - Project scaffolding
+    - Built-in templates: bash-tool, python-cli, daedalos-tool
+    - Variables: {{NAME}}, {{AUTHOR}}, {{DATE}}, {{DESCRIPTION}}
+    - template add /path/to/template - save custom templates
+    - Symlink resolution for proper template location
+
+### System Integration (3 tools)
+
+11. **container** - Docker/Podman unified interface
+    - Auto-detects docker or podman
+    - container dev - auto-detect project type, start dev container
+    - container clean - prune stopped containers and images
+    - Compose shortcuts: container up/down/restart
+
+12. **remote** - SSH and remote development
+    - remote add/connect/list - manage SSH hosts
+    - remote sync - rsync wrapper with host config
+    - remote tunnel - port forwarding
+    - remote dev - start tmux session on remote
+
+13. **backup** - Project backup with encryption
+    - Types: --full, --incremental, --git (bundle)
+    - Options: --compress, --encrypt (age), --remote
+    - backup prune --keep 10 - retention management
+    - backup schedule --on-commit - git hook
+
+INTEGRATION PATTERNS:
+---------------------
+
+All human-focused tools integrate with existing Daedalos infrastructure:
+
+- **journal**: Tools log events (focus start, review approve, etc.)
+- **notify**: Tools send notifications (session complete, backup done)
+- **gates**: review workflow can require approval gates
+- **secrets**: env and container can inject secrets
+- **remote**: backup can sync to remote hosts
+
+TOOL STATUS:
+------------
+
+All 13 tools implemented and installed in ~/.local/bin:
+  env, notify, session, secrets, pair, handoff, review,
+  focus, metrics, template, container, remote, backup
+
+TOTAL DAEDALOS TOOLS: 28
+------------------------
+
+AI-Focused (12):
+  loop, verify, undo, project, codex, context,
+  error-db, scratch, agent, sandbox, mcp-hub, lsp-pool
+
+Human-Focused (13):
+  env, notify, session, secrets, pair, handoff, review,
+  focus, metrics, template, container, remote, backup
+
+Supervision (3):
+  observe, gates, journal
+
+================================================================================

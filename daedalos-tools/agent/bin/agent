@@ -27,6 +27,8 @@ source "${LIB_DIR}/search.sh"
 source "${LIB_DIR}/templates.sh"
 source "${LIB_DIR}/snapshot.sh"
 source "${LIB_DIR}/comms.sh"
+source "${LIB_DIR}/signals.sh"
+source "${LIB_DIR}/hooks.sh"
 source "${LIB_DIR}/workflow.sh"
 source "${LIB_DIR}/groups.sh"
 
@@ -155,6 +157,9 @@ cmd_spawn() {
     # Record agent in database
     agents_create "$name" "$project" "${template:-default}" "$sandbox" "$slot"
 
+    # Set slot env var
+    tmux_set_slot "$session" "$slot"
+
     # Get PID and update
     sleep 0.5
     local pid
@@ -163,13 +168,26 @@ cmd_spawn() {
         agents_set_pid "$name" "$pid"
     fi
 
+    # Clear any previous completion signal
+    signal_clear "$name"
+
     # Send initial prompt if provided
     if [[ -n "$initial_prompt" ]]; then
         sleep 1
-        tmux_send_keys "$session" "$initial_prompt" Enter
+        # Build prompt with template's system prompt and prefix
+        local full_prompt
+        if [[ -n "$template" ]]; then
+            full_prompt=$(templates_build_prompt "$template" "$initial_prompt")
+        else
+            full_prompt="$initial_prompt"
+        fi
+        tmux_send_keys "$session" "$full_prompt" Enter
     fi
 
     success "Agent spawned: $name (slot $slot)"
+
+    # Run on_spawn hooks
+    hooks_on_spawn "$name" "$template" "$project"
 
     # Focus unless told not to
     if [[ "$no_focus" != "true" ]]; then
@@ -831,6 +849,8 @@ BUILT-IN WORKFLOWS:
     feature                 Explorer -> Planner -> Implementer -> Reviewer
     review                  Parallel: Correctness + Security + Style
     bugfix                  Investigate -> Fix -> Verify
+    tdd                     Plan -> Test First -> Implement -> Verify
+    refactor                Analyze -> Test Baseline -> Refactor -> Verify
 
 GROUP COMMANDS:
     group list              List all groups
@@ -843,6 +863,32 @@ GROUP COMMANDS:
     group resume <name>     Resume all agents in group
     group send <g> <msg>    Send message to group
     group team <n> <proj>   Spawn a team with default templates
+
+COORDINATION COMMANDS:
+    signal complete         Signal that work is complete
+    signal wait <agent>     Wait for agent to complete
+    signal check <agent>    Check if agent completed
+    lock acquire <name>     Acquire a resource lock
+    lock release <name>     Release a resource lock
+    lock list               List active locks
+    claim create <task>     Claim a task
+    claim release <task>    Release a task claim
+    claim list              List active claims
+
+LIFECYCLE HOOKS:
+    hooks list              List all hooks
+    hooks create <e> <n>    Create a new hook for event
+    hooks add <e> <script>  Add existing script as hook
+    hooks remove <e> <n>    Remove a hook
+    hooks enable <e> <n>    Enable a hook
+    hooks disable <e> <n>   Disable a hook
+
+HOOK EVENTS:
+    on_spawn                Agent created
+    on_complete             Agent signaled completion
+    on_error                Agent encountered error
+    on_kill                 Agent was killed
+    on_workflow_complete    Workflow finished
 
 SPAWN OPTIONS:
     -n, --name <name>       Agent name
@@ -873,11 +919,13 @@ SEARCH OPTIONS:
     --interactive           Interactive search with fzf
 
 TEMPLATES:
-    explorer                Read-only exploration
-    implementer             Full write access
-    reviewer                Code review mode
-    debugger                Debug mode
+    explorer                Read-only exploration and research
+    implementer             Full write access for implementation
+    reviewer                Code review mode (read-only)
+    debugger                Debug mode - investigate and fix
     watcher                 Background monitoring
+    planner                 Planning and design (read-only)
+    tester                  Testing and verification
 
 EXAMPLES:
     agent spawn -n mywork -p ~/project
@@ -925,6 +973,12 @@ main() {
         workflow)     shift; cmd_workflow "$@" ;;
         # Group commands
         group)        shift; cmd_group "$@" ;;
+        # Coordination commands
+        signal)       shift; cmd_signal "$@" ;;
+        lock)         shift; cmd_lock "$@" ;;
+        claim)        shift; cmd_claim "$@" ;;
+        # Lifecycle hooks
+        hooks)        shift; cmd_hooks "$@" ;;
         version|--version|-v) show_version ;;
         help|--help|-h) show_help ;;
         *)         echo "Unknown command: $1"; show_help; exit 1 ;;

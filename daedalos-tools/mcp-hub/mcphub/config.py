@@ -27,8 +27,9 @@ DEFAULT_CONFIG = {
 class Config:
     """Configuration for MCP Hub."""
 
-    def __init__(self, config_path: Optional[Path] = None):
+    def __init__(self, config_path: Optional[Path] = None, project_path: Optional[Path] = None):
         self.config_path = config_path or CONFIG_DIR / "config.yaml"
+        self.project_path = project_path  # Optional project-specific config
         self._config: Dict[str, Any] = {}
         self._load()
 
@@ -36,6 +37,7 @@ class Config:
         """Load configuration from file, falling back to defaults."""
         self._config = DEFAULT_CONFIG.copy()
 
+        # Load system config
         if self.config_path.exists():
             try:
                 with open(self.config_path) as f:
@@ -43,6 +45,36 @@ class Config:
                 self._merge(self._config, user_config)
             except Exception:
                 pass
+
+        # Load project config (overrides system config)
+        project_config = self._find_project_config()
+        if project_config:
+            try:
+                with open(project_config) as f:
+                    proj_config = yaml.safe_load(f) or {}
+                self._merge(self._config, proj_config)
+                self._project_config_path = project_config
+            except Exception:
+                pass
+
+    def _find_project_config(self) -> Optional[Path]:
+        """Find project-level MCP config."""
+        if self.project_path:
+            config = self.project_path / ".daedalos" / "mcp.yaml"
+            if config.exists():
+                return config
+            return None
+
+        # Search up from cwd
+        cwd = Path.cwd()
+        for parent in [cwd] + list(cwd.parents):
+            config = parent / ".daedalos" / "mcp.yaml"
+            if config.exists():
+                return config
+            # Stop at home directory
+            if parent == Path.home():
+                break
+        return None
 
     def _merge(self, base: dict, override: dict):
         """Recursively merge override into base."""

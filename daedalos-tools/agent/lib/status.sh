@@ -16,46 +16,106 @@ STATUS_PAUSED="paused"
 STATUS_ERROR="error"
 STATUS_DEAD="dead"
 
+# Strip ANSI escape codes from text
+strip_ansi() {
+    # Remove ANSI escape sequences for proper pattern matching
+    sed 's/\x1b\[[0-9;]*m//g; s/\x1b\[[0-9;]*[A-Za-z]//g'
+}
+
 # Detect status from pane content
+# Claude Code has specific output patterns we can detect
 detect_status_from_content() {
     local content="$1"
 
-    # Check for common status indicators (last 30 lines)
-    local recent
-    recent=$(echo "$content" | tail -30)
+    # Strip ANSI codes for clean matching
+    local clean_content
+    clean_content=$(echo "$content" | strip_ansi)
 
-    # Check for thinking indicators
-    if echo "$recent" | grep -qiE '(thinking|analyzing|processing|reading|searching)'; then
+    # Check for common status indicators (last 50 lines for context)
+    local recent
+    recent=$(echo "$clean_content" | tail -50)
+
+    # Check the very last few lines for prompt state (most reliable)
+    local last_lines
+    last_lines=$(echo "$clean_content" | tail -5)
+
+    # Claude Code specific patterns
+
+    # Pattern: Spinner or "Thinking" indicator
+    if echo "$recent" | grep -qE '(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏)'; then
         echo "$STATUS_THINKING"
         return
     fi
 
-    # Check for active tool execution
-    if echo "$recent" | grep -qE '(Running|Executing|Writing|Editing)'; then
-        echo "$STATUS_ACTIVE"
-        return
+    # Pattern: Tool call in progress (Claude Code shows tool names in brackets)
+    if echo "$recent" | grep -qE '\[(Read|Write|Edit|Bash|Glob|Grep|Task|WebFetch|WebSearch|LSP)\]'; then
+        # Check if it's the most recent activity
+        if echo "$last_lines" | grep -qE '\[(Read|Write|Edit|Bash|Glob|Grep|Task|WebFetch|WebSearch|LSP)\]'; then
+            echo "$STATUS_ACTIVE"
+            return
+        fi
     fi
 
-    # Check for error states
-    if echo "$recent" | grep -qiE '(error:|failed:|exception|traceback)'; then
-        echo "$STATUS_ERROR"
-        return
-    fi
-
-    # Check for waiting/prompt state (common Claude Code prompt patterns)
-    if echo "$recent" | grep -qE '(^>|^claude>|\$ $|❯ $)'; then
+    # Pattern: Cost display (appears after each response) - usually means waiting for input
+    if echo "$last_lines" | grep -qE '(Cost:|Tokens:|tokens|input/output)'; then
         echo "$STATUS_IDLE"
         return
     fi
 
-    # Check for waiting for input
-    if echo "$recent" | grep -qiE '(waiting|pending|press enter|continue\?)'; then
+    # Pattern: Question or awaiting response
+    if echo "$last_lines" | grep -qE '(\? $|\?$|y/n|Y/N|\[y/N\]|\[Y/n\])'; then
         echo "$STATUS_WAITING"
         return
     fi
 
-    # Default to active if there's recent content
-    if [[ -n "$recent" ]]; then
+    # Pattern: Claude Code prompt (various forms)
+    if echo "$last_lines" | grep -qE '(^> $|^❯ $|^claude> |^claude-code> |User:)'; then
+        echo "$STATUS_IDLE"
+        return
+    fi
+
+    # Pattern: Error messages
+    if echo "$recent" | grep -qiE '(^error:|^Error:|failed:|FAILED|exception:|Exception:|panic:|Panic:)'; then
+        echo "$STATUS_ERROR"
+        return
+    fi
+
+    # Pattern: Permission denied or blocked
+    if echo "$recent" | grep -qiE '(permission denied|access denied|blocked|rejected)'; then
+        echo "$STATUS_ERROR"
+        return
+    fi
+
+    # Pattern: Completion signal was sent (by the agent itself)
+    if echo "$recent" | grep -qE 'agent signal complete|Signaled completion'; then
+        echo "$STATUS_IDLE"
+        return
+    fi
+
+    # Pattern: Active processing indicators
+    if echo "$recent" | grep -qiE '(processing|analyzing|reading|writing|searching|generating|creating|updating)'; then
+        echo "$STATUS_THINKING"
+        return
+    fi
+
+    # Pattern: Test running
+    if echo "$recent" | grep -qE '(PASS|FAIL|running test|test.*\.\.\.|\d+ passed|\d+ failed)'; then
+        echo "$STATUS_ACTIVE"
+        return
+    fi
+
+    # Pattern: Compiling/Building
+    if echo "$recent" | grep -qiE '(compiling|building|bundling|linking|compiled|built)'; then
+        echo "$STATUS_ACTIVE"
+        return
+    fi
+
+    # Check if there's very recent output (within last 5 lines)
+    local line_count
+    line_count=$(echo "$last_lines" | wc -l)
+
+    # If we have output and no clear status, assume active
+    if [[ $line_count -gt 2 ]] && [[ -n "$(echo "$last_lines" | tr -d '[:space:]')" ]]; then
         echo "$STATUS_ACTIVE"
     else
         echo "$STATUS_IDLE"

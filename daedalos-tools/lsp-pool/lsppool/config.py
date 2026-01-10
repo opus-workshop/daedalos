@@ -17,16 +17,18 @@ DEFAULT_CONFIG = {
     "memory_limit_mb": 2048,
     "idle_timeout_minutes": 30,
     "warmup_on_start": True,
+    "health_check_interval": 60,
     "servers": {
         "typescript": {
             "command": ["typescript-language-server", "--stdio"],
-            "extensions": [".ts", ".tsx", ".js", ".jsx"],
+            "extensions": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
             "memory_estimate_mb": 400,
         },
         "python": {
             "command": ["pyright-langserver", "--stdio"],
             "extensions": [".py", ".pyi"],
             "memory_estimate_mb": 300,
+            "alternatives": ["pylsp", "jedi-language-server"],
         },
         "rust": {
             "command": ["rust-analyzer"],
@@ -36,6 +38,96 @@ DEFAULT_CONFIG = {
         "go": {
             "command": ["gopls", "serve"],
             "extensions": [".go"],
+            "memory_estimate_mb": 200,
+        },
+        "c": {
+            "command": ["clangd"],
+            "extensions": [".c", ".h"],
+            "memory_estimate_mb": 400,
+        },
+        "cpp": {
+            "command": ["clangd"],
+            "extensions": [".cpp", ".hpp", ".cc", ".hh", ".cxx"],
+            "memory_estimate_mb": 500,
+        },
+        "java": {
+            "command": ["jdtls"],
+            "extensions": [".java"],
+            "memory_estimate_mb": 800,
+        },
+        "kotlin": {
+            "command": ["kotlin-language-server"],
+            "extensions": [".kt", ".kts"],
+            "memory_estimate_mb": 600,
+        },
+        "swift": {
+            "command": ["sourcekit-lsp"],
+            "extensions": [".swift"],
+            "memory_estimate_mb": 400,
+        },
+        "lua": {
+            "command": ["lua-language-server"],
+            "extensions": [".lua"],
+            "memory_estimate_mb": 150,
+        },
+        "ruby": {
+            "command": ["solargraph", "stdio"],
+            "extensions": [".rb", ".rake"],
+            "memory_estimate_mb": 300,
+        },
+        "elixir": {
+            "command": ["elixir-ls"],
+            "extensions": [".ex", ".exs"],
+            "memory_estimate_mb": 400,
+        },
+        "zig": {
+            "command": ["zls"],
+            "extensions": [".zig"],
+            "memory_estimate_mb": 200,
+        },
+        "ocaml": {
+            "command": ["ocamllsp"],
+            "extensions": [".ml", ".mli"],
+            "memory_estimate_mb": 300,
+        },
+        "haskell": {
+            "command": ["haskell-language-server-wrapper", "--lsp"],
+            "extensions": [".hs"],
+            "memory_estimate_mb": 600,
+        },
+        "bash": {
+            "command": ["bash-language-server", "start"],
+            "extensions": [".sh", ".bash"],
+            "memory_estimate_mb": 100,
+        },
+        "yaml": {
+            "command": ["yaml-language-server", "--stdio"],
+            "extensions": [".yaml", ".yml"],
+            "memory_estimate_mb": 100,
+        },
+        "json": {
+            "command": ["vscode-json-language-server", "--stdio"],
+            "extensions": [".json", ".jsonc"],
+            "memory_estimate_mb": 100,
+        },
+        "html": {
+            "command": ["vscode-html-language-server", "--stdio"],
+            "extensions": [".html", ".htm"],
+            "memory_estimate_mb": 100,
+        },
+        "css": {
+            "command": ["vscode-css-language-server", "--stdio"],
+            "extensions": [".css", ".scss", ".less"],
+            "memory_estimate_mb": 100,
+        },
+        "dockerfile": {
+            "command": ["docker-langserver", "--stdio"],
+            "extensions": ["Dockerfile"],
+            "memory_estimate_mb": 100,
+        },
+        "nix": {
+            "command": ["nil"],
+            "extensions": [".nix"],
             "memory_estimate_mb": 200,
         },
     },

@@ -137,6 +137,75 @@ templates_get_prompt_prefix() {
     templates_get_field "$name" "prompt_prefix" ""
 }
 
+# Get system prompt from template
+templates_get_system_prompt() {
+    local name="$1"
+    templates_get_field "$name" "system_prompt" ""
+}
+
+# Get allowed tools from template (returns space-separated list or "*" for all)
+templates_get_allowed_tools() {
+    local name="$1"
+
+    local template
+    template=$(templates_get "$name")
+    if [[ -z "$template" ]]; then
+        echo "*"
+        return
+    fi
+
+    local allowed
+    allowed=$(echo "$template" | jq -r '.allowed_tools // ["*"] | .[]' | tr '\n' ' ')
+    echo "${allowed:-*}"
+}
+
+# Get denied tools from template (returns space-separated list)
+templates_get_denied_tools() {
+    local name="$1"
+
+    local template
+    template=$(templates_get "$name")
+    if [[ -z "$template" ]]; then
+        return
+    fi
+
+    echo "$template" | jq -r '.denied_tools // [] | .[]' | tr '\n' ' '
+}
+
+# Get on_complete behavior from template
+templates_get_on_complete() {
+    local name="$1"
+    templates_get_field "$name" "on_complete" "signal"
+}
+
+# Build the full prompt including system prompt and prefix
+templates_build_prompt() {
+    local name="$1"
+    local user_prompt="$2"
+
+    local system_prompt prompt_prefix
+
+    system_prompt=$(templates_get_system_prompt "$name")
+    prompt_prefix=$(templates_get_prompt_prefix "$name")
+
+    local full_prompt=""
+
+    # Add system prompt if present
+    if [[ -n "$system_prompt" ]]; then
+        full_prompt+="$system_prompt\n\n---\n\n"
+    fi
+
+    # Add prompt prefix if present
+    if [[ -n "$prompt_prefix" ]]; then
+        full_prompt+="$prompt_prefix"
+    fi
+
+    # Add user prompt
+    full_prompt+="$user_prompt"
+
+    echo -e "$full_prompt"
+}
+
 # Create a new template
 templates_create() {
     local name="$1"
@@ -159,7 +228,11 @@ templates_create() {
             sandbox: $sandbox,
             claude_args: [],
             env: {},
-            prompt_prefix: ""
+            allowed_tools: ["*"],
+            denied_tools: [],
+            system_prompt: "",
+            prompt_prefix: "",
+            on_complete: "signal"
         }' > "$template_file"
 
     success "Created template: $name"

@@ -420,7 +420,7 @@ EOF
 #-------------------------------------------------------------------------------
 
 cmd_status() {
-    local loop_id="${1:-}"
+    local loop_id=""
     local watch=false
     local json_output=false
 

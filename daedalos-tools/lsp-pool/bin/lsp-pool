@@ -66,6 +66,75 @@ cmd_list() {
     python3 -m lsppool.servers list "$@"
 }
 
+cmd_logs() {
+    if [[ $# -lt 1 ]]; then
+        echo "Usage: lsp-pool logs <language>:<project>"
+        exit 1
+    fi
+    local key="$1"
+    python3 -c "
+import asyncio
+import json
+from pathlib import Path
+from lsppool.config import SOCKET_PATH
+
+async def get_logs():
+    try:
+        reader, writer = await asyncio.open_unix_connection(str(SOCKET_PATH))
+        request = {'type': 'logs', 'key': '$key'}
+        writer.write(json.dumps(request).encode())
+        await writer.drain()
+        data = await reader.read(65536)
+        response = json.loads(data.decode())
+        writer.close()
+        await writer.wait_closed()
+
+        if response.get('success'):
+            for line in response.get('logs', []):
+                print(line)
+        else:
+            print(f\"Error: {response.get('error', 'Unknown')}\")
+    except Exception as e:
+        print(f'Could not connect to daemon: {e}')
+
+asyncio.run(get_logs())
+"
+}
+
+cmd_restart() {
+    if [[ $# -lt 1 ]]; then
+        echo "Usage: lsp-pool restart <language>:<project>"
+        exit 1
+    fi
+    local key="$1"
+    python3 -c "
+import asyncio
+import json
+from pathlib import Path
+from lsppool.config import SOCKET_PATH
+
+async def restart():
+    try:
+        reader, writer = await asyncio.open_unix_connection(str(SOCKET_PATH))
+        request = {'type': 'restart', 'key': '$key'}
+        writer.write(json.dumps(request).encode())
+        await writer.drain()
+        data = await reader.read(65536)
+        response = json.loads(data.decode())
+        writer.close()
+        await writer.wait_closed()
+
+        if response.get('success'):
+            print(f'Server restarted: $key')
+        else:
+            print(f\"Error: {response.get('error', 'Failed to restart')}\")
+    except Exception as e:
+        print(f'Could not connect to daemon: {e}')
+
+asyncio.run(restart())
+"
+}
+
 cmd_predict() {
     python3 -c "
 from lsppool.predictor import Predictor
@@ -77,6 +146,49 @@ for pred in preds:
 "
 }
 
+cmd_languages() {
+    python3 -c "
+from lsppool.config import get_config
+config = get_config()
+servers = config.servers
+print('Available language servers:')
+print()
+for lang, info in sorted(servers.items()):
+    cmd = info.get('command', ['unknown'])[0]
+    exts = ', '.join(info.get('extensions', []))
+    mem = info.get('memory_estimate_mb', 300)
+    print(f'  {lang:12} {cmd:30} {mem:>4}MB  {exts}')
+"
+}
+
+cmd_detect() {
+    if [[ $# -lt 1 ]]; then
+        echo "Usage: lsp-pool detect <file>"
+        exit 1
+    fi
+    python3 -c "
+from lsppool.config import get_config
+from pathlib import Path
+import sys
+
+file_path = Path('$1')
+config = get_config()
+
+ext = file_path.suffix.lower()
+name = file_path.name
+
+# Check each language server
+for lang, info in config.servers.items():
+    extensions = info.get('extensions', [])
+    if ext in extensions or name in extensions:
+        print(lang)
+        sys.exit(0)
+
+print('unknown')
+sys.exit(1)
+"
+}
+
 cmd_help() {
     cat << 'EOF'
 lsp-pool - Pre-warmed Language Server Pool
@@ -84,25 +196,39 @@ lsp-pool - Pre-warmed Language Server Pool
 USAGE:
   lsp-pool <command> [args]
 
-COMMANDS:
+DAEMON COMMANDS:
   start [--foreground]       Start the pool daemon
   stop                       Stop the daemon
   status [--json]            Show daemon status
 
+SERVER MANAGEMENT:
   warm <language> [path]     Pre-warm a server
   cool <language>            Stop servers for a language
   list [--json]              List running servers
+  logs <lang:project>        Show server stderr logs
+  restart <lang:project>     Restart a server
+  languages                  List supported languages
 
+QUERIES:
   query <cmd> <file> [opts]  Send LSP query
     Commands: hover, definition, references, completion, diagnostics
     Options: --line N, --col N
+  detect <file>              Detect language for file
 
+INTELLIGENCE:
   predict                    Show predicted servers to warm
+
+SUPPORTED LANGUAGES:
+  typescript, python, rust, go, c, cpp, java, kotlin, swift,
+  lua, ruby, elixir, zig, ocaml, haskell, bash, yaml, json,
+  html, css, dockerfile, nix
 
 EXAMPLES:
   lsp-pool start --foreground
   lsp-pool warm typescript /path/to/project
   lsp-pool query hover src/main.ts --line 42 --col 10
+  lsp-pool languages
+  lsp-pool detect src/main.py   # prints: python
   lsp-pool status
 
 PART OF DAEDALOS
@@ -119,7 +245,11 @@ main() {
         cool)       shift; cmd_cool "$@" ;;
         query)      shift; cmd_query "$@" ;;
         list)       shift; cmd_list "$@" ;;
+        logs)       shift; cmd_logs "$@" ;;
+        restart)    shift; cmd_restart "$@" ;;
         predict)    shift; cmd_predict "$@" ;;
+        languages)  shift; cmd_languages "$@" ;;
+        detect)     shift; cmd_detect "$@" ;;
         version)    echo "lsp-pool $LSPPOOL_VERSION" ;;
         help|--help|-h) cmd_help ;;
         *)          echo "Unknown command: $1"; cmd_help; exit 1 ;;

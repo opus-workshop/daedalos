@@ -21,19 +21,34 @@ class ServerProcess:
     info: ServerInfo
     process: Optional[asyncio.subprocess.Process] = None
     pid: int = 0
-    status: str = "stopped"  # stopped, starting, running, error
+    status: str = "stopped"  # stopped, starting, running, error, unhealthy
     started_at: float = 0
     tools: List[dict] = field(default_factory=list)
     resources: List[dict] = field(default_factory=list)
+    prompts: List[dict] = field(default_factory=list)
     request_id: int = 0
+    last_health_check: float = 0
+    health_failures: int = 0
+    restart_count: int = 0
+    stderr_log: List[str] = field(default_factory=list)
 
     def next_request_id(self) -> int:
         self.request_id += 1
         return self.request_id
 
+    def add_log(self, line: str):
+        """Add a log line, keeping last 100 lines."""
+        self.stderr_log.append(line)
+        if len(self.stderr_log) > 100:
+            self.stderr_log = self.stderr_log[-100:]
+
 
 class MCPHubDaemon:
     """Central hub daemon for MCP servers."""
+
+    HEALTH_CHECK_INTERVAL = 30  # seconds
+    MAX_HEALTH_FAILURES = 3
+    MAX_RESTART_ATTEMPTS = 3
 
     def __init__(self, config: Optional[Config] = None, socket_path: Optional[Path] = None):
         self.config = config or get_config()
@@ -43,6 +58,8 @@ class MCPHubDaemon:
         self._server: Optional[asyncio.Server] = None
         self._running = False
         self._pid_file = DATA_DIR / "daemon.pid"
+        self._health_task: Optional[asyncio.Task] = None
+        self._stderr_tasks: Dict[str, asyncio.Task] = {}
 
     async def start(self):
         """Start the hub daemon."""
@@ -74,6 +91,9 @@ class MCPHubDaemon:
         if self.socket_path.exists():
             self.socket_path.unlink()
 
+        # Start health check loop
+        self._health_task = asyncio.create_task(self._health_check_loop())
+
         # Start listening
         print(f"MCP Hub daemon starting on {self.socket_path}")
         self._server = await asyncio.start_unix_server(
@@ -88,6 +108,18 @@ class MCPHubDaemon:
         """Stop the daemon and all managed servers."""
         print("Stopping MCP Hub daemon...")
         self._running = False
+
+        # Cancel health check
+        if self._health_task:
+            self._health_task.cancel()
+            try:
+                await self._health_task
+            except asyncio.CancelledError:
+                pass
+
+        # Cancel stderr collectors
+        for task in self._stderr_tasks.values():
+            task.cancel()
 
         # Stop all servers
         for name in list(self.servers.keys()):
@@ -105,6 +137,93 @@ class MCPHubDaemon:
             self._pid_file.unlink()
 
         print("Daemon stopped.")
+
+    async def _health_check_loop(self):
+        """Periodically check server health."""
+        while self._running:
+            try:
+                await asyncio.sleep(self.HEALTH_CHECK_INTERVAL)
+                await self._check_all_servers()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"Health check error: {e}", file=sys.stderr)
+
+    async def _check_all_servers(self):
+        """Check health of all running servers."""
+        for name, server in list(self.servers.items()):
+            if server.status not in ("running", "unhealthy"):
+                continue
+
+            healthy = await self._health_check(server)
+            server.last_health_check = time.time()
+
+            if healthy:
+                server.health_failures = 0
+                if server.status == "unhealthy":
+                    server.status = "running"
+                    print(f"Server {name} recovered")
+            else:
+                server.health_failures += 1
+                if server.health_failures >= self.MAX_HEALTH_FAILURES:
+                    server.status = "unhealthy"
+                    print(f"Server {name} unhealthy ({server.health_failures} failures)")
+
+                    # Attempt restart if under limit
+                    if server.restart_count < self.MAX_RESTART_ATTEMPTS:
+                        print(f"Attempting restart of {name}...")
+                        await self._restart_server(name)
+
+    async def _health_check(self, server: ServerProcess) -> bool:
+        """Check if a server is healthy by sending a ping."""
+        if not server.process or server.process.returncode is not None:
+            return False
+
+        try:
+            # Send a simple tools/list as health check
+            request = {
+                "jsonrpc": "2.0",
+                "id": server.next_request_id(),
+                "method": "tools/list"
+            }
+            response = await self._send_mcp_request(server, request, timeout=5.0)
+            return response is not None and "error" not in response
+        except Exception:
+            return False
+
+    async def _restart_server(self, name: str):
+        """Restart a server."""
+        if name not in self.servers:
+            return False
+
+        server = self.servers[name]
+        info = server.info
+        restart_count = server.restart_count + 1
+
+        await self._stop_server(name)
+        success = await self._start_server(info)
+
+        if success and name in self.servers:
+            self.servers[name].restart_count = restart_count
+            print(f"Server {name} restarted (attempt {restart_count})")
+
+        return success
+
+    async def _collect_stderr(self, server: ServerProcess):
+        """Collect stderr output from server process."""
+        if not server.process or not server.process.stderr:
+            return
+
+        try:
+            while True:
+                line = await server.process.stderr.readline()
+                if not line:
+                    break
+                server.add_log(line.decode().rstrip())
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
 
     async def _start_server(self, info: ServerInfo) -> bool:
         """Start an MCP server."""
@@ -141,6 +260,11 @@ class MCPHubDaemon:
             )
             self.servers[info.name] = server
 
+            # Start stderr collector
+            self._stderr_tasks[info.name] = asyncio.create_task(
+                self._collect_stderr(server)
+            )
+
             # Initialize MCP connection
             success = await self._initialize_server(server)
             if success:
@@ -160,6 +284,11 @@ class MCPHubDaemon:
         if name not in self.servers:
             return
 
+        # Cancel stderr collector
+        if name in self._stderr_tasks:
+            self._stderr_tasks[name].cancel()
+            del self._stderr_tasks[name]
+
         server = self.servers[name]
         if server.process:
             try:
@@ -173,6 +302,26 @@ class MCPHubDaemon:
 
         del self.servers[name]
         print(f"Server stopped: {name}")
+
+    async def warm_servers(self, server_names: List[str]) -> Dict[str, bool]:
+        """Pre-start specified servers."""
+        results = {}
+        for name in server_names:
+            info = self.registry.get(name)
+            if not info:
+                results[name] = False
+                continue
+            if name in self.servers and self.servers[name].status == "running":
+                results[name] = True
+                continue
+            results[name] = await self._start_server(info)
+        return results
+
+    def get_server_logs(self, name: str, lines: int = 50) -> List[str]:
+        """Get recent log lines for a server."""
+        if name not in self.servers:
+            return []
+        return self.servers[name].stderr_log[-lines:]
 
     async def _initialize_server(self, server: ServerProcess) -> bool:
         """Initialize MCP connection with server."""
@@ -329,6 +478,28 @@ class MCPHubDaemon:
             await self._stop_server(server_name)
             return {"success": True}
 
+        elif req_type == "restart_server":
+            server_name = request.get("server")
+            success = await self._restart_server(server_name)
+            return {"success": success}
+
+        elif req_type == "warm":
+            server_names = request.get("servers", [])
+            results = await self.warm_servers(server_names)
+            return {"success": True, "results": results}
+
+        elif req_type == "logs":
+            server_name = request.get("server")
+            lines = request.get("lines", 50)
+            logs = self.get_server_logs(server_name, lines)
+            return {"success": True, "logs": logs}
+
+        elif req_type == "reload":
+            # Reload config and registry
+            self.config = get_config()
+            self.registry = ServerRegistry()
+            return {"success": True, "message": "Configuration reloaded"}
+
         elif req_type == "stop":
             asyncio.create_task(self.stop())
             return {"success": True, "message": "Daemon stopping"}
@@ -390,6 +561,10 @@ class MCPHubDaemon:
                     "uptime": int(time.time() - s.started_at) if s.started_at else 0,
                     "tools": len(s.tools),
                     "resources": len(s.resources),
+                    "prompts": len(s.prompts),
+                    "health_failures": s.health_failures,
+                    "restart_count": s.restart_count,
+                    "last_health_check": int(time.time() - s.last_health_check) if s.last_health_check else None,
                 }
                 for s in self.servers.values()
             ],
@@ -528,7 +703,10 @@ def main():
                     if servers:
                         click.echo("Running servers:")
                         for s in servers:
-                            click.echo(f"  {s['name']:15} {s['status']:10} tools:{s['tools']}")
+                            health = ""
+                            if s.get('health_failures', 0) > 0:
+                                health = f" (health: {s['health_failures']} failures)"
+                            click.echo(f"  {s['name']:15} {s['status']:10} tools:{s['tools']}{health}")
                     else:
                         click.echo("No servers running.")
 
@@ -543,6 +721,148 @@ def main():
                     click.echo(f"Could not connect to daemon: {e}")
 
         asyncio.run(get_status())
+
+    @cli.command()
+    @click.argument("servers", nargs=-1, required=True)
+    def warm(servers):
+        """Pre-start servers for fast response."""
+        socket_path = SOCKET_PATH
+
+        if not socket_path.exists():
+            click.echo("Daemon is not running. Start it first with: mcp-hub start")
+            sys.exit(1)
+
+        async def do_warm():
+            try:
+                reader, writer = await asyncio.open_unix_connection(str(socket_path))
+                request = {"type": "warm", "servers": list(servers)}
+                writer.write(json.dumps(request).encode())
+                await writer.drain()
+
+                data = await reader.read(65536)
+                response = json.loads(data.decode())
+
+                writer.close()
+                await writer.wait_closed()
+
+                results = response.get("results", {})
+                for name, success in results.items():
+                    status = "started" if success else "failed"
+                    click.echo(f"  {name}: {status}")
+
+            except Exception as e:
+                click.echo(f"Error: {e}", err=True)
+                sys.exit(1)
+
+        asyncio.run(do_warm())
+
+    @cli.command()
+    @click.argument("server")
+    @click.option("--lines", "-n", default=50, help="Number of lines to show")
+    @click.option("--follow", "-f", is_flag=True, help="Follow log output")
+    def logs(server, lines, follow):
+        """View server logs."""
+        socket_path = SOCKET_PATH
+
+        if not socket_path.exists():
+            click.echo("Daemon is not running.")
+            sys.exit(1)
+
+        async def get_logs():
+            try:
+                reader, writer = await asyncio.open_unix_connection(str(socket_path))
+                request = {"type": "logs", "server": server, "lines": lines}
+                writer.write(json.dumps(request).encode())
+                await writer.drain()
+
+                data = await reader.read(65536)
+                response = json.loads(data.decode())
+
+                writer.close()
+                await writer.wait_closed()
+
+                logs = response.get("logs", [])
+                if not logs:
+                    click.echo(f"No logs for {server}")
+                else:
+                    for line in logs:
+                        click.echo(line)
+
+            except Exception as e:
+                click.echo(f"Error: {e}", err=True)
+                sys.exit(1)
+
+        asyncio.run(get_logs())
+
+        if follow:
+            click.echo("(follow mode not yet implemented)")
+
+    @cli.command()
+    @click.argument("server")
+    def restart(server):
+        """Restart a server."""
+        socket_path = SOCKET_PATH
+
+        if not socket_path.exists():
+            click.echo("Daemon is not running.")
+            sys.exit(1)
+
+        async def do_restart():
+            try:
+                reader, writer = await asyncio.open_unix_connection(str(socket_path))
+                request = {"type": "restart_server", "server": server}
+                writer.write(json.dumps(request).encode())
+                await writer.drain()
+
+                data = await reader.read(65536)
+                response = json.loads(data.decode())
+
+                writer.close()
+                await writer.wait_closed()
+
+                if response.get("success"):
+                    click.echo(f"Restarted: {server}")
+                else:
+                    click.echo(f"Failed to restart: {server}", err=True)
+
+            except Exception as e:
+                click.echo(f"Error: {e}", err=True)
+                sys.exit(1)
+
+        asyncio.run(do_restart())
+
+    @cli.command()
+    def reload():
+        """Reload configuration without restarting."""
+        socket_path = SOCKET_PATH
+
+        if not socket_path.exists():
+            click.echo("Daemon is not running.")
+            sys.exit(1)
+
+        async def do_reload():
+            try:
+                reader, writer = await asyncio.open_unix_connection(str(socket_path))
+                request = {"type": "reload"}
+                writer.write(json.dumps(request).encode())
+                await writer.drain()
+
+                data = await reader.read(65536)
+                response = json.loads(data.decode())
+
+                writer.close()
+                await writer.wait_closed()
+
+                if response.get("success"):
+                    click.echo("Configuration reloaded")
+                else:
+                    click.echo(f"Failed: {response.get('error')}", err=True)
+
+            except Exception as e:
+                click.echo(f"Error: {e}", err=True)
+                sys.exit(1)
+
+        asyncio.run(do_reload())
 
     cli()
 

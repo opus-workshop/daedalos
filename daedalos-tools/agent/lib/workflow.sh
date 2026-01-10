@@ -12,6 +12,128 @@ WORKFLOWS_DIR="${CONFIG_DIR}/workflows"
 WORKFLOW_STATE_DIR="${DATA_DIR}/workflow_state"
 mkdir -p "$WORKFLOWS_DIR" "$WORKFLOW_STATE_DIR"
 
+# Default workflow settings
+DEFAULT_STAGE_TIMEOUT=600      # 10 minutes per stage
+DEFAULT_MAX_RETRIES=2          # Max retries per stage
+DEFAULT_RETRY_DELAY=30         # Seconds between retries
+DEFAULT_PARALLEL_TIMEOUT=900   # 15 minutes for parallel stages
+
+# ============================================================================
+# ERROR RECOVERY STRATEGIES
+# ============================================================================
+
+# Retry a failed stage
+# Usage: workflow_retry_stage <instance_id> <stage_name> <attempt>
+workflow_retry_stage() {
+    local instance_id="$1"
+    local stage_name="$2"
+    local attempt="${3:-1}"
+    local max_retries="${4:-$DEFAULT_MAX_RETRIES}"
+
+    if [[ $attempt -gt $max_retries ]]; then
+        warn "Stage $stage_name failed after $max_retries retries"
+        return 1
+    fi
+
+    info "Retrying stage $stage_name (attempt $attempt of $max_retries)..."
+
+    # Clear previous completion signal
+    local agent_name="${instance_id}-${stage_name}"
+    signal_clear "$agent_name"
+
+    # Kill the previous agent if still running
+    if agents_exists "$agent_name"; then
+        kill_agent "$agent_name" true
+        sleep 2
+    fi
+
+    # Wait before retry
+    local delay=$((DEFAULT_RETRY_DELAY * attempt))
+    info "Waiting ${delay}s before retry..."
+    sleep "$delay"
+
+    return 0
+}
+
+# Handle stage failure with configured strategy
+# Usage: workflow_handle_failure <instance_id> <stage_name> <strategy>
+# Strategies: retry, skip, abort, fallback
+workflow_handle_failure() {
+    local instance_id="$1"
+    local stage_name="$2"
+    local strategy="${3:-retry}"
+    local state_file="${WORKFLOW_STATE_DIR}/${instance_id}.json"
+
+    case "$strategy" in
+        retry)
+            # Return 0 to indicate retry should be attempted
+            return 0
+            ;;
+        skip)
+            warn "Skipping failed stage: $stage_name"
+            local tmp="${state_file}.tmp.$$"
+            jq --arg stage "$stage_name" \
+               '.stage_outputs[$stage] = "(skipped due to failure)"' \
+               "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+            return 2  # Indicate skip
+            ;;
+        abort)
+            warn "Aborting workflow due to stage failure: $stage_name"
+            local tmp="${state_file}.tmp.$$"
+            jq '.status = "failed"' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+            return 1  # Indicate abort
+            ;;
+        fallback)
+            # Use a fallback value and continue
+            info "Using fallback for failed stage: $stage_name"
+            local tmp="${state_file}.tmp.$$"
+            jq --arg stage "$stage_name" \
+               '.stage_outputs[$stage] = "(fallback: stage failed)"' \
+               "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+            return 2  # Indicate continue with fallback
+            ;;
+        *)
+            warn "Unknown failure strategy: $strategy"
+            return 1
+            ;;
+    esac
+}
+
+# Check if a stage should be retried based on error type
+# Usage: should_retry <agent_name>
+should_retry() {
+    local agent_name="$1"
+
+    local signal_data
+    signal_data=$(signal_get "$agent_name")
+
+    if [[ "$signal_data" == "null" ]]; then
+        # No signal - probably timeout, worth retrying
+        return 0
+    fi
+
+    local status
+    status=$(echo "$signal_data" | jq -r '.status // "unknown"')
+
+    case "$status" in
+        failure)
+            # Check if it's a transient error
+            local data
+            data=$(echo "$signal_data" | jq -r '.data // ""')
+            if echo "$data" | grep -qiE '(timeout|network|temporary|rate.limit)'; then
+                return 0  # Transient, retry
+            fi
+            return 1  # Permanent failure
+            ;;
+        blocked)
+            return 1  # Don't retry blocked stages
+            ;;
+        *)
+            return 0  # Unknown, try again
+            ;;
+    esac
+}
+
 # ============================================================================
 # BUILT-IN WORKFLOWS
 # ============================================================================
@@ -88,6 +210,64 @@ stages:
   - name: verify
     template: reviewer
     prompt: "Verify the fix:\n{fix_summary}\n\nEnsure the bug is properly resolved and no regressions introduced."
+
+parallel: false
+EOF
+    fi
+
+    # TDD workflow - test-first development
+    if [[ ! -f "${WORKFLOWS_DIR}/tdd.yaml" ]]; then
+        cat > "${WORKFLOWS_DIR}/tdd.yaml" << 'EOF'
+name: tdd
+description: Test-driven development - write tests first, then implement
+stages:
+  - name: plan
+    template: planner
+    prompt: "Design the test cases needed for: {task}\n\nOutput:\n- What behavior needs testing\n- Edge cases to cover\n- Test file locations\n- Expected test structure"
+    pass_to_next: "test_plan"
+
+  - name: test_first
+    template: tester
+    prompt: "Based on this test plan:\n{test_plan}\n\nWrite the tests FIRST (before implementation). Tests should:\n- Cover the main functionality\n- Include edge cases\n- Be runnable (they will fail - that's expected!)\n\nTask: {task}"
+    pass_to_next: "tests_written"
+
+  - name: implement
+    template: implementer
+    prompt: "Tests have been written:\n{tests_written}\n\nImplement the minimal code to make ALL tests pass.\n\nTask: {task}\n\nRun the tests after implementation to verify they pass."
+    pass_to_next: "implementation_summary"
+
+  - name: verify
+    template: tester
+    prompt: "Implementation is complete:\n{implementation_summary}\n\nRun all tests and verify:\n- All tests pass\n- Coverage is adequate\n- No regressions in existing tests\n\nReport any issues found."
+
+parallel: false
+EOF
+    fi
+
+    # Refactor workflow - safe code transformation
+    if [[ ! -f "${WORKFLOWS_DIR}/refactor.yaml" ]]; then
+        cat > "${WORKFLOWS_DIR}/refactor.yaml" << 'EOF'
+name: refactor
+description: Safe refactoring with test verification
+stages:
+  - name: analyze
+    template: explorer
+    prompt: "Analyze the code to be refactored: {task}\n\nIdentify:\n- Current structure and patterns\n- Dependencies and call sites\n- Existing test coverage\n- Refactoring risks"
+    pass_to_next: "analysis"
+
+  - name: test_baseline
+    template: tester
+    prompt: "Based on this analysis:\n{analysis}\n\nEnsure we have test coverage BEFORE refactoring:\n- Run existing tests, note results\n- Add tests for any uncovered code paths\n- Create a baseline we can verify against\n\nTask: {task}"
+    pass_to_next: "test_baseline"
+
+  - name: refactor
+    template: implementer
+    prompt: "Test baseline established:\n{test_baseline}\n\nPerform the refactoring: {task}\n\nMake incremental changes, running tests after each step.\nIf tests fail, fix before continuing."
+    pass_to_next: "refactor_summary"
+
+  - name: verify
+    template: tester
+    prompt: "Refactoring complete:\n{refactor_summary}\n\nVerify:\n- All original tests still pass\n- No regressions introduced\n- Code quality improved as intended\n- New tests added for refactored code if needed"
 
 parallel: false
 EOF
@@ -304,48 +484,92 @@ workflow_execute_sequential() {
         # Spawn agent for this stage
         local agent_name="${instance_id}-${stage_name}"
 
-        cmd_spawn -n "$agent_name" -p "$project" -t "${template:-implementer}" --no-focus --prompt "$prompt"
+        # Create output file path for this stage
+        local output_file="${WORKFLOW_STATE_DIR}/${instance_id}/${stage_name}_output.txt"
+        mkdir -p "${WORKFLOW_STATE_DIR}/${instance_id}"
+
+        # Add completion instructions to prompt
+        local completion_prompt
+        completion_prompt=$(cat << EOF
+$prompt
+
+IMPORTANT: When you complete this task:
+1. Write your findings/output to: $output_file
+2. Run: agent signal complete --data "$output_file"
+   This signals the workflow to proceed to the next stage.
+EOF
+)
+
+        cmd_spawn -n "$agent_name" -p "$project" -t "${template:-implementer}" --no-focus --prompt "$completion_prompt"
 
         # Record agent in state
         tmp="${state_file}.tmp.$$"
         jq --arg name "$agent_name" --arg stage "$stage_name" '.agents[$stage] = $name' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 
-        # Wait for agent to complete (check status periodically)
-        info "  Waiting for $stage_name to complete..."
+        # Wait for agent to signal completion (or timeout)
+        info "  Waiting for $stage_name to signal completion..."
 
         local timeout=600  # 10 minute timeout per stage
-        local elapsed=0
 
-        while [[ $elapsed -lt $timeout ]]; do
-            sleep 10
-            elapsed=$((elapsed + 10))
+        if signal_wait "$agent_name" "$timeout" 10; then
+            # Agent signaled completion - get the data
+            local signal_data
+            signal_data=$(signal_get "$agent_name")
 
-            # Check agent status
-            local agent_status
-            agent_status=$(agents_get "$agent_name" | jq -r '.status // "unknown"')
+            local signal_status
+            signal_status=$(echo "$signal_data" | jq -r '.status // "unknown"')
 
-            if [[ "$agent_status" == "idle" || "$agent_status" == "waiting" ]]; then
-                break
-            fi
-
-            if [[ "$agent_status" == "error" || "$agent_status" == "dead" ]]; then
+            if [[ "$signal_status" == "failure" ]]; then
                 warn "  Stage $stage_name failed"
-                break
+                tmp="${state_file}.tmp.$$"
+                jq '.status = "failed"' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+                return 1
             fi
-        done
 
-        # Capture output if pass_to_next is specified
-        if [[ -n "$pass_to_next" ]]; then
-            # For now, we'll use a placeholder - in production this would capture actual output
-            local stage_output="Stage $stage_name completed successfully"
+            # Capture output if pass_to_next is specified
+            if [[ -n "$pass_to_next" ]]; then
+                local stage_output
+                # Get data from signal (which contains the file contents)
+                stage_output=$(echo "$signal_data" | jq -r '.data // ""')
 
-            tmp="${state_file}.tmp.$$"
-            jq --arg key "$pass_to_next" --arg value "$stage_output" '.stage_outputs[$key] = $value' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+                # If no data in signal, try reading the output file directly
+                if [[ -z "$stage_output" ]] && [[ -f "$output_file" ]]; then
+                    stage_output=$(cat "$output_file")
+                fi
 
-            context=$(echo "$context" | jq --arg key "$pass_to_next" --arg value "$stage_output" '. + {($key): $value}')
+                # Fallback if still no output
+                if [[ -z "$stage_output" ]]; then
+                    stage_output="Stage $stage_name completed (no output captured)"
+                fi
+
+                # Store in state
+                tmp="${state_file}.tmp.$$"
+                jq --arg key "$pass_to_next" --arg value "$stage_output" '.stage_outputs[$key] = $value' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+
+                context=$(echo "$context" | jq --arg key "$pass_to_next" --arg value "$stage_output" '. + {($key): $value}')
+            fi
+
+            success "  Completed: $stage_name"
+        else
+            # Timeout - check if agent is still working or died
+            local agent_status
+            agent_status=$(get_agent_status "$agent_name")
+
+            if [[ "$agent_status" == "dead" || "$agent_status" == "error" ]]; then
+                warn "  Stage $stage_name failed (agent died)"
+            else
+                warn "  Stage $stage_name timed out (may still be working)"
+            fi
+
+            # Continue anyway with placeholder if this stage has pass_to_next
+            if [[ -n "$pass_to_next" ]]; then
+                local fallback_output="Stage $stage_name timed out"
+                if [[ -f "$output_file" ]]; then
+                    fallback_output=$(cat "$output_file")
+                fi
+                context=$(echo "$context" | jq --arg key "$pass_to_next" --arg value "$fallback_output" '. + {($key): $value}')
+            fi
         fi
-
-        success "  Completed: $stage_name"
     done
 
     # Mark workflow complete
@@ -376,7 +600,11 @@ workflow_execute_parallel() {
 
     info "Spawning ${#stage_names[@]} agents in parallel"
 
+    # Create output directory
+    mkdir -p "${WORKFLOW_STATE_DIR}/${instance_id}"
+
     # Spawn all agents
+    local -a agent_names=()
     for stage_name in "${stage_names[@]}"; do
         local template prompt
         template=$(workflow_get_stage_field "$workflow_file" "$stage_name" "template")
@@ -384,16 +612,123 @@ workflow_execute_parallel() {
         prompt=$(echo "$prompt" | sed "s/{task}/$task/g")
 
         local agent_name="${instance_id}-${stage_name}"
+        agent_names+=("$agent_name")
 
-        cmd_spawn -n "$agent_name" -p "$project" -t "${template:-implementer}" --no-focus --prompt "$prompt"
+        # Create output file path for this stage
+        local output_file="${WORKFLOW_STATE_DIR}/${instance_id}/${stage_name}_output.txt"
+
+        # Add completion instructions to prompt
+        local completion_prompt
+        completion_prompt=$(cat << EOF
+$prompt
+
+IMPORTANT: When you complete this task:
+1. Write your findings/output to: $output_file
+2. Run: agent signal complete --data "$output_file"
+   This signals the workflow that your stage is complete.
+EOF
+)
+
+        cmd_spawn -n "$agent_name" -p "$project" -t "${template:-implementer}" --no-focus --prompt "$completion_prompt"
 
         # Record agent in state
         local tmp="${state_file}.tmp.$$"
         jq --arg name "$agent_name" --arg stage "$stage_name" '.agents[$stage] = $name' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
     done
 
-    success "All stages spawned in parallel"
-    info "Use 'agent workflow status $instance_id' to monitor progress"
+    success "All ${#agent_names[@]} stages spawned in parallel"
+    info "Waiting for all stages to complete..."
+
+    # Wait for all agents to complete
+    local timeout=900  # 15 minute timeout for parallel stages
+    if signal_wait_all "$timeout" "${agent_names[@]}"; then
+        info "All stages completed, aggregating results..."
+
+        # Aggregate results
+        local aggregated_results="${WORKFLOW_STATE_DIR}/${instance_id}/aggregated.txt"
+        echo "# Workflow: $workflow_name" > "$aggregated_results"
+        echo "# Task: $task" >> "$aggregated_results"
+        echo "# Completed: $(iso_timestamp)" >> "$aggregated_results"
+        echo "" >> "$aggregated_results"
+
+        for stage_name in "${stage_names[@]}"; do
+            local agent_name="${instance_id}-${stage_name}"
+            local output_file="${WORKFLOW_STATE_DIR}/${instance_id}/${stage_name}_output.txt"
+
+            echo "## Stage: $stage_name" >> "$aggregated_results"
+            echo "" >> "$aggregated_results"
+
+            # Get output from signal or file
+            local signal_data stage_output
+            signal_data=$(signal_get "$agent_name")
+            stage_output=$(echo "$signal_data" | jq -r '.data // ""')
+
+            if [[ -z "$stage_output" ]] && [[ -f "$output_file" ]]; then
+                stage_output=$(cat "$output_file")
+            fi
+
+            if [[ -n "$stage_output" ]]; then
+                echo "$stage_output" >> "$aggregated_results"
+            else
+                echo "(No output captured)" >> "$aggregated_results"
+            fi
+
+            echo "" >> "$aggregated_results"
+            echo "---" >> "$aggregated_results"
+            echo "" >> "$aggregated_results"
+
+            # Store in state
+            local tmp="${state_file}.tmp.$$"
+            jq --arg stage "$stage_name" --arg output "$stage_output" \
+               '.stage_outputs[$stage] = $output' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+        done
+
+        # Mark workflow complete
+        local tmp="${state_file}.tmp.$$"
+        jq '.status = "completed" | .completed = "'"$(iso_timestamp)"'"' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+
+        success "Workflow completed: $workflow_name"
+        info "Results aggregated at: $aggregated_results"
+    else
+        warn "Timeout waiting for parallel stages"
+
+        # Mark partial completion
+        local tmp="${state_file}.tmp.$$"
+        jq '.status = "partial" | .completed = "'"$(iso_timestamp)"'"' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+
+        # Still aggregate whatever results we have
+        info "Aggregating partial results..."
+        local aggregated_results="${WORKFLOW_STATE_DIR}/${instance_id}/aggregated_partial.txt"
+        echo "# Workflow: $workflow_name (PARTIAL)" > "$aggregated_results"
+        echo "# Task: $task" >> "$aggregated_results"
+        echo "" >> "$aggregated_results"
+
+        for stage_name in "${stage_names[@]}"; do
+            local agent_name="${instance_id}-${stage_name}"
+            local output_file="${WORKFLOW_STATE_DIR}/${instance_id}/${stage_name}_output.txt"
+
+            echo "## Stage: $stage_name" >> "$aggregated_results"
+
+            if signal_check "$agent_name"; then
+                echo "Status: COMPLETED" >> "$aggregated_results"
+                local signal_data stage_output
+                signal_data=$(signal_get "$agent_name")
+                stage_output=$(echo "$signal_data" | jq -r '.data // ""')
+                if [[ -z "$stage_output" ]] && [[ -f "$output_file" ]]; then
+                    stage_output=$(cat "$output_file")
+                fi
+                echo "$stage_output" >> "$aggregated_results"
+            else
+                echo "Status: INCOMPLETE (timed out or still running)" >> "$aggregated_results"
+            fi
+
+            echo "" >> "$aggregated_results"
+            echo "---" >> "$aggregated_results"
+            echo "" >> "$aggregated_results"
+        done
+
+        info "Partial results at: $aggregated_results"
+    fi
 }
 
 # Get a field from a stage in workflow YAML

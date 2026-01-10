@@ -229,7 +229,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Name for the agent"},
-                "template": {"type": "string", "description": "Template: explorer, implementer, reviewer, debugger, watcher"},
+                "template": {"type": "string", "description": "Template: explorer, implementer, reviewer, debugger, planner, tester, watcher"},
                 "project": {"type": "string", "description": "Project directory"},
                 "no_focus": {"type": "boolean", "description": "Don't focus the new agent", "default": False},
             },
@@ -354,6 +354,510 @@ TOOLS = [
                 "template": {"type": "string", "description": "Preferred template for helper agent"},
             },
             "required": ["task"],
+        },
+    ),
+
+    # Agent signals - coordination primitives
+    Tool(
+        name="agent_signal_complete",
+        description="Signal that this agent's work is complete (for workflow coordination)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "description": "Completion status: success, failure, blocked", "default": "success"},
+                "data_file": {"type": "string", "description": "Path to file containing output data"},
+            },
+        },
+    ),
+    Tool(
+        name="agent_signal_wait",
+        description="Wait for another agent to signal completion",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "agent": {"type": "string", "description": "Agent name to wait for"},
+                "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 600},
+            },
+            "required": ["agent"],
+        },
+    ),
+    Tool(
+        name="agent_signal_check",
+        description="Check if an agent has signaled completion (non-blocking)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "agent": {"type": "string", "description": "Agent name to check"},
+            },
+            "required": ["agent"],
+        },
+    ),
+
+    # Resource locks
+    Tool(
+        name="agent_lock_acquire",
+        description="Acquire a lock on a shared resource",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Lock name (resource identifier)"},
+                "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 30},
+            },
+            "required": ["name"],
+        },
+    ),
+    Tool(
+        name="agent_lock_release",
+        description="Release a lock on a shared resource",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Lock name to release"},
+            },
+            "required": ["name"],
+        },
+    ),
+    Tool(
+        name="agent_lock_list",
+        description="List all active locks",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+
+    # Task claims
+    Tool(
+        name="agent_claim_create",
+        description="Claim a task to prevent others from working on it",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task identifier to claim"},
+                "description": {"type": "string", "description": "Description of the task"},
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
+        name="agent_claim_release",
+        description="Release a task claim when done",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task identifier to release"},
+                "status": {"type": "string", "description": "Final status: completed, failed, abandoned", "default": "completed"},
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
+        name="agent_claim_list",
+        description="List all active task claims",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+
+    # Workflow tools - multi-agent pipelines
+    Tool(
+        name="workflow_list",
+        description="List available workflows (feature, review, bugfix, tdd, refactor)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "json": {"type": "boolean", "description": "Return as JSON", "default": False},
+            },
+        },
+    ),
+    Tool(
+        name="workflow_start",
+        description="Start a multi-agent workflow pipeline. Workflows coordinate multiple agents to complete complex tasks.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workflow": {"type": "string", "description": "Workflow name: feature, review, bugfix, tdd, refactor"},
+                "task": {"type": "string", "description": "Task description for the workflow"},
+                "project": {"type": "string", "description": "Project directory (default: current)"},
+            },
+            "required": ["workflow", "task"],
+        },
+    ),
+    Tool(
+        name="workflow_status",
+        description="Check status of a workflow (or list all active workflows)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "instance_id": {"type": "string", "description": "Workflow instance ID (omit to list all)"},
+            },
+        },
+    ),
+    Tool(
+        name="workflow_stop",
+        description="Stop a running workflow and kill its agents",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "instance_id": {"type": "string", "description": "Workflow instance ID to stop"},
+                "force": {"type": "boolean", "description": "Force kill agents", "default": False},
+            },
+            "required": ["instance_id"],
+        },
+    ),
+
+    # MCP Hub tools
+    Tool(
+        name="mcp_hub_status",
+        description="Get status of the MCP hub daemon and running servers",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "json": {"type": "boolean", "description": "Return as JSON", "default": False},
+            },
+        },
+    ),
+    Tool(
+        name="mcp_hub_warm",
+        description="Pre-start MCP servers for fast response times",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "servers": {"type": "array", "items": {"type": "string"}, "description": "Server names to warm up"},
+            },
+            "required": ["servers"],
+        },
+    ),
+    Tool(
+        name="mcp_hub_list",
+        description="List available MCP servers in the registry",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Filter by category"},
+            },
+        },
+    ),
+    Tool(
+        name="mcp_hub_restart",
+        description="Restart a running MCP server",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Server name to restart"},
+            },
+            "required": ["server"],
+        },
+    ),
+    Tool(
+        name="mcp_hub_logs",
+        description="Get logs from an MCP server",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Server name"},
+                "lines": {"type": "integer", "description": "Number of lines", "default": 50},
+            },
+            "required": ["server"],
+        },
+    ),
+    Tool(
+        name="mcp_hub_call",
+        description="Call a tool through the MCP hub",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "tool": {"type": "string", "description": "Tool name to call"},
+                "arguments": {"type": "object", "description": "Tool arguments as JSON"},
+                "server": {"type": "string", "description": "Specific server to use (optional)"},
+            },
+            "required": ["tool"],
+        },
+    ),
+
+    # LSP Pool tools - pre-warmed language servers
+    Tool(
+        name="lsp_pool_status",
+        description="Get status of the LSP Pool daemon and running language servers",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "json": {"type": "boolean", "description": "Return as JSON", "default": False},
+            },
+        },
+    ),
+    Tool(
+        name="lsp_pool_warm",
+        description="Pre-warm a language server for faster code intelligence",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "language": {"type": "string", "description": "Language: typescript, python, rust, go, etc."},
+                "path": {"type": "string", "description": "Project path to initialize server with"},
+            },
+            "required": ["language"],
+        },
+    ),
+    Tool(
+        name="lsp_pool_cool",
+        description="Stop language servers for a language",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "language": {"type": "string", "description": "Language to stop servers for"},
+            },
+            "required": ["language"],
+        },
+    ),
+    Tool(
+        name="lsp_pool_list",
+        description="List all running language servers in the pool",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "json": {"type": "boolean", "description": "Return as JSON", "default": False},
+            },
+        },
+    ),
+    Tool(
+        name="lsp_pool_query",
+        description="Send an LSP query for code intelligence (hover, definition, references, completion)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Query type: hover, definition, references, completion, diagnostics"},
+                "file": {"type": "string", "description": "File to query"},
+                "line": {"type": "integer", "description": "Line number (1-based)"},
+                "col": {"type": "integer", "description": "Column number (1-based)"},
+            },
+            "required": ["command", "file"],
+        },
+    ),
+    Tool(
+        name="lsp_pool_languages",
+        description="List all supported languages and their server configurations",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="lsp_pool_logs",
+        description="Get stderr logs from a language server",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "description": "Server key in format language:project"},
+            },
+            "required": ["key"],
+        },
+    ),
+    Tool(
+        name="lsp_pool_restart",
+        description="Restart a language server",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "description": "Server key in format language:project"},
+            },
+            "required": ["key"],
+        },
+    ),
+
+    # Sandbox tools - ephemeral experiment environments
+    Tool(
+        name="sandbox_create",
+        description="Create a new ephemeral sandbox environment for safe experimentation. Changes don't affect the original until promoted.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name for the sandbox (auto-generated if not provided)"},
+                "from_path": {"type": "string", "description": "Source directory to sandbox (default: current dir)"},
+                "backend": {"type": "string", "description": "Copy strategy: btrfs, overlay, or rsync (auto-detected)"},
+            },
+        },
+    ),
+    Tool(
+        name="sandbox_list",
+        description="List all sandbox environments",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "json": {"type": "boolean", "description": "Return as JSON", "default": False},
+            },
+        },
+    ),
+    Tool(
+        name="sandbox_enter",
+        description="Enter a sandbox environment (changes directory to sandbox working copy)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Sandbox name"},
+                "command": {"type": "string", "description": "Command to run instead of shell"},
+            },
+            "required": ["name"],
+        },
+    ),
+    Tool(
+        name="sandbox_diff",
+        description="Show changes made in a sandbox compared to source",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Sandbox name"},
+                "files_only": {"type": "boolean", "description": "List changed files only", "default": False},
+            },
+            "required": ["name"],
+        },
+    ),
+    Tool(
+        name="sandbox_promote",
+        description="Apply sandbox changes to the original source directory",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Sandbox name"},
+                "dry_run": {"type": "boolean", "description": "Show what would be promoted without doing it", "default": False},
+                "backup": {"type": "boolean", "description": "Create backup of source first", "default": False},
+            },
+            "required": ["name"],
+        },
+    ),
+    Tool(
+        name="sandbox_discard",
+        description="Delete a sandbox and all its changes",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Sandbox name"},
+            },
+            "required": ["name"],
+        },
+    ),
+    Tool(
+        name="sandbox_info",
+        description="Show detailed information about a sandbox",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Sandbox name"},
+                "json": {"type": "boolean", "description": "Return as JSON", "default": False},
+            },
+            "required": ["name"],
+        },
+    ),
+    Tool(
+        name="sandbox_run",
+        description="Run a command in a sandbox without entering it",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Sandbox name"},
+                "command": {"type": "string", "description": "Command to run"},
+            },
+            "required": ["name", "command"],
+        },
+    ),
+
+    # Gates tools - supervision and approval checkpoints
+    Tool(
+        name="gates_check",
+        description="Check if an action is allowed through a supervision gate. Returns 'allowed' or 'denied' with reason.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "gate": {"type": "string", "description": "Gate name: file_delete, file_create, file_modify, git_commit, git_push, git_force_push, loop_start, agent_spawn, shell_command, sensitive_file"},
+                "context": {"type": "object", "description": "Additional context (e.g., {path: '/path/to/file'})"},
+                "source": {"type": "string", "description": "Calling tool/agent name", "default": "mcp"},
+            },
+            "required": ["gate"],
+        },
+    ),
+    Tool(
+        name="gates_level",
+        description="Get or set the supervision level (autonomous, supervised, collaborative, assisted, manual)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "level": {"type": "string", "description": "New level to set (omit to get current level)"},
+            },
+        },
+    ),
+    Tool(
+        name="gates_set",
+        description="Set the action for a specific gate (allow, notify, approve, deny)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "gate": {"type": "string", "description": "Gate name"},
+                "action": {"type": "string", "description": "Action: allow, notify, approve, deny"},
+            },
+            "required": ["gate", "action"],
+        },
+    ),
+    Tool(
+        name="gates_config",
+        description="Get the current supervision configuration",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "json": {"type": "boolean", "description": "Return as JSON", "default": True},
+            },
+        },
+    ),
+    Tool(
+        name="gates_history",
+        description="Get gate check history (audit trail)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "gate": {"type": "string", "description": "Filter by gate name"},
+                "days": {"type": "integer", "description": "Number of days to look back", "default": 7},
+                "limit": {"type": "integer", "description": "Maximum entries", "default": 20},
+            },
+        },
+    ),
+
+    # Journal tools - narrative reconstruction
+    Tool(
+        name="journal_what",
+        description="Answer 'what happened?' - get a narrative of recent events from all Daedalos tools",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "hours": {"type": "number", "description": "Hours to look back", "default": 1},
+                "source": {"type": "string", "description": "Filter by source: gates, loop, agent, undo, mcp-hub"},
+                "verbose": {"type": "boolean", "description": "Include more details", "default": False},
+            },
+        },
+    ),
+    Tool(
+        name="journal_events",
+        description="List raw events from the journal",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "hours": {"type": "number", "description": "Hours to look back", "default": 24},
+                "source": {"type": "string", "description": "Filter by source"},
+                "event_type": {"type": "string", "description": "Filter by event type"},
+                "limit": {"type": "integer", "description": "Maximum events", "default": 100},
+            },
+        },
+    ),
+    Tool(
+        name="journal_summary",
+        description="Get a summary of recent events",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "hours": {"type": "number", "description": "Hours to look back", "default": 24},
+            },
+        },
+    ),
+    Tool(
+        name="journal_log",
+        description="Log a custom event to the journal",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string", "description": "Event summary/description"},
+                "source": {"type": "string", "description": "Source identifier", "default": "mcp"},
+                "event_type": {"type": "string", "description": "Event type", "default": "custom"},
+            },
+            "required": ["summary"],
         },
     ),
 ]
@@ -557,6 +1061,274 @@ async def handle_tool(name: str, arguments: dict[str, Any]) -> str:
         if arguments.get("template"):
             args.extend(["--template", arguments["template"]])
         return run_tool("agent", args)
+
+    # Agent signals
+    elif name == "agent_signal_complete":
+        args = ["signal", "complete"]
+        if arguments.get("status"):
+            args.extend(["--status", arguments["status"]])
+        if arguments.get("data_file"):
+            args.extend(["--data", arguments["data_file"]])
+        return run_tool("agent", args)
+
+    elif name == "agent_signal_wait":
+        args = ["signal", "wait", arguments["agent"]]
+        if arguments.get("timeout"):
+            args.append(str(arguments["timeout"]))
+        return run_tool("agent", args)
+
+    elif name == "agent_signal_check":
+        return run_tool("agent", ["signal", "check", arguments["agent"]])
+
+    # Resource locks
+    elif name == "agent_lock_acquire":
+        args = ["lock", "acquire", arguments["name"]]
+        if arguments.get("timeout"):
+            args.append(str(arguments["timeout"]))
+        return run_tool("agent", args)
+
+    elif name == "agent_lock_release":
+        return run_tool("agent", ["lock", "release", arguments["name"]])
+
+    elif name == "agent_lock_list":
+        return run_tool("agent", ["lock", "list"])
+
+    # Task claims
+    elif name == "agent_claim_create":
+        args = ["claim", "create", arguments["task_id"]]
+        if arguments.get("description"):
+            args.append(arguments["description"])
+        return run_tool("agent", args)
+
+    elif name == "agent_claim_release":
+        args = ["claim", "release", arguments["task_id"]]
+        if arguments.get("status"):
+            args.append(arguments["status"])
+        return run_tool("agent", args)
+
+    elif name == "agent_claim_list":
+        return run_tool("agent", ["claim", "list"])
+
+    # Workflow tools
+    elif name == "workflow_list":
+        args = ["workflow", "list"]
+        if arguments.get("json"):
+            args.append("--json")
+        return run_tool("agent", args)
+
+    elif name == "workflow_start":
+        args = ["workflow", "start", arguments["workflow"], arguments["task"]]
+        if arguments.get("project"):
+            args.extend(["--project", arguments["project"]])
+        return run_tool("agent", args)
+
+    elif name == "workflow_status":
+        args = ["workflow", "status"]
+        if arguments.get("instance_id"):
+            args.append(arguments["instance_id"])
+        return run_tool("agent", args)
+
+    elif name == "workflow_stop":
+        args = ["workflow", "stop", arguments["instance_id"]]
+        if arguments.get("force"):
+            args.append("--force")
+        return run_tool("agent", args)
+
+    # MCP Hub tools
+    elif name == "mcp_hub_status":
+        args = ["status"]
+        if arguments.get("json"):
+            args.append("--json")
+        return run_tool("mcp-hub", args)
+
+    elif name == "mcp_hub_warm":
+        servers = arguments.get("servers", [])
+        return run_tool("mcp-hub", ["warm"] + servers)
+
+    elif name == "mcp_hub_list":
+        args = ["list"]
+        if arguments.get("category"):
+            args.extend(["--category", arguments["category"]])
+        return run_tool("mcp-hub", args)
+
+    elif name == "mcp_hub_restart":
+        return run_tool("mcp-hub", ["restart", arguments["server"]])
+
+    elif name == "mcp_hub_logs":
+        args = ["logs", arguments["server"]]
+        if arguments.get("lines"):
+            args.extend(["-n", str(arguments["lines"])])
+        return run_tool("mcp-hub", args)
+
+    elif name == "mcp_hub_call":
+        args = ["call", arguments["tool"]]
+        if arguments.get("server"):
+            args.extend(["--server", arguments["server"]])
+        # Convert arguments to command line args
+        tool_args = arguments.get("arguments", {})
+        for key, value in tool_args.items():
+            args.extend([f"--{key}", str(value)])
+        return run_tool("mcp-hub", args)
+
+    # LSP Pool tools
+    elif name == "lsp_pool_status":
+        args = ["status"]
+        if arguments.get("json"):
+            args.append("--json")
+        return run_tool("lsp-pool", args)
+
+    elif name == "lsp_pool_warm":
+        args = ["warm", arguments["language"]]
+        if arguments.get("path"):
+            args.append(arguments["path"])
+        return run_tool("lsp-pool", args)
+
+    elif name == "lsp_pool_cool":
+        return run_tool("lsp-pool", ["cool", arguments["language"]])
+
+    elif name == "lsp_pool_list":
+        args = ["list"]
+        if arguments.get("json"):
+            args.append("--json")
+        return run_tool("lsp-pool", args)
+
+    elif name == "lsp_pool_query":
+        args = ["query", arguments["command"], arguments["file"]]
+        if arguments.get("line"):
+            args.extend(["--line", str(arguments["line"])])
+        if arguments.get("col"):
+            args.extend(["--col", str(arguments["col"])])
+        return run_tool("lsp-pool", args)
+
+    elif name == "lsp_pool_languages":
+        return run_tool("lsp-pool", ["languages"])
+
+    elif name == "lsp_pool_logs":
+        return run_tool("lsp-pool", ["logs", arguments["key"]])
+
+    elif name == "lsp_pool_restart":
+        return run_tool("lsp-pool", ["restart", arguments["key"]])
+
+    # Sandbox tools
+    elif name == "sandbox_create":
+        args = ["create"]
+        if arguments.get("name"):
+            args.append(arguments["name"])
+        if arguments.get("from_path"):
+            args.extend(["--from", arguments["from_path"]])
+        if arguments.get("backend"):
+            args.extend(["--copy", arguments["backend"]])
+        return run_tool("sandbox", args)
+
+    elif name == "sandbox_list":
+        args = ["list"]
+        if arguments.get("json"):
+            args.append("--json")
+        return run_tool("sandbox", args)
+
+    elif name == "sandbox_enter":
+        args = ["enter", arguments["name"]]
+        if arguments.get("command"):
+            args.extend(["--command", arguments["command"]])
+        return run_tool("sandbox", args)
+
+    elif name == "sandbox_diff":
+        args = ["diff", arguments["name"]]
+        if arguments.get("files_only"):
+            args.append("--files")
+        return run_tool("sandbox", args)
+
+    elif name == "sandbox_promote":
+        args = ["promote", arguments["name"], "--yes"]  # Non-interactive
+        if arguments.get("dry_run"):
+            args.append("--dry-run")
+        if arguments.get("backup"):
+            args.append("--backup")
+        return run_tool("sandbox", args)
+
+    elif name == "sandbox_discard":
+        return run_tool("sandbox", ["discard", arguments["name"], "--force"])
+
+    elif name == "sandbox_info":
+        args = ["info", arguments["name"]]
+        if arguments.get("json"):
+            args.append("--json")
+        return run_tool("sandbox", args)
+
+    elif name == "sandbox_run":
+        return run_tool("sandbox", ["run", arguments["name"], arguments["command"]])
+
+    # Gates tools
+    elif name == "gates_check":
+        import json as json_mod
+        args = ["check", arguments["gate"]]
+        if arguments.get("context"):
+            args.append(json_mod.dumps(arguments["context"]))
+        if arguments.get("source"):
+            args.append(arguments["source"])
+        return run_tool("gates", args)
+
+    elif name == "gates_level":
+        args = ["level"]
+        if arguments.get("level"):
+            args.append(arguments["level"])
+        return run_tool("gates", args)
+
+    elif name == "gates_set":
+        return run_tool("gates", ["set", arguments["gate"], arguments["action"]])
+
+    elif name == "gates_config":
+        args = ["config"]
+        if arguments.get("json", True):
+            args.append("--json")
+        return run_tool("gates", args)
+
+    elif name == "gates_history":
+        args = ["history", "--json"]
+        if arguments.get("gate"):
+            args.extend(["--gate", arguments["gate"]])
+        if arguments.get("days"):
+            args.extend(["--days", str(arguments["days"])])
+        if arguments.get("limit"):
+            args.extend(["--limit", str(arguments["limit"])])
+        return run_tool("gates", args)
+
+    # Journal tools
+    elif name == "journal_what":
+        args = ["what"]
+        if arguments.get("hours"):
+            args.extend(["-h", str(arguments["hours"])])
+        if arguments.get("source"):
+            args.extend(["--source", arguments["source"]])
+        if arguments.get("verbose"):
+            args.append("-v")
+        return run_tool("journal", args)
+
+    elif name == "journal_events":
+        args = ["events", "--json"]
+        if arguments.get("hours"):
+            args.extend(["-h", str(arguments["hours"])])
+        if arguments.get("source"):
+            args.extend(["--source", arguments["source"]])
+        if arguments.get("event_type"):
+            args.extend(["--type", arguments["event_type"]])
+        if arguments.get("limit"):
+            args.extend(["--limit", str(arguments["limit"])])
+        return run_tool("journal", args)
+
+    elif name == "journal_summary":
+        args = ["summary", "--json"]
+        if arguments.get("hours"):
+            args.extend(["-h", str(arguments["hours"])])
+        return run_tool("journal", args)
+
+    elif name == "journal_log":
+        return run_tool("journal", [
+            "log",
+            arguments["summary"],
+            arguments.get("source", "mcp"),
+            arguments.get("event_type", "custom"),
+        ])
 
     else:
         return f"Unknown tool: {name}"
