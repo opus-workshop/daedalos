@@ -13,6 +13,8 @@ from mcp.types import (
     Tool,
     TextContent,
     CallToolResult,
+    Resource,
+    TextResourceContents,
 )
 
 
@@ -1392,6 +1394,62 @@ def create_server() -> Server:
         return CallToolResult(
             content=[TextContent(type="text", text=result)]
         )
+
+    @server.list_resources()
+    async def list_resources() -> list[Resource]:
+        """List available resources."""
+        return [
+            Resource(
+                uri="daedalos://inbox",
+                name="Agent Inbox",
+                description="Unread messages for this agent. Check this resource to see messages from other agents.",
+                mimeType="text/plain",
+            ),
+            Resource(
+                uri="daedalos://agents",
+                name="Active Agents",
+                description="List of all active agents that can send/receive messages.",
+                mimeType="application/json",
+            ),
+        ]
+
+    @server.read_resource()
+    async def read_resource(uri: str) -> TextResourceContents:
+        """Read a resource by URI."""
+        if uri == "daedalos://inbox":
+            # Get inbox for current agent (auto-registers if needed)
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["agent", "inbox", "--all"],
+                capture_output=True,
+                text=True,
+                cwd=os.getcwd(),
+            )
+            content = result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
+            if not content.strip():
+                content = "No messages."
+            return TextResourceContents(
+                uri=uri,
+                mimeType="text/plain",
+                text=content,
+            )
+        elif uri == "daedalos://agents":
+            # List all agents
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["agent", "list", "--json"],
+                capture_output=True,
+                text=True,
+                cwd=os.getcwd(),
+            )
+            content = result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
+            return TextResourceContents(
+                uri=uri,
+                mimeType="application/json",
+                text=content,
+            )
+        else:
+            raise ValueError(f"Unknown resource: {uri}")
 
     return server
 
