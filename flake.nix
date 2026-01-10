@@ -280,6 +280,331 @@
 
             meta.description = "MCP server exposing all Daedalos tools";
           };
+
+          # ========================================
+          # Human-Focused Tools
+          # ========================================
+
+          env = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-env";
+            version = "1.0.0";
+            src = ./daedalos-tools/env;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/env $out/bin/daedalos-env
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/daedalos-env \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git ]}
+            '';
+
+            meta.description = "Project environment switching";
+          };
+
+          notify = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-notify";
+            version = "1.0.0";
+            src = ./daedalos-tools/notify;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/notify $out/bin/
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/notify \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.libnotify ]}
+            '';
+
+            meta.description = "Desktop notifications";
+          };
+
+          session = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-session";
+            version = "1.0.0";
+            src = ./daedalos-tools/session;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/session $out/bin/
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/session \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.tmux pkgs.git ]}
+            '';
+
+            meta.description = "Terminal session management";
+          };
+
+          secrets = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-secrets";
+            version = "1.0.0";
+            src = ./daedalos-tools/secrets;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash pkgs.age ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/secrets $out/bin/
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/secrets \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.age ]}
+            '';
+
+            meta.description = "Local secrets vault with age encryption";
+          };
+
+          pair = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-pair";
+            version = "1.0.0";
+            src = ./daedalos-tools/pair;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash pkgs.tmux ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/pair $out/bin/
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/pair \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.tmux pkgs.tmate ]}
+            '';
+
+            meta.description = "Pair programming via shared tmux";
+          };
+
+          handoff = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-handoff";
+            version = "1.0.0";
+            src = ./daedalos-tools/handoff;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/handoff $out/bin/
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/handoff \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git ]}
+            '';
+
+            meta.description = "Context summaries for shift changes";
+          };
+
+          review = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-review";
+            version = "1.0.0";
+            src = ./daedalos-tools/review;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/review $out/bin/
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/review \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git pkgs.fzf ]}
+            '';
+
+            meta.description = "Human code review workflow";
+          };
+
+          focus = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-focus";
+            version = "1.0.0";
+            src = ./daedalos-tools/focus;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/focus $out/bin/
+              cp -r lib/* $out/lib/
+            '';
+
+            meta.description = "Pomodoro timer and distraction blocking";
+          };
+
+          metrics = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-metrics";
+            version = "1.0.0";
+            src = ./daedalos-tools/metrics;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/metrics $out/bin/
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/metrics \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git ]}
+            '';
+
+            meta.description = "Productivity statistics";
+          };
+
+          template = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-template";
+            version = "1.0.0";
+            src = ./daedalos-tools/template;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib $out/share/daedalos/templates
+              cp bin/template $out/bin/
+              cp -r lib/* $out/lib/
+              cp -r templates/* $out/share/daedalos/templates/
+            '';
+
+            meta.description = "Project scaffolding";
+          };
+
+          container = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-container";
+            version = "1.0.0";
+            src = ./daedalos-tools/container;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/container $out/bin/
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/container \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.docker pkgs.podman ]}
+            '';
+
+            meta.description = "Docker/Podman management";
+          };
+
+          remote = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-remote";
+            version = "1.0.0";
+            src = ./daedalos-tools/remote;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash pkgs.openssh ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/remote $out/bin/
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/remote \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.openssh pkgs.rsync ]}
+            '';
+
+            meta.description = "SSH and remote development";
+          };
+
+          backup = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-backup";
+            version = "1.0.0";
+            src = ./daedalos-tools/backup;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/backup $out/bin/
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/backup \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git pkgs.gzip pkgs.age ]}
+            '';
+
+            meta.description = "Project backup with encryption";
+          };
+
+          # ========================================
+          # Supervision Tools
+          # ========================================
+
+          observe = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-observe";
+            version = "1.0.0";
+            src = ./daedalos-tools/observe;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash pythonEnv ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/observe $out/bin/
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/observe \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pythonEnv ]} \
+                --set PYTHONPATH "$out/lib"
+            '';
+
+            meta.description = "Watch mode - see what AI does";
+          };
+
+          gates = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-gates";
+            version = "1.0.0";
+            src = ./daedalos-tools/gates;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash pythonEnv ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/gates $out/bin/
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/gates \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pythonEnv ]} \
+                --set PYTHONPATH "$out/lib"
+            '';
+
+            meta.description = "Permission gates - control AI autonomy";
+          };
+
+          journal = pkgs.stdenv.mkDerivation {
+            pname = "daedalos-journal";
+            version = "1.0.0";
+            src = ./daedalos-tools/journal;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = [ pkgs.bash pkgs.sqlite ];
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib
+              cp bin/journal $out/bin/
+              cp -r lib/* $out/lib/
+
+              wrapProgram $out/bin/journal \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.sqlite pkgs.fzf ]}
+            '';
+
+            meta.description = "Activity logging - record everything";
+          };
         };
 
         # Combined package with all tools
