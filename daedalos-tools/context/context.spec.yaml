@@ -1,0 +1,194 @@
+name: context
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Agents lose track of their context window and die mid-task.
+
+  The context tool provides visibility into what's consuming the 200K token
+  window. When an agent can see "you're at 80%, file reads are 45%", it can
+  make intelligent decisions about what to summarize, what to skip, what to
+  defer.
+
+  The key insight: context exhaustion is preventable if you can see it coming.
+  Agents shouldn't hit the wall at 100% - they should pace themselves,
+  checkpoint at 70%, and compact at 85%.
+
+  This enables longer productive sessions. An aware agent works smarter.
+
+constraints:
+  - Token estimation must be reasonably accurate (< 10% error)
+  - Status command returns in < 500ms
+  - Works without tiktoken (fallback to 4 chars ≈ 1 token)
+  - Read-only - never modifies conversation history
+  - Works with Claude Code's conversation format
+  - Checkpoints must be restorable to summary format
+
+interface:
+  commands:
+    status:
+      args: "none"
+      returns: "Visual progress bar with percentage, used/total tokens"
+      example: "context status"
+
+    breakdown:
+      args: "[--json]"
+      returns: "Categorized breakdown: system, user, assistant, tool_results, files"
+      example: "context breakdown"
+
+    files:
+      args: "[--sort size|time]"
+      returns: "List of files in context with token counts"
+      example: "context files --sort size"
+
+    compact:
+      args: "[--apply]"
+      returns: "Suggestions for reducing context usage"
+      example: "context compact"
+
+    checkpoint:
+      args: "[name]"
+      returns: "Saves current context state for later reference"
+      example: "context checkpoint pre-refactor"
+
+    restore:
+      args: "<name>"
+      returns: "Shows checkpoint contents (for manual resumption)"
+      example: "context restore pre-refactor"
+
+  exit_codes:
+    0: success
+    1: context tracking failed
+    2: checkpoint not found
+
+examples:
+  - scenario: "Agent hitting context limits"
+    context: "Long session, context at 85%"
+    action: "context compact"
+    result: |
+      Suggestions:
+      • Summarize old file reads (-12K tokens)
+      • Clear grep results (-8K tokens)
+      • Checkpoint and restart fresh
+    why_it_matters: "Agent can take action before dying mid-task"
+
+  - scenario: "Understanding context distribution"
+    context: "Agent feeling slow, unsure why"
+    action: "context breakdown"
+    result: "Shows that grep results are 45% of context"
+    why_it_matters: "Reveals that large search results should be scoped"
+
+  - scenario: "Checkpoint before risky exploration"
+    context: "About to read many large files"
+    action: "context checkpoint pre-exploration"
+    result: "State saved, can reference if session dies"
+    why_it_matters: "Work isn't lost if context explodes"
+
+  - scenario: "Right-sizing file reads"
+    context: "Agent considering reading a 10K line file"
+    action: "context status (shows 75%)"
+    result: "Agent decides to read just relevant sections"
+    why_it_matters: "Informed decisions prevent premature death"
+
+decisions:
+  - choice: "Estimate tokens, don't count exactly"
+    why: |
+      Exact token counting requires parsing conversation history and running
+      tokenizer on everything. This is slow.
+
+      Estimation (4 chars/token) is fast and accurate enough (< 10% error).
+      tiktoken optional for better accuracy when available.
+
+      Speed matters more than precision here.
+    alternatives:
+      - option: "Always use tiktoken"
+        rejected_because: "Adds dependency, not always available"
+      - option: "Call Claude API to count"
+        rejected_because: "Network latency, costs money, ridiculous"
+
+  - choice: "Color-coded thresholds: green/yellow/orange/red"
+    why: |
+      Visual communication is immediate. An agent seeing a red progress bar
+      knows to act differently than a green one.
+
+      Thresholds: < 50% green, < 70% yellow, < 85% orange, >= 85% red
+
+      This creates natural pacing - yellow means "be aware", orange means
+      "start planning compaction", red means "act now".
+
+  - choice: "Checkpoints are summaries, not full state"
+    why: |
+      Can't actually restore Claude's internal context - that's not accessible.
+
+      Checkpoints save: conversation summary, files read, current task state.
+      This enables manual resumption by pasting checkpoint into new session.
+
+      It's not magic restoration, it's deliberate handoff.
+    alternatives:
+      - option: "Try to restore full context"
+        rejected_because: "Not possible with Claude's architecture"
+      - option: "Don't offer checkpoints"
+        rejected_because: "Users need some safety net for long sessions"
+
+anti_patterns:
+  - pattern: "Modifying conversation history"
+    why_bad: |
+      Context tool is read-only introspection. Never delete messages
+      or modify the conversation. That's Claude Code's job.
+
+  - pattern: "Showing raw token counts without context"
+    why_bad: |
+      "45,000 tokens" means nothing without knowing max (200K).
+      Always show percentage and visual progress.
+
+  - pattern: "Slow status command"
+    why_bad: |
+      If checking context is slow, agents won't check often.
+      Status must return instantly (< 500ms) to encourage frequent checks.
+
+  - pattern: "Hiding the breakdown"
+    why_bad: |
+      Agents need to know WHERE context is going, not just total.
+      "grep results are 40%" is actionable. "80% used" is not.
+
+  - pattern: "Requiring tiktoken"
+    why_bad: |
+      Adds friction to installation. Fallback estimation is good enough.
+      tiktoken enhances, shouldn't be required.
+
+connects_to:
+  - component: project
+    relationship: |
+      Project provides file size estimates for intelligent reading.
+      Context uses project info to predict cost of reading a file.
+      "This file is ~3K tokens" comes from project index.
+
+  - component: loop
+    relationship: |
+      Loop iterations should checkpoint context state.
+      If an iteration explodes context, can roll back to previous.
+      Context status integrates with loop progress display.
+
+  - component: codex
+    relationship: |
+      Codex search results can be large. Context shows their cost.
+      Helps agents decide: narrow search vs pay the context cost.
+
+  - component: agent
+    relationship: |
+      Each spawned agent has its own context budget.
+      Parent agent can query child agent's context usage.
+      Enables intelligent work distribution.
+
+metrics:
+  success_criteria:
+    - "Agents never hit 100% context unexpectedly"
+    - "context status returns in < 500ms"
+    - "Estimation error < 10% vs actual"
+    - "Agents proactively manage context based on status"
+
+  failure_indicators:
+    - "Sessions dying at 100% with no warning"
+    - "Agents not using context tool"
+    - "Estimation wildly inaccurate"
+    - "Status too slow to check frequently"

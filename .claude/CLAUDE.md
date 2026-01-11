@@ -48,7 +48,22 @@ daedalos-tools/
 └── journal/     # Activity logging - record everything
 ```
 
-Each tool has `SPEC.txt` (contract) and `prompt.txt` (build instructions).
+Tools have `.spec.yaml` files with rich context. Run `spec show <tool>` for details.
+
+## Core Tool Philosophy
+
+| Tool | Why It Exists |
+|------|---------------|
+| `loop` | Single-pass inference is a myth. Intelligent work is iterative |
+| `verify` | One command. All checks. No excuses |
+| `undo` | Users should experiment fearlessly. Every change is reversible |
+| `project` | Agents waste massive context reading files to understand architecture |
+| `codex` | Find code by meaning, not just keywords |
+| `context` | Agents lose track of their context window and die mid-task |
+| `error-db` | Agents solve the same errors repeatedly. Every session starts fresh |
+| `scratch` | Fear of breaking things prevents bold experiments |
+| `agent` | Single agents hit walls. Multiple agents break through |
+| `spec` | AI agents work dramatically better with rich specifications |
 
 ## Locked Decisions
 
@@ -68,7 +83,7 @@ Runs until promise exits 0. This is how work gets done.
 
 ## Current State
 
-- **Phase 1 complete**: All tool specifications written (SPEC.txt + prompt.txt)
+- **Phase 1 complete**: All tool specifications written (migrating to .spec.yaml)
 - **Phase 2 complete**: All tools implemented and installed in ~/.local/bin
 - **MCP server**: daedalos-mcp exposes all tools to Claude natively
 

@@ -1,0 +1,256 @@
+================================================================================
+                         DAEDALOS - GETTING STARTED
+================================================================================
+
+Welcome! This guide will get you running with Daedalos in 5 minutes.
+
+================================================================================
+                              INSTALLATION
+================================================================================
+
+OPTION 1: NixOS / Nix (Recommended)
+-----------------------------------
+
+Add to your flake.nix:
+
+    inputs.daedalos.url = "github:opus-workshop/daedalos";
+
+    # In your system configuration:
+    environment.systemPackages = [ inputs.daedalos.packages.${system}.default ];
+
+Or try it directly:
+
+    nix run github:opus-workshop/daedalos -- loop --help
+
+
+OPTION 2: Manual Installation
+-----------------------------
+
+Clone and add to PATH:
+
+    git clone https://github.com/opus-workshop/daedalos
+    cd daedalos
+    export PATH="$PWD/daedalos-tools/loop/bin:$PATH"
+    export PATH="$PWD/daedalos-tools/verify/bin:$PATH"
+    # ... repeat for other tools
+
+Dependencies: bash, python3.12+, git, sqlite3
+Optional: age (for secrets), tmux (for agent/pair), fzf (for interactive menus)
+
+
+================================================================================
+                              YOUR FIRST LOOP
+================================================================================
+
+The loop is THE core primitive of Daedalos. It runs your AI agent in a cycle
+until a verification command succeeds.
+
+1. Start a simple loop:
+
+    loop start "fix the failing tests" --promise "pytest"
+
+   This will:
+   - Spawn your AI agent (OpenCode by default)
+   - Give it the task "fix the failing tests"
+   - After each iteration, run `pytest`
+   - If pytest passes (exit 0), the loop completes
+   - If pytest fails, feed the error back to the agent and iterate
+
+2. Watch progress:
+
+    loop status          # Quick status
+    loop watch           # Live dashboard
+
+3. Control the loop:
+
+    loop pause myloop    # Pause
+    loop resume myloop   # Resume
+    loop cancel myloop   # Stop
+    loop inject myloop "focus on the auth tests"  # Add instruction
+
+
+================================================================================
+                              ESSENTIAL TOOLS
+================================================================================
+
+VERIFY - One command to check everything
+----------------------------------------
+    verify              # Full pipeline: lint, types, build, test
+    verify --quick      # Just lint + types (fast)
+    verify --fix        # Auto-fix what can be fixed
+
+Auto-detects your project type (Python, TypeScript, Rust, Go, Swift, etc.)
+
+
+UNDO - Fearless experimentation
+-------------------------------
+    undo checkpoint "before refactor"   # Save state
+    undo timeline                       # See history
+    undo last                          # Undo last change
+    undo restore "before refactor"     # Go back
+
+
+PROJECT - Instant codebase intelligence
+---------------------------------------
+    project info        # Architecture overview
+    project tree        # File structure
+    project symbols     # Functions, classes, types
+
+
+CODEX - Semantic search
+-----------------------
+    codex search "authentication logic"    # Find by meaning
+    codex search "error handling"          # Natural language
+
+
+AGENT - Multi-agent orchestration
+---------------------------------
+    agent spawn -t explorer      # Read-only exploration agent
+    agent spawn -t implementer   # Full write access
+    agent list                   # See all agents
+    agent focus agent-1          # Switch to agent
+
+
+================================================================================
+                              SUPERVISION LEVELS
+================================================================================
+
+Daedalos lets you control how much autonomy your AI has:
+
+    gates level autonomous     # AI runs freely
+    gates level supervised     # AI runs, you get notified
+    gates level collaborative  # AI proposes, you approve big actions
+    gates level assisted       # You drive, AI suggests
+    gates level manual         # AI only responds to commands
+
+Check current level:
+
+    gates level
+
+Configure specific permissions:
+
+    gates set git_push approve     # Require approval for git push
+    gates set file_delete deny     # Never allow file deletion
+
+
+================================================================================
+                              HUMAN TOOLS
+================================================================================
+
+For you, the human:
+
+    focus start 25           # Start 25-min focus session (Pomodoro)
+    notify watch "npm build" # Notify when command finishes
+    secrets set api/openai   # Securely store API keys
+    handoff create           # Generate context summary for handoff
+    metrics today            # See your productivity stats
+
+
+================================================================================
+                              LOOP TEMPLATES
+================================================================================
+
+Pre-built workflows for common patterns:
+
+TDD (Test-Driven Development):
+
+    loop start --template tdd "add user registration"
+    # Phase 1: Write failing test
+    # Phase 2: Make it pass
+    # Phase 3: Refactor
+
+Bugfix:
+
+    loop start --template bugfix "fix the memory leak"
+    # Iterates until verify passes
+
+Feature development with multiple agents:
+
+    loop workflow run feature-dev "add payment processing"
+    # Agent 1: Implements
+    # Agent 2: Tests
+    # Agent 3: Reviews
+
+
+================================================================================
+                         CLAUDE CODE INTEGRATION
+================================================================================
+
+Daedalos includes skills and hooks for Claude Code users.
+
+SKILLS (Invoke with /skill-name):
+---------------------------------
+    /daedalos-loop         Iterate-until-done workflows
+    /daedalos-tdd          Test-driven development
+    /daedalos-verify       Evidence before assertions
+    /daedalos-debug        Systematic bug investigation
+    /daedalos-agents       Multi-agent orchestration
+    /daedalos-supervision  Respecting autonomy levels
+
+HOOKS (Automatic):
+------------------
+When working in a Daedalos project, these hooks run automatically:
+
+    - Gates check before file edits (respects supervision level)
+    - Journal logging of all significant actions
+    - Undo tracking of file changes
+    - Automatic checkpoint at session start
+
+SETUP:
+------
+The .claude/ directory in the Daedalos repo contains:
+
+    .claude/skills/          # Skill definitions
+    .claude/hooks/           # Hook scripts
+    .claude/settings.json    # Hook configuration
+
+Copy to your project or symlink for integration:
+
+    ln -s /path/to/daedalos/.claude/skills ~/.claude/skills/daedalos
+    ln -s /path/to/daedalos/.claude/hooks ~/.claude/hooks/daedalos
+
+
+================================================================================
+                              QUICK REFERENCE
+================================================================================
+
+    loop start "<task>" --promise "<cmd>"   # Start iteration loop
+    loop status                             # Check progress
+    verify                                  # Run all checks
+    undo checkpoint "name"                  # Save before changes
+    project info                            # Understand codebase
+    codex search "query"                    # Find code by meaning
+    gates level                             # Check supervision level
+    agent list                              # See running agents
+
+Full documentation: docs/VISION.txt
+
+SPECS - Rich tool documentation
+-------------------------------
+Each tool has a .spec.yaml file explaining WHY it exists:
+
+    spec list               # List all specs
+    spec show loop          # See loop's specification
+    spec query "sqlite"     # Search across all specs
+
+Specs include: intent, constraints, decisions, anti-patterns, examples.
+
+================================================================================
+                              PHILOSOPHY
+================================================================================
+
+1. ITERATE UNTIL DONE - Single-pass is a myth. Embrace the loop.
+2. FOSS BY DESIGN - No vendor lock-in. Use any AI agent.
+3. FEARLESS EXPERIMENTATION - Cheap mistakes via undo/scratch.
+4. PRE-COMPUTATION - Index before query, warm before use.
+
+Read the full philosophy: docs/VISION.txt
+
+
+================================================================================
+
+                           "Iterate Until Done"
+
+                    https://github.com/opus-workshop/daedalos
+
+================================================================================

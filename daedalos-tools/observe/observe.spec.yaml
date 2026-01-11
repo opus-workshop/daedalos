@@ -1,0 +1,226 @@
+name: observe
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  See what's happening. Right now. All of it.
+
+  Observe exists because AI systems are opaque. When multiple agents run,
+  loops iterate, and daemons process requests - you have no visibility.
+  "What's happening?" becomes unanswerable.
+
+  The deeper insight: supervision requires awareness. You can't supervise
+  what you can't see. Observe is the first step in the supervision spectrum -
+  before gates (control) or journal (history) comes visibility (now).
+
+  Human equivalent: Standing behind someone's shoulder, seeing their screen.
+  Observe is that shoulder, for all your AI activity.
+
+constraints:
+  - Real-time updates: Refresh every 2 seconds by default
+  - Low resource usage: Must run alongside active work without slowing things
+  - Works without daemons: Gracefully shows "stopped" if daemon not running
+  - No blocking operations: All data fetches async with timeouts
+  - Terminal-native: TUI that works in any terminal (no browser needed)
+  - Pausable: User can freeze display for inspection
+
+interface:
+  commands:
+    default:
+      args: "[--help]"
+      returns: "Launches TUI dashboard"
+      example: "observe"
+
+  keybindings:
+    q: "Quit"
+    r: "Refresh immediately"
+    p: "Pause/resume auto-updates"
+    l: "Focus loops panel"
+    a: "Focus agents panel"
+    d: "Focus daemons panel"
+    e: "Focus event log"
+    "?": "Show help"
+
+  panels:
+    daemons: "Status of loop, mcp-hub, lsp-pool, undo daemons"
+    loops: "Active iteration loops with task, status, iteration count"
+    agents: "Spawned agents with slot, name, template, uptime"
+    events: "Recent events from all sources with timestamps"
+
+  exit_codes:
+    0: "Clean exit"
+    1: "Textual not installed or display error"
+
+examples:
+  - scenario: "Monitoring a long-running workflow"
+    context: "Started 'agent workflow feature' and want to see progress"
+    action: "observe"
+    result: "See all agents spawned, their statuses, loop iterations"
+    why_it_matters: |
+      Workflows are multi-stage. Without observe, you wait blindly.
+      With observe, you see each stage start, progress, complete.
+
+  - scenario: "Debugging stuck agent"
+    context: "An agent seems hung, not making progress"
+    action: "observe → focus agents panel → look for status indicators"
+    result: "See agent status (thinking, waiting, error)"
+    why_it_matters: |
+      Visual feedback distinguishes "working" from "stuck".
+      Observe shows status even when agent terminal is busy.
+
+  - scenario: "Checking daemon health"
+    context: "Something feels slow, wonder if services are running"
+    action: "observe → daemons panel"
+    result: "See which daemons are running/stopped and their health"
+    why_it_matters: |
+      Daemons failing silently is common. Observe makes health visible.
+
+  - scenario: "Understanding overall activity"
+    context: "Multiple things happening, want the big picture"
+    action: "observe"
+    result: "Single dashboard showing all Daedalos activity"
+    why_it_matters: |
+      Information consolidation. One view instead of switching terminals.
+
+decisions:
+  - choice: "Textual TUI framework over curses or blessed"
+    why: |
+      Textual provides:
+      - Modern, reactive widget model
+      - CSS-like styling
+      - Async-native (Python asyncio)
+      - Rich text rendering
+      - Cross-platform
+
+      Curses is painful to work with. Blessed is less maintained.
+      Textual is actively developed and Pythonic.
+    alternatives:
+      - option: "Raw curses/ncurses"
+        rejected_because: "Complex API, manual rendering, no reactive updates"
+      - option: "Web UI in browser"
+        rejected_because: "Requires browser open, breaks terminal workflow"
+      - option: "tmux split panes with watch commands"
+        rejected_because: "Fragmented, no unified view, resource-heavy"
+
+  - choice: "2-second refresh interval by default"
+    why: |
+      Balances responsiveness with resource usage:
+      - Fast enough to feel real-time
+      - Slow enough to not consume CPU
+      - Matches human attention refresh
+
+      Pressing 'r' gives instant refresh when needed.
+    alternatives:
+      - option: "Event-driven updates (push)"
+        rejected_because: "Complex infrastructure, daemons would need push support"
+      - option: "Faster refresh (500ms)"
+        rejected_because: "Unnecessary CPU load, flickering display"
+      - option: "Slower refresh (5s)"
+        rejected_because: "Feels laggy, misses rapid changes"
+
+  - choice: "Pause button instead of always-on"
+    why: |
+      Sometimes you need to freeze the display to inspect details.
+      Auto-update can scroll away what you're reading.
+
+      Press 'p' to pause, examine data, press 'p' to resume.
+    alternatives:
+      - option: "No pause (always updating)"
+        rejected_because: "Can't inspect transient states"
+      - option: "Pause per-panel"
+        rejected_because: "Over-complicated, global pause is sufficient"
+
+  - choice: "Query tools directly instead of daemon API"
+    why: |
+      Observe runs: loop list --json, agent list --json, etc.
+
+      This means it works even if daemons are down - just shows
+      "stopped" status. No hard dependency on daemon availability.
+
+      Also means observe doesn't need special privileges.
+    alternatives:
+      - option: "Direct daemon socket connection"
+        rejected_because: "Fails if daemon not running, coupling"
+      - option: "Shared memory/files"
+        rejected_because: "Complex, stale data risks"
+
+anti_patterns:
+  - pattern: "Running observe without understanding what it shows"
+    why_bad: |
+      Observe is a diagnostic tool, not eye candy. If you don't know
+      what a "paused loop" or "thinking agent" means, observe won't help.
+
+      Learn the Daedalos workflow first, then observe makes sense.
+
+  - pattern: "Using observe instead of journal for debugging"
+    why_bad: |
+      Observe shows NOW. Journal shows HISTORY.
+
+      "What went wrong an hour ago?" → journal
+      "What's happening now?" → observe
+
+      Different tools for different questions.
+
+  - pattern: "Running multiple observe instances"
+    why_bad: |
+      Each instance polls the same tools. Multiple instances waste resources.
+      One observe per terminal session is plenty.
+
+  - pattern: "Leaving observe running indefinitely in background"
+    why_bad: |
+      Observe is for active monitoring, not background logging.
+      Close it when you're not watching. Use journal for history.
+
+connects_to:
+  - component: loop
+    relationship: |
+      Observe queries: loop list --json
+      Shows: loop ID, task, status, iteration count, duration
+
+      The loops panel is central - most activity is loop-based.
+
+  - component: agent
+    relationship: |
+      Observe queries: agent list --json
+      Shows: slot, name, template, status, uptime
+
+      Agents are shown with status indicators (thinking, waiting, etc.)
+
+  - component: journal
+    relationship: |
+      Observe shows recent events from journal.
+      Journal provides history, observe provides real-time view of it.
+
+      Events panel shows: timestamp, source, event type, summary
+
+  - component: gates
+    relationship: |
+      When gates block an action pending approval, observe shows it.
+      "Gate pending: git_push awaiting approval"
+
+      Human can then go approve in the blocked terminal.
+
+  - component: mcp-hub
+    relationship: |
+      Daemon status panel shows mcp-hub health.
+      If MCP requests are slow, you'll see it here.
+
+  - component: lsp-pool
+    relationship: |
+      Daemon status panel shows lsp-pool running servers.
+      Helpful for diagnosing LSP issues.
+
+metrics:
+  success_criteria:
+    - "Updates visible within 2 seconds of state change"
+    - "CPU usage < 5% when running"
+    - "Works with 10+ active agents without lag"
+    - "Graceful degradation when daemons down"
+    - "Users check observe before asking 'what's happening?'"
+
+  failure_indicators:
+    - "Observe uses more CPU than the work it monitors"
+    - "Display flickers or lags noticeably"
+    - "Information is stale or wrong"
+    - "Users ignore observe and check terminals directly"
+    - "Crashes when daemons not running"

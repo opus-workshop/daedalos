@@ -1,0 +1,263 @@
+name: daedalos-mcp
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Native tool access for Claude. No shell wrapping, no output parsing.
+
+  Daedalos-mcp exists because Claude Code interacts with tools through
+  shell commands - parsing text output, handling errors as text, losing
+  structured data. MCP (Model Context Protocol) provides a proper API.
+
+  The deeper insight: when Claude uses Bash to run "loop start", it gets
+  text. When Claude uses the loop_start MCP tool, it gets structured data,
+  proper error handling, and streaming updates. The experience is native.
+
+  This is the bridge between Daedalos tools and Claude's native tool system.
+  Every Daedalos tool is exposed as an MCP tool with proper schemas.
+
+constraints:
+  - All core tools exposed: loop, verify, undo, project, codex, etc.
+  - Proper JSON schemas: Input validation, documentation in schema
+  - Structured errors: Not text parsing, proper error types
+  - Resource subscriptions: Real-time updates for dynamic data
+  - Zero config for Claude Code: Works out of the box with claude_desktop_config.json
+  - Python MCP SDK: Standard implementation, easy to extend
+
+interface:
+  tools:
+    loop:
+      - loop_start: "Start iteration loop with task and promise"
+      - loop_status: "Check current loop status"
+      - loop_stop: "Stop the current loop"
+
+    verify:
+      - verify: "Run verification checks with auto-detection"
+
+    undo:
+      - undo_checkpoint: "Create named restore point"
+      - undo_last: "Undo last N changes"
+      - undo_timeline: "Show recent changes"
+      - undo_restore: "Restore to specific checkpoint"
+
+    project:
+      - project_info: "Get project overview"
+      - project_symbols: "List all symbols in project"
+      - project_tree: "Get file tree structure"
+
+    codex:
+      - codex_search: "Semantic code search"
+      - codex_index: "Rebuild search index"
+
+    context:
+      - context_estimate: "Estimate context window usage"
+      - context_breakdown: "Detailed context breakdown"
+
+    error-db:
+      - error_match: "Find solutions for an error"
+      - error_add: "Add new error pattern"
+
+    scratch:
+      - scratch_new: "Create ephemeral scratch environment"
+      - scratch_list: "List scratch environments"
+      - scratch_destroy: "Destroy scratch environment"
+
+    agent:
+      - agent_spawn: "Spawn new Claude Code agent"
+      - agent_list: "List running agents"
+      - agent_focus: "Switch to an agent"
+      - agent_kill: "Kill an agent"
+      - agent_send: "Send message to agent"
+      - agent_inbox: "Check messages for agent"
+      - agent_broadcast: "Broadcast to all agents"
+      - agent_signal_complete: "Signal task completion"
+      - agent_signal_wait: "Wait for agent completion"
+      - agent_lock_*: "Lock management for resources"
+      - agent_claim_*: "Task claim management"
+
+    workflow:
+      - workflow_list: "List available workflows"
+      - workflow_start: "Start multi-agent workflow"
+      - workflow_status: "Check workflow status"
+      - workflow_stop: "Stop running workflow"
+
+    mcp-hub:
+      - mcp_hub_status: "Get hub status"
+      - mcp_hub_warm: "Pre-start MCP servers"
+      - mcp_hub_list: "List available servers"
+      - mcp_hub_restart: "Restart a server"
+      - mcp_hub_logs: "Get server logs"
+      - mcp_hub_call: "Call tool through hub"
+
+  resources:
+    inbox: "daedalos://inbox - Agent messages with real-time updates"
+    agents: "daedalos://agents - Active agents list"
+
+  subscriptions:
+    supported: true
+    pattern: "Real-time notifications when resources change"
+
+examples:
+  - scenario: "Claude using loop natively"
+    context: "Claude wants to fix tests iteratively"
+    action: "loop_start(task='fix failing tests', promise='pytest')"
+    result: "Structured response with loop_id, status, not text parsing"
+    why_it_matters: |
+      Native tool call. No shell, no output parsing, proper error handling.
+      Claude gets JSON response it can work with directly.
+
+  - scenario: "Semantic code search"
+    context: "Claude needs to find authentication code"
+    action: "codex_search(query='authentication handling')"
+    result: "List of relevant code chunks with file paths and line numbers"
+    why_it_matters: |
+      Structured search results. Not grep output to parse.
+      Claude can jump directly to relevant code.
+
+  - scenario: "Multi-agent coordination"
+    context: "Claude wants to spawn helper agent"
+    action: "agent_spawn(name='explorer', template='explorer')"
+    result: "Agent ID, slot number, session info"
+    why_it_matters: |
+      Programmatic agent management. Claude can coordinate multiple
+      agents through proper API calls.
+
+  - scenario: "Real-time inbox updates"
+    context: "Claude subscribed to inbox, waiting for messages"
+    action: "subscribe to daedalos://inbox"
+    result: "Notification when new message arrives"
+    why_it_matters: |
+      Event-driven instead of polling. Claude gets notified immediately
+      when another agent sends a message.
+
+decisions:
+  - choice: "Python MCP SDK over custom implementation"
+    why: |
+      Standard SDK provides:
+      - Proper protocol handling
+      - Schema validation
+      - Streaming support
+      - Error handling
+
+      Custom implementation would duplicate all this work.
+    alternatives:
+      - option: "Custom MCP implementation"
+        rejected_because: "Reinventing the wheel, maintenance burden"
+      - option: "Different protocol (gRPC, REST)"
+        rejected_because: "Claude Code uses MCP natively, other protocols need translation"
+
+  - choice: "Shell subprocess for tool calls"
+    why: |
+      Each MCP tool calls the corresponding CLI tool via subprocess:
+        loop_start → subprocess.run(['loop', 'start', ...])
+
+      This keeps the MCP layer thin - business logic stays in tools.
+      MCP server just translates between protocol and CLI.
+    alternatives:
+      - option: "Import tool libraries directly"
+        rejected_because: "Tight coupling, Python-only tools"
+      - option: "Socket to tool daemons"
+        rejected_because: "Complex, not all tools have daemons"
+
+  - choice: "Resource subscriptions for inbox"
+    why: |
+      Agent inbox changes frequently during multi-agent work.
+      Polling is wasteful. Subscriptions are event-driven.
+
+      MCP supports resource subscriptions - we use it for inbox.
+
+      Watcher monitors messages directory, notifies subscribers.
+    alternatives:
+      - option: "Polling only"
+        rejected_because: "Wasteful, latency"
+      - option: "WebSocket separate channel"
+        rejected_because: "MCP has subscriptions built in"
+
+  - choice: "All tools in single server"
+    why: |
+      Single daedalos-mcp server exposes all tools.
+
+      Simpler than multiple specialized servers:
+      - One config entry in claude_desktop_config.json
+      - Shared subscription manager
+      - Unified error handling
+
+      Tools are namespaced by prefix (loop_, verify_, etc.)
+    alternatives:
+      - option: "Separate server per tool category"
+        rejected_because: "Config complexity, multiple processes"
+      - option: "Dynamic tool loading"
+        rejected_because: "Complexity, harder to debug"
+
+anti_patterns:
+  - pattern: "Calling tools via Bash instead of MCP"
+    why_bad: |
+      If daedalos-mcp is configured, Claude should use MCP tools.
+      Falling back to Bash loses structured data, proper errors.
+
+      Check if MCP tools available before using Bash fallback.
+
+  - pattern: "Ignoring MCP tool errors"
+    why_bad: |
+      MCP tools return proper errors. Don't just check if call succeeded,
+      examine the error type and message for meaningful handling.
+
+  - pattern: "Polling resources instead of subscribing"
+    why_bad: |
+      If a resource supports subscriptions (like inbox), use them.
+      Repeated resource reads waste tokens and add latency.
+
+  - pattern: "Hardcoding tool schemas"
+    why_bad: |
+      Tools evolve. If schema is hardcoded in client, updates break.
+      Use tool discovery to get current schemas.
+
+connects_to:
+  - component: loop
+    relationship: |
+      loop_start, loop_status, loop_stop tools expose loop functionality.
+      Structured input/output instead of CLI text.
+
+  - component: agent
+    relationship: |
+      Agent tools enable programmatic multi-agent coordination.
+      spawn, send, inbox, signal form the agent communication API.
+
+      inbox resource with subscriptions for real-time updates.
+
+  - component: codex
+    relationship: |
+      codex_search returns structured search results.
+      Much better than parsing grep-like output.
+
+  - component: verify
+    relationship: |
+      verify tool returns structured verification results.
+      Pass/fail per step, errors as structured data.
+
+  - component: mcp-hub
+    relationship: |
+      Daedalos-mcp is ONE MCP server, managed by mcp-hub.
+      mcp_hub_* tools expose hub management through MCP.
+
+      Meta: MCP tools to manage MCP infrastructure.
+
+  - component: spec
+    relationship: |
+      spec_show, spec_query, spec_context expose specs via MCP.
+      Claude can query specifications during planning.
+
+metrics:
+  success_criteria:
+    - "Claude prefers MCP tools over Bash equivalents"
+    - "Tool calls complete < 1s for simple operations"
+    - "Subscriptions work reliably (no missed updates)"
+    - "Error messages are actionable (not raw stack traces)"
+    - "Schema changes don't break Claude workflows"
+
+  failure_indicators:
+    - "Claude falls back to Bash for tool operations"
+    - "Tool calls timeout frequently"
+    - "Subscription updates are missed or delayed"
+    - "Errors are opaque (can't determine what went wrong)"
+    - "Server crashes or needs frequent restarts"

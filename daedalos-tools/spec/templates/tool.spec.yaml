@@ -1,0 +1,67 @@
+name: __NAME__
+version: 1.0
+created: __DATE__
+
+intent: |
+  # WHY does this tool exist?
+  # What problem does it solve?
+  # What experience should users have?
+  #
+  # This is NOT what the tool does - it's WHY it matters.
+  # Example: "Users should experiment fearlessly" not "Provides undo functionality"
+
+constraints:
+  # Hard requirements - things that MUST be true
+  # - Must work offline
+  # - Must be < 100ms for common operations
+  # - No external dependencies beyond X
+
+interface:
+  commands:
+    # command_name:
+    #   args: "required <arg> [optional]"
+    #   returns: "What the command outputs"
+    #   example: "__NAME__ command arg"
+
+  exit_codes:
+    0: success
+    1: general error
+    2: invalid arguments
+
+examples:
+  # Concrete usage scenarios - not just command examples
+  - scenario: "User wants to..."
+    context: "They are in situation X"
+    action: "__NAME__ command"
+    result: "This happens"
+    why_it_matters: "This improves their workflow because..."
+
+decisions:
+  # Choices you made and WHY
+  # This prevents future developers from relitigating settled questions
+  - choice: "We chose X over Y"
+    why: |
+      Explanation of reasoning
+    alternatives:
+      - option: "Alternative approach"
+        rejected_because: "Why it didn't work"
+
+anti_patterns:
+  # What NOT to do - learned from experience
+  - pattern: "Don't do X"
+    why_bad: "Because it causes Y problem"
+
+connects_to:
+  # How this relates to other components
+  # - component: other-tool
+  #   relationship: "How they interact"
+
+metrics:
+  success_criteria:
+    # How do we know this tool is working well?
+    # - "< 100ms response time"
+    # - "Users don't reach for alternative tools"
+  failure_indicators:
+    # Warning signs that something is wrong
+    # - "Users complain about X"
+    # - "Error rate > 1%"

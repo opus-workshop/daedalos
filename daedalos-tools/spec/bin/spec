@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+#
+# spec - Rich specification management for Daedalos
+#
+# Manages structured specs that capture not just WHAT but WHY,
+# alternatives rejected, and anti-patterns to avoid.
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../lib"
+TEMPLATE_DIR="${SCRIPT_DIR}/../templates"
+
+# Source libraries
+source "${LIB_DIR}/common.sh"
+source "${LIB_DIR}/query.sh"
+source "${LIB_DIR}/validate.sh"
+
+# XDG directories
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/daedalos/spec"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/daedalos/spec"
+
+# Initialize
+mkdir -p "$DATA_DIR" "$CACHE_DIR"
+
+# Find project root (look for .daedalos or .git)
+find_project_root() {
+    local dir="$PWD"
+    while [[ "$dir" != "/" ]]; do
+        if [[ -d "$dir/.daedalos" ]] || [[ -d "$dir/.git" ]]; then
+            echo "$dir"
+            return
+        fi
+        dir="$(dirname "$dir")"
+    done
+    echo "$PWD"
+}
+
+PROJECT_ROOT="$(find_project_root)"
+
+# Commands
+cmd_show() {
+    local component="${1:-}"
+    local section=""
+    local format="yaml"
+
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --section|-s) section="$2"; shift 2 ;;
+            --json)       format="json"; shift ;;
+            --yaml)       format="yaml"; shift ;;
+            *)            shift ;;
+        esac
+    done
+
+    if [[ -z "$component" ]]; then
+        die "Usage: spec show <component> [--section <name>]"
+    fi
+
+    local spec_path
+    spec_path=$(find_spec "$component")
+
+    if [[ -z "$spec_path" ]]; then
+        die "Spec not found: $component"
+    fi
+
+    if [[ -n "$section" ]]; then
+        show_section "$spec_path" "$section" "$format"
+    else
+        show_spec "$spec_path" "$format"
+    fi
+}
+
+cmd_query() {
+    local query="${1:-}"
+
+    if [[ -z "$query" ]]; then
+        die "Usage: spec query <query>"
+    fi
+
+    query_specs "$query"
+}
+
+cmd_list() {
+    local show_missing=false
+    local show_stale=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --missing) show_missing=true; shift ;;
+            --stale)   show_stale=true; shift ;;
+            *)         shift ;;
+        esac
+    done
+
+    list_specs "$show_missing" "$show_stale"
+}
+
+cmd_new() {
+    local name="${1:-}"
+    local type="tool"
+
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --type|-t) type="$2"; shift 2 ;;
+            *)         shift ;;
+        esac
+    done
+
+    if [[ -z "$name" ]]; then
+        die "Usage: spec new <name> [--type tool|library|service|doc]"
+    fi
+
+    create_spec "$name" "$type"
+}
+
+cmd_validate() {
+    local path="${1:-.}"
+    validate_specs "$path"
+}
+
+cmd_diff() {
+    local component="${1:-}"
+
+    if [[ -z "$component" ]]; then
+        die "Usage: spec diff <component>"
+    fi
+
+    diff_spec "$component"
+}
+
+cmd_context() {
+    local task="${1:-}"
+
+    if [[ -z "$task" ]]; then
+        die "Usage: spec context <task description>"
+    fi
+
+    get_context_for_task "$task"
+}
+
+cmd_inject() {
+    local component=""
+    local all=false
+    local summary=false
+    local format="markdown"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --component|-c) component="$2"; shift 2 ;;
+            --all)          all=true; shift ;;
+            --summary)      summary=true; shift ;;
+            --format|-f)    format="$2"; shift 2 ;;
+            *)              shift ;;
+        esac
+    done
+
+    if [[ -n "$component" ]]; then
+        inject_spec "$component" "$format"
+    elif $summary; then
+        inject_summary
+    elif $all; then
+        inject_all_specs "$format"
+    else
+        die "Usage: spec inject --component <name> | --all | --summary"
+    fi
+}
+
+cmd_index() {
+    local action="${1:-rebuild}"
+
+    case "$action" in
+        rebuild) rebuild_index ;;
+        show)    show_index ;;
+        *)       die "Usage: spec index [rebuild|show]" ;;
+    esac
+}
+
+show_help() {
+    cat << 'EOF'
+spec - Rich specification management for Daedalos
+
+USAGE:
+    spec <command> [options]
+
+COMMANDS:
+    show <component>    Display spec for a component
+    query <query>       Search across all specs
+    list                List all specs in project
+    new <name>          Create new spec from template
+    validate [path]     Validate spec format
+    diff <component>    Compare spec to implementation
+    context <task>      Get relevant specs for a task
+    inject              Add spec context to CLAUDE.md
+    index               Manage spec index
+
+SHOW OPTIONS:
+    --section <name>    Show only one section
+    --json              Output as JSON
+    --yaml              Output as YAML (default)
+
+LIST OPTIONS:
+    --missing           Show components without specs
+    --stale             Show specs older than implementation
+
+NEW OPTIONS:
+    --type <type>       Type: tool, library, service, doc
+
+INJECT OPTIONS:
+    --component <name>  Inject specific component (full detail)
+    --all               Inject all specs (full detail)
+    --summary           Inject compact table (just intents)
+    --format <fmt>      Output format (markdown, yaml)
+
+EXAMPLES:
+    spec show undo
+    spec show undo --section intent
+    spec query "why sqlite"
+    spec context "fix undo restore"
+    spec new my-tool --type tool
+    spec validate
+    spec inject --summary
+    spec inject --all
+EOF
+}
+
+# Main
+case "${1:-help}" in
+    show)       shift; cmd_show "$@" ;;
+    query)      shift; cmd_query "$@" ;;
+    list)       shift; cmd_list "$@" ;;
+    new)        shift; cmd_new "$@" ;;
+    validate)   shift; cmd_validate "$@" ;;
+    diff)       shift; cmd_diff "$@" ;;
+    context)    shift; cmd_context "$@" ;;
+    inject)     shift; cmd_inject "$@" ;;
+    index)      shift; cmd_index "$@" ;;
+    help|--help|-h) show_help ;;
+    *)          die "Unknown command: $1. Try 'spec help'" ;;
+esac

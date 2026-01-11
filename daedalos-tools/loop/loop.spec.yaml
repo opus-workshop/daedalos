@@ -1,0 +1,376 @@
+name: loop
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Single-pass inference is a myth. Intelligent work is iterative.
+
+  The loop tool exists because the dominant mental model of AI coding -
+  "ask, receive, done" - is fundamentally broken. Real development is:
+  try → fail → learn → adjust → try again. The loop makes this explicit.
+
+  A loop is not a feature. A loop is how work gets done.
+
+  The key insight: humans iterate naturally ("let me try that again"),
+  but traditional AI workflows treat each request as isolated. The loop
+  tool is the bridge - it gives agents the ability to persist, retry,
+  and self-correct until a verifiable goal is met.
+
+  This changes the economics of AI coding. Instead of hoping the first
+  attempt works, you define success (the "promise") and let the system
+  iterate until it gets there. Failures become data for the next attempt,
+  not endpoints.
+
+  The loop embodies Ralph Wiggum Technique: "I keep trying until it works."
+  Simple, relentless, effective.
+
+constraints:
+  - Agent-agnostic: Must work with OpenCode, Claude, Aider, Cursor, or any CLI agent
+  - No vendor lock-in: OpenCode (FOSS) is the default, no API keys required
+  - Checkpoint every iteration: Never lose progress, always can rollback
+  - Promise is the contract: Exit code 0 means done, anything else means continue
+  - Max iterations prevent runaway: Default 10, configurable per-task
+  - Works without daemon: CLI can run loops directly (daemon is for background/management)
+  - Sub-second promise verification for simple checks
+  - Must support Btrfs snapshots AND git-based fallback
+  - Context injection mid-loop: Humans can steer without restarting
+
+interface:
+  commands:
+    start:
+      args: "<task> --promise <cmd> [-n max] [--agent name] [--template name]"
+      returns: "Loop ID, begins iteration until promise met or max reached"
+      example: "loop start 'fix failing tests' --promise 'pytest'"
+
+    status:
+      args: "[loop-id] [--json] [--watch]"
+      returns: "Status of running/completed loops with iteration counts"
+      example: "loop status abc123"
+
+    watch:
+      args: "<loop-id>"
+      returns: "Live stream of loop execution with keybindings"
+      example: "loop watch abc123"
+
+    pause:
+      args: "<loop-id>"
+      returns: "Pauses after current iteration completes"
+      example: "loop pause abc123"
+
+    resume:
+      args: "<loop-id>"
+      returns: "Resumes paused loop from last state"
+      example: "loop resume abc123"
+
+    cancel:
+      args: "<loop-id> [--rollback | --keep]"
+      returns: "Stops loop, optionally rolls back to start"
+      example: "loop cancel abc123 --rollback"
+
+    inject:
+      args: "<loop-id> <context> | --file <path>"
+      returns: "Adds context to next iteration prompt"
+      example: "loop inject abc123 'focus on UserService'"
+
+    checkpoint:
+      args: "<loop-id> [name]"
+      returns: "Creates named restore point at current state"
+      example: "loop checkpoint abc123 'before-refactor'"
+
+    rollback:
+      args: "<loop-id> <reference>"
+      returns: "Restores to checkpoint (name, iteration number, or 'initial')"
+      example: "loop rollback abc123 3"
+
+    history:
+      args: "<loop-id> [--diff iter] [--verbose]"
+      returns: "Iteration history with promise results and durations"
+      example: "loop history abc123"
+
+    list:
+      args: "[--status s] [--agent a] [--since time] [--json]"
+      returns: "All loops matching filters"
+      example: "loop list --status running"
+
+    template:
+      args: "list | show <name> | create <name>"
+      returns: "Manages reusable loop configurations"
+      example: "loop template show tdd"
+
+  exit_codes:
+    0: "Promise met - loop completed successfully"
+    1: "Max iterations reached - promise never met"
+    2: "Cancelled by user"
+    3: "Crashed (agent error, timeout, system failure)"
+    4: "Invalid arguments or configuration"
+    5: "Daemon communication error"
+
+examples:
+  - scenario: "Fix failing tests"
+    context: "Tests are broken, user wants them fixed without manual iteration"
+    action: "loop start 'fix the failing tests' --promise 'npm test'"
+    result: "Agent iterates, adjusting code until all tests pass"
+    why_it_matters: |
+      This is the core use case. User defines success (tests pass),
+      agent figures out how to get there. No hand-holding, no back-and-forth.
+
+  - scenario: "TDD workflow"
+    context: "User wants to add a feature using test-driven development"
+    action: "loop start 'add email validation' --template tdd"
+    result: "Agent writes failing tests first, then implements to pass them"
+    why_it_matters: |
+      Templates encode best practices. TDD template structures the loop
+      to write tests before implementation - enforcing discipline.
+
+  - scenario: "Human steers mid-loop"
+    context: "Agent is going in wrong direction on iteration 3"
+    action: "loop inject abc123 'ignore the legacy code, focus on the new service'"
+    result: "Next iteration incorporates the hint, changes approach"
+    why_it_matters: |
+      Loops aren't black boxes. Humans can guide without restarting.
+      The agent gets context, not commands.
+
+  - scenario: "Best-of-N exploration"
+    context: "Optimization problem with multiple valid approaches"
+    action: "loop start 'optimize search' --promise 'bench < 100ms' --best-of 3"
+    result: "Three parallel branches try different approaches, best one wins"
+    why_it_matters: |
+      CePO-style exploration. Instead of one path, explore several.
+      Selection based on promise + code quality metrics.
+
+  - scenario: "Recovery from bad iteration"
+    context: "Iteration 5 made things worse, want to go back to iteration 3"
+    action: "loop rollback abc123 3"
+    result: "State restored to post-iteration-3, loop continues from there"
+    why_it_matters: |
+      Checkpoints aren't just for failure recovery - they're branch points.
+      Try something, doesn't work? Go back and try different direction.
+
+  - scenario: "Multi-agent workflow"
+    context: "Feature needs exploration, implementation, and review"
+    action: "agent workflow start feature 'add user auth'"
+    result: "Explorer → Planner → Implementer → Reviewer, each a loop"
+    why_it_matters: |
+      Loops compose. Workflow is just coordinated loops with context passing.
+      Each agent has clear scope and success criteria.
+
+decisions:
+  - choice: "Promise is just an exit code, not structured output"
+    why: |
+      Simplest possible interface. Exit 0 = done, anything else = continue.
+
+      This works with ANY verification tool - test runners, linters, build
+      tools, custom scripts. No special integration needed. Unix philosophy.
+
+      Structured output (JSON results, metrics) is tempting but adds
+      complexity at the core abstraction. Keep promises simple, do
+      analysis elsewhere.
+    alternatives:
+      - option: "JSON promise result with metrics and diagnostics"
+        rejected_because: "Adds complexity to every verification script, not all tools output JSON"
+      - option: "Promise DSL with assertions"
+        rejected_because: "Reinventing test frameworks, shell commands are more universal"
+      - option: "Multi-stage promises (partial credit)"
+        rejected_because: "Muddies the binary done/not-done decision, encourages premature completion"
+
+  - choice: "Checkpoint at iteration START, not end"
+    why: |
+      If we checkpoint after changes, a crash during verification loses
+      the checkpoint. By checkpointing before the agent runs, we always
+      have a clean restore point.
+
+      This also makes "rollback to iteration N" semantically clear:
+      you get the state BEFORE iteration N started, as if N never ran.
+    alternatives:
+      - option: "Checkpoint after agent changes, before verification"
+        rejected_because: "Crash during verification = lost checkpoint"
+      - option: "Checkpoint at both start and end"
+        rejected_because: "Doubles storage, unclear semantics on rollback"
+
+  - choice: "Agent-agnostic via command abstraction"
+    why: |
+      Each agent (OpenCode, Claude, Aider) is wrapped in a simple
+      send-prompt-get-response abstraction. The loop doesn't know or
+      care which agent runs - it just sends context and waits for changes.
+
+      This means new agents can be added without changing loop core.
+      It also means loop works even if agent APIs change.
+    alternatives:
+      - option: "Native integration with each agent's SDK"
+        rejected_because: "Tight coupling, maintenance nightmare, API churn"
+      - option: "Agent-specific loop implementations"
+        rejected_because: "Code duplication, feature divergence"
+
+  - choice: "Templates are YAML files, not code"
+    why: |
+      Templates should be readable, shareable, and versionable.
+      YAML captures: default args, promise, agent hints, max iterations.
+
+      Code templates would be more powerful but harder to share and
+      inspect. YAML is good enough for 95% of cases.
+    alternatives:
+      - option: "Python/JavaScript template functions"
+        rejected_because: "Requires execution, harder to share, security concerns"
+      - option: "JSON templates"
+        rejected_because: "Worse for multi-line strings (prompts), less readable"
+
+  - choice: "Daemon is optional, not required"
+    why: |
+      CLI should work standalone for simple use cases. Daemon adds:
+      - Background execution
+      - Process supervision
+      - Resource management
+      - Web UI
+
+      But requiring daemon for basic loop is over-engineering.
+      "loop start" works without loopd running.
+    alternatives:
+      - option: "All operations through daemon"
+        rejected_because: "Heavy setup for simple use, daemon becomes SPOF"
+      - option: "No daemon at all"
+        rejected_because: "Background loops need supervision, resource limits"
+
+  - choice: "Iteration state persisted as JSON, not database"
+    why: |
+      Loop state is simple: iterations array, current state, checkpoints.
+      JSON is:
+      - Human-readable for debugging
+      - Easy to backup/move
+      - No database dependency
+
+      SQLite adds complexity we don't need at this layer.
+      (Note: undo uses SQLite because it has many small records to query.
+      Loop has few large records - different access pattern.)
+    alternatives:
+      - option: "SQLite for loop state"
+        rejected_because: "Overkill for ~10-100 records per loop, adds dependency"
+      - option: "In-memory only"
+        rejected_because: "Loses state on crash, can't resume across sessions"
+
+anti_patterns:
+  - pattern: "Starting a loop without a verifiable promise"
+    why_bad: |
+      "loop start 'make the code better'" with no promise is pointless.
+      The agent will run forever or hit max iterations with no feedback.
+
+      A loop without a promise is just an agent call. Use the agent directly.
+
+      Vague promises like "grep -q improvement" are almost as bad -
+      they can be gamed or satisfied trivially.
+
+  - pattern: "Using loops for one-shot tasks"
+    why_bad: |
+      If the task is: "add a console.log statement" - just do it.
+      Loops add overhead (checkpoints, state management, promise checks).
+
+      Use loops for tasks with genuine iteration potential:
+      - Fixing tests (might need multiple attempts)
+      - Refactoring (might break things, need verification)
+      - Implementing features (complex, multi-file)
+
+  - pattern: "Setting max_iterations too high"
+    why_bad: |
+      --max-iterations 100 seems generous but often means the task is
+      underspecified or the promise is wrong.
+
+      If an agent can't solve it in 10-15 iterations, something is wrong:
+      - Task too vague
+      - Promise too strict
+      - Wrong approach
+
+      Better to fail fast at 10 and reassess than burn 100 iterations.
+
+  - pattern: "Ignoring checkpoint storage"
+    why_bad: |
+      Each iteration creates a checkpoint. Large codebases + many iterations
+      = significant storage. Default retention is 24h but long-running
+      loops on big repos can fill disks.
+
+      For large repos: use --checkpoint git (less storage than btrfs copies)
+      or --checkpoint none for low-risk changes.
+
+  - pattern: "Running multiple loops on overlapping files"
+    why_bad: |
+      Two loops modifying the same files will conflict. One's checkpoint
+      will overwrite the other's changes.
+
+      Use workflow coordination (agent workflow) or explicit file scoping
+      when running parallel loops.
+
+  - pattern: "Using --best-of for deterministic tasks"
+    why_bad: |
+      Best-of-N is for exploration when multiple approaches are valid.
+      For "fix the typo" - there's one right answer. Best-of wastes compute.
+
+      Use --best-of for optimization, architecture choices, creative solutions.
+
+connects_to:
+  - component: undo
+    relationship: |
+      Loop uses undo's checkpoint system for iteration safety.
+      Each iteration start calls: undo checkpoint 'loop-{id}-iter-{n}'
+
+      Rollback is delegated to undo: loop rollback → undo restore
+
+      This means undo timeline shows loop iterations alongside manual edits,
+      creating a unified history view.
+
+  - component: verify
+    relationship: |
+      Verify is often the promise command: --promise "verify --quick"
+
+      When loop completes, it can optionally run full verify.
+      Verify failures mid-loop provide structured feedback for next iteration.
+
+  - component: agent
+    relationship: |
+      Agent templates define how agents are spawned and configured.
+      Loop uses agent spawn/send for orchestration.
+
+      Workflows are coordinated loops with agent handoffs:
+      explorer-loop → planner-loop → implementer-loop
+
+  - component: codex
+    relationship: |
+      Before first iteration, loop can query codex for relevant context:
+      "codex search {task description}" → inject results into prompt
+
+      This grounds the agent in the actual codebase, reducing hallucination.
+
+  - component: spec
+    relationship: |
+      When loop starts, spec_loader.py queries: spec context "{task}"
+      Relevant specs (intent, interface, anti_patterns) are injected into
+      the initial prompt.
+
+      This makes loops spec-aware - agents know the design decisions.
+
+  - component: gates
+    relationship: |
+      Gate checks happen before each iteration starts.
+      If supervision level requires approval for file changes,
+      the loop pauses and waits for human approval.
+
+      In 'collaborative' mode, each iteration is a checkpoint for review.
+
+  - component: error-db
+    relationship: |
+      When promise fails with an error, loop can query error-db:
+      "error-db search {error message}" → inject known solutions
+
+      Common errors get solved faster by learning from past solutions.
+
+metrics:
+  success_criteria:
+    - "Promise is met within max_iterations 90%+ of well-specified tasks"
+    - "Checkpoint/rollback adds < 1s overhead per iteration"
+    - "Users understand loop vs direct agent call distinction"
+    - "Injected context observably improves next iteration"
+    - "Best-of-N produces measurably better results than single attempt"
+
+  failure_indicators:
+    - "Loops consistently hit max_iterations without meeting promise"
+    - "Users set max_iterations very high 'just in case'"
+    - "Checkpoint storage grows faster than expected"
+    - "Users skip loops and call agents directly"
+    - "Context injection ignored by agent (lost in noise)"

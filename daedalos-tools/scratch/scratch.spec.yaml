@@ -1,0 +1,209 @@
+name: scratch
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Fear of breaking things prevents bold experiments.
+
+  Scratch environments are disposable project copies where anything goes.
+  "What if I deleted half the codebase?" - find out in a scratch, not the
+  real project. If it works, promote it. If not, abandon it.
+
+  The key insight: experimentation requires disposability. When reverting
+  is instant and free, people try more radical approaches. Agents can
+  make architectural changes without fear.
+
+  This is the safety net that enables bold thinking.
+
+constraints:
+  - Creation must be instant (< 1 second on Btrfs, < 10s on git worktree)
+  - Space efficient - don't duplicate entire project
+  - Works without Btrfs (git worktree fallback)
+  - Promotion preserves git history
+  - Auto-expiration after 24 hours (default)
+  - Multiple scratches can coexist for same project
+
+interface:
+  commands:
+    new:
+      args: "<name> [--from <path>] [--mode btrfs|git|tmpfs]"
+      returns: "Creates isolated copy, reports path and mode used"
+      example: "scratch new risky-refactor"
+
+    list:
+      args: "[--all] [--expired]"
+      returns: "All scratch environments with age and source project"
+      example: "scratch list"
+
+    enter:
+      args: "<name>"
+      returns: "Changes to scratch directory, starts shell with indicator"
+      example: "scratch enter risky-refactor"
+
+    diff:
+      args: "<name> [--stat]"
+      returns: "Differences between scratch and original"
+      example: "scratch diff risky-refactor"
+
+    promote:
+      args: "<name> [--branch <name>]"
+      returns: "Converts scratch to real git branch, commits changes"
+      example: "scratch promote risky-refactor --branch feature/new-arch"
+
+    abandon:
+      args: "<name> [--force]"
+      returns: "Deletes scratch environment, recovers space"
+      example: "scratch abandon risky-refactor"
+
+    status:
+      args: "none"
+      returns: "Current scratch status if in a scratch environment"
+      example: "scratch status"
+
+  exit_codes:
+    0: success
+    1: scratch not found or operation failed
+    2: scratch already exists (for new)
+    3: not in a git repository
+
+examples:
+  - scenario: "Agent wants to try risky refactor"
+    context: "Major architectural change that might break everything"
+    action: "scratch new arch-experiment"
+    result: "Isolated copy created instantly, agent proceeds fearlessly"
+    why_it_matters: "Bold changes happen without fear of breaking production"
+
+  - scenario: "Experiment worked, integrate it"
+    context: "Scratch environment has successful changes"
+    action: "scratch promote arch-experiment --branch feature/new-arch"
+    result: "Changes become real branch with commit, scratch cleaned up"
+    why_it_matters: "Good experiments become real code seamlessly"
+
+  - scenario: "Experiment failed, clean up"
+    context: "Scratch environment has broken code"
+    action: "scratch abandon arch-experiment"
+    result: "Space recovered, no trace of failed experiment"
+    why_it_matters: "Failed experiments vanish cleanly, no cleanup burden"
+
+  - scenario: "Compare experiments"
+    context: "Two different approaches in two scratches"
+    action: "scratch diff experiment-1 && scratch diff experiment-2"
+    result: "Clear comparison of what each approach changed"
+    why_it_matters: "Data-driven decision about which approach to promote"
+
+  - scenario: "Parallel exploration"
+    context: "Agent spawns children to try different approaches"
+    action: |
+      scratch new approach-a
+      scratch new approach-b
+      # Run agents in each
+    result: "Multiple isolated experiments run in parallel"
+    why_it_matters: "Parallel exploration without interference"
+
+decisions:
+  - choice: "Btrfs snapshots as primary, git worktree as fallback"
+    why: |
+      Btrfs snapshots are instant and copy-on-write. A 10GB project
+      creates a 0-byte snapshot that grows only as files change.
+
+      Git worktree is slower but works everywhere. It shares the .git
+      directory, so still space efficient.
+
+      Detect Btrfs automatically, fall back to git worktree silently.
+    alternatives:
+      - option: "Always use git worktree"
+        rejected_because: "Misses Btrfs performance when available"
+      - option: "rsync copy"
+        rejected_because: "Slow, space inefficient, poor for large projects"
+      - option: "Docker containers"
+        rejected_because: "Overkill, slow startup, complex setup"
+
+  - choice: "24-hour auto-expiration"
+    why: |
+      Scratches are meant to be ephemeral. Old scratches clutter the system
+      and waste space. Automatic cleanup keeps things tidy.
+
+      24 hours is long enough for any experiment but short enough to
+      prevent accumulation. Can be extended with scratch extend.
+
+      Warning shown on enter if expired but not yet cleaned.
+
+  - choice: "Shell prompt indicator when in scratch"
+    why: |
+      Users must know they're in a scratch, not the real project.
+      Prompt becomes "(scratch:name) $" to make it obvious.
+
+      This prevents confusion and accidental work in wrong environment.
+
+  - choice: "Promote creates branch, not merge"
+    why: |
+      Merging immediately is presumptuous. User might want to review,
+      create PR, or merge differently.
+
+      Promote creates a branch with the scratch contents. User decides
+      what to do with it. Less magic, more control.
+
+anti_patterns:
+  - pattern: "Leaving scratches to accumulate"
+    why_bad: |
+      Scratches should be promoted or abandoned within a session.
+      Auto-expiration handles forgotten ones, but explicit cleanup is better.
+
+  - pattern: "Using scratch for long-running work"
+    why_bad: |
+      Scratches are for experiments, not production work. If something
+      takes more than a day, promote it to a real branch.
+
+  - pattern: "Promoting without review"
+    why_bad: |
+      scratch promote should trigger diff review. Just because it worked
+      doesn't mean it's good. Prompt for confirmation on large diffs.
+
+  - pattern: "Blocking on Btrfs unavailability"
+    why_bad: |
+      Fallback to git worktree must be seamless. User shouldn't see
+      "Btrfs not available" errors - just silently use worktree.
+
+  - pattern: "Polluting original .git with scratch refs"
+    why_bad: |
+      Scratch branches should be cleaned up when abandoned.
+      Don't leave "scratch-experiment-1" branches cluttering git log.
+
+connects_to:
+  - component: undo
+    relationship: |
+      Scratch has its own undo timeline within the environment.
+      Changes in scratch are tracked independently.
+      When abandoned, scratch undo history is cleaned up too.
+      When promoted, undo history could optionally transfer.
+
+  - component: loop
+    relationship: |
+      Loop can run iterations in a scratch environment.
+      "loop start --scratch" creates fresh scratch per iteration.
+      This enables truly destructive iteration styles.
+
+  - component: agent
+    relationship: |
+      Spawned agents can each get their own scratch.
+      Parent spawns agent with "scratch new agent-1-workspace".
+      Agent works in isolation, results promoted if successful.
+
+  - component: verify
+    relationship: |
+      Promote should require verify to pass.
+      "scratch promote" runs verify, warns if failing.
+      Option to force promote anyway with --force.
+
+metrics:
+  success_criteria:
+    - "scratch new completes in < 1s on Btrfs, < 10s on git"
+    - "Users try bold experiments they wouldn't try otherwise"
+    - "Promotion rate > 30% (scratches aren't just forgotten)"
+    - "Zero incidents of wrong work in wrong environment"
+
+  failure_indicators:
+    - "Users avoiding scratch for real experiments"
+    - "Scratches accumulating beyond expiration"
+    - "Promotion losing changes or history"
+    - "Confusion about whether in scratch or real"
