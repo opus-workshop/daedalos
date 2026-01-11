@@ -1,0 +1,328 @@
+name: notify
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Attention is scarce. Interruption should be meaningful.
+
+  Long-running commands don't need babysitting. Builds take minutes,
+  tests take time, deploys are slow. The developer switches context -
+  checking email, reading docs, grabbing coffee. When the command
+  finishes, they need to know. Not 30 minutes later when they remember.
+  Now.
+
+  The notify tool is attention management infrastructure. It closes
+  the loop between starting something and knowing it's done. This
+  sounds trivial but transforms how developers work. You can start
+  a 10-minute build and actually do something else, confident you'll
+  be pulled back at exactly the right moment.
+
+  For AI agents, notify is even more critical. An agent running in
+  the background needs to surface important events: task complete,
+  error encountered, approval needed. Without notification, agents
+  are black boxes. With notification, they're collaborative partners.
+
+  The philosophy: notify is for important state changes, not progress
+  updates. "Build complete" yes. "Compiled file 47 of 200" no.
+
+constraints:
+  - Must work on macOS, Linux, and WSL
+  - Falls back to terminal output when no notification system available
+  - No daemon required - CLI can send notifications directly
+  - Notifications must include source context (which tool, which task)
+  - Sound is on by default but configurable
+  - History persists across sessions
+  - No network required - fully local operation
+  - Sub-second notification delivery
+
+interface:
+  commands:
+    send:
+      args: "<message> [--title T] [--icon I] [--urgent] [--timeout N] [--action CMD]"
+      returns: "Notification sent, logged to history"
+      example: "notify send 'Build complete' --title 'Frontend'"
+
+    success:
+      args: "<message>"
+      returns: "Green success notification"
+      example: "notify success 'All tests passed'"
+
+    error:
+      args: "<message> [--urgent]"
+      returns: "Red error notification, optionally urgent"
+      example: "notify error 'Build failed' --urgent"
+
+    warn:
+      args: "<message>"
+      returns: "Yellow warning notification"
+      example: "notify warn 'Deprecated API used'"
+
+    progress:
+      args: "<message>"
+      returns: "Low-priority progress notification (no sound)"
+      example: "notify progress 'Downloading dependencies...'"
+
+    watch:
+      args: "<command>"
+      returns: "Runs command, notifies on completion with duration"
+      example: "notify watch 'npm run build'"
+
+    history:
+      args: "[limit]"
+      returns: "Recent notification history"
+      example: "notify history 20"
+
+    clear:
+      args: ""
+      returns: "Clears notification history"
+      example: "notify clear"
+
+    test:
+      args: ""
+      returns: "Sends test notification, shows detected backend"
+      example: "notify test"
+
+  exit_codes:
+    0: "Notification sent successfully"
+    1: "Notification failed (backend error)"
+    2: "Invalid arguments"
+    3: "Watch command failed (passes through exit code)"
+
+examples:
+  - scenario: "Build completes while developer is away"
+    context: "Started npm run build, switched to browser to read docs"
+    action: "notify watch 'npm run build'"
+    result: "Desktop notification appears with build time, sound plays"
+    why_it_matters: |
+      Instant awareness. Developer sees notification, returns to terminal,
+      continues work. No wasted time wondering "is it done yet?"
+
+  - scenario: "Tests fail in background"
+    context: "Running test suite, working on another file"
+    action: "notify error 'Tests failed: 3 failures' --urgent"
+    result: "Urgent notification persists until acknowledged"
+    why_it_matters: |
+      Failures demand attention. Urgent flag ensures the notification
+      isn't dismissed or lost in a notification flood.
+
+  - scenario: "AI agent needs approval"
+    context: "Agent running loop, reaches a gate requiring human approval"
+    action: "notify 'Approval needed: delete production database' --urgent --action 'gates approve'"
+    result: "Notification with action button that opens approval flow"
+    why_it_matters: |
+      Agents can request human attention without blocking indefinitely.
+      The human gets notified on their terms, not polling a terminal.
+
+  - scenario: "Long deploy pipeline"
+    context: "Deploy takes 15 minutes, developer wants to know each stage"
+    action: "notify progress 'Stage 1: Building...' followed by notify success 'Deployed!'"
+    result: "Progress notifications silent, final notification with sound"
+    why_it_matters: |
+      Progress notifications are informational, not attention-grabbing.
+      Only the completion notification interrupts. Balanced signal-to-noise.
+
+  - scenario: "Checking notification history"
+    context: "Returned from meeting, want to see what happened"
+    action: "notify history"
+    result: "List of all notifications with timestamps and urgency levels"
+    why_it_matters: |
+      History is audit log. See exactly what happened while away.
+      Useful for debugging, time tracking, understanding agent behavior.
+
+decisions:
+  - choice: "Auto-detect notification backend based on platform"
+    why: |
+      Users shouldn't configure which notification system to use.
+      macOS has terminal-notifier or osascript. Linux has notify-send.
+      WSL can call Windows notifications. Detect and use what's available.
+
+      Fallback to echo ensures the tool always "works" even without
+      desktop notifications.
+    alternatives:
+      - option: "Require explicit backend configuration"
+        rejected_because: "Adds friction, most users have one obvious choice"
+      - option: "Only support notify-send"
+        rejected_because: "Excludes macOS and WSL users"
+      - option: "Build custom notification daemon"
+        rejected_because: "Reinventing the wheel, integration nightmare"
+
+  - choice: "Sound on by default, configurable per-notification"
+    why: |
+      The whole point is to get attention. Silent notifications are
+      easily missed. Sound ensures awareness even when not looking
+      at screen.
+
+      Progress notifications are silent by default because they're
+      informational, not completion events.
+    alternatives:
+      - option: "Sound off by default"
+        rejected_because: "Defeats the purpose - notifications get ignored"
+      - option: "Always play sound"
+        rejected_because: "Progress spam would be annoying"
+      - option: "User must configure sound preference"
+        rejected_because: "Sensible defaults should just work"
+
+  - choice: "watch command wraps any shell command"
+    why: |
+      The most common pattern is "run this and tell me when done."
+      watch provides this in one command:
+
+      notify watch 'npm run build'
+
+      Instead of:
+      npm run build; notify success 'Build done'
+
+      It also captures exit code and duration automatically.
+    alternatives:
+      - option: "Require users to chain commands manually"
+        rejected_because: "Verbose, error-prone, loses duration tracking"
+      - option: "Only support specific commands (npm, make, etc.)"
+        rejected_because: "Arbitrary limitation, breaks Unix philosophy"
+
+  - choice: "History stored as simple pipe-delimited file"
+    why: |
+      Notification history is append-only, rarely queried complex ways.
+      A simple text file is:
+      - Easy to debug (cat the file)
+      - Easy to clear (rm the file)
+      - No database dependency
+      - Greppable
+
+      If we needed complex queries, SQLite would be warranted.
+      We don't.
+    alternatives:
+      - option: "SQLite database"
+        rejected_because: "Overkill for append-only log of simple records"
+      - option: "JSON lines"
+        rejected_because: "Harder to parse in shell, no benefit for this use case"
+      - option: "No history"
+        rejected_because: "Loses valuable audit trail"
+
+  - choice: "Semantic notification types (success, error, warn) vs generic"
+    why: |
+      Semantic types encode intent clearly:
+      - notify success: green, positive sound
+      - notify error: red, alert sound
+      - notify warn: yellow, cautionary
+
+      This is more readable than --color green --icon success --sound ding
+      for every notification. Common cases should be easy.
+    alternatives:
+      - option: "Only generic notify with all options"
+        rejected_because: "Verbose for common cases"
+      - option: "Infer type from message content"
+        rejected_because: "Unreliable, 'error in the log' is not an error notification"
+
+anti_patterns:
+  - pattern: "Using notify for progress updates"
+    why_bad: |
+      Notifications are interruptions. Every notification trains the user
+      to ignore them or disable them entirely.
+
+      "Downloading 50%..." does not need a notification.
+      "Download complete" does.
+
+      Use notify progress sparingly - it's silent but still creates
+      visual noise.
+
+  - pattern: "Notify without context"
+    why_bad: |
+      "Done" is not helpful. What's done? Which project? What was it doing?
+
+      Always include enough context:
+      "Build complete: frontend (2m 34s)"
+      "Tests passed: api (47 specs)"
+
+      Future-you reading history will thank present-you.
+
+  - pattern: "Using urgent for everything"
+    why_bad: |
+      If everything is urgent, nothing is. Urgent notifications persist,
+      play distinct sounds, and demand attention. Reserve for:
+      - Actual errors
+      - Human approval needed
+      - Blocking issues
+
+      Regular completions don't need urgent flag.
+
+  - pattern: "Not using watch for long commands"
+    why_bad: |
+      Running 'npm run build' without watch means:
+      - You have to watch the terminal or manually add notification
+      - No timing information captured
+      - Exit code notification requires manual handling
+
+      watch handles all of this. Use it.
+
+  - pattern: "Disabling notifications entirely"
+    why_bad: |
+      Usually done because of notification spam. Fix the spam instead.
+      Disable sound if needed, but keep visual notifications.
+
+      An AI agent with notifications disabled is a black box.
+
+connects_to:
+  - component: loop
+    relationship: |
+      Loop sends notifications on completion or failure:
+      - "Loop complete: fix-tests (5 iterations, 3m 42s)"
+      - "Loop failed: max iterations reached"
+
+      This is automatic - loops notify without explicit configuration.
+
+  - component: gates
+    relationship: |
+      Gates use notify for approval requests:
+      "Approval needed: agent wants to delete config.json"
+
+      Urgent flag ensures human sees it even if away from terminal.
+      Action buttons can launch approval flow directly.
+
+  - component: verify
+    relationship: |
+      After verify runs, result can be notified:
+      verify && notify success "All checks passed"
+      verify || notify error "Verification failed"
+
+      Or use: notify watch 'verify'
+
+  - component: agent
+    relationship: |
+      Agents send notifications for state changes:
+      - Agent spawned
+      - Task complete
+      - Error encountered
+      - Waiting for input
+
+      Multi-agent workflows use notify for coordination awareness.
+
+  - component: journal
+    relationship: |
+      Notifications are also logged to journal with category "notify".
+      This creates a unified timeline: notification sent = journal entry.
+
+      journal search --category notify shows notification history
+      with full context.
+
+  - component: focus
+    relationship: |
+      Focus tool can suppress non-urgent notifications during
+      Pomodoro sessions. Critical notifications still get through.
+
+      This prevents notification-driven context switching during
+      focused work periods.
+
+metrics:
+  success_criteria:
+    - "Notification delivery < 1 second from send"
+    - "Users return to completed tasks within 1 minute of notification"
+    - "Zero missed critical notifications (errors, approvals)"
+    - "Notification history searchable and accurate"
+    - "Works identically across macOS, Linux, WSL"
+
+  failure_indicators:
+    - "Users disable notifications due to spam"
+    - "Notifications frequently missed or ignored"
+    - "Backend detection fails on supported platforms"
+    - "Sound plays when it shouldn't (or vice versa)"
+    - "History grows unbounded, consumes disk space"

@@ -1,0 +1,236 @@
+name: pair
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Collaboration is multiplied when friction is eliminated.
+
+  Pair programming is powerful but traditionally painful - SSH tunnels, screen
+  sharing setup, "can you see my screen?", firewall holes, video lag. By the
+  time you've set it up, the creative momentum is gone.
+
+  The pair tool makes sharing a terminal instant and obvious. Start a session,
+  share a command, partner types it, done. The terminal becomes a shared space
+  where both humans (or human and AI) can see, discuss, and optionally control
+  the same environment.
+
+  This isn't about enforcing pair programming. It's about removing the barrier
+  so people actually do it when it would help. The tool should be so easy that
+  "want to pair on this?" becomes a natural response to getting stuck.
+
+  Key insight: The best collaboration happens in shared context. When you can
+  see exactly what your partner sees, misunderstandings evaporate.
+
+constraints:
+  - tmux is the only required dependency (universally available)
+  - Session creation must complete in under 2 seconds
+  - No account creation, no cloud services, no external dependencies
+  - Works completely offline for local pairing
+  - Socket permissions must allow group access but not world-readable
+  - tmate integration optional for remote/public sharing
+  - Must preserve normal terminal workflow (not a special "pairing mode")
+
+interface:
+  commands:
+    start:
+      args: "[NAME] [--driver|--navigator|--equal] [--project PATH] [--tmate]"
+      returns: "Creates session, displays join instructions, attaches"
+      example: "pair start feature-work"
+
+    join:
+      args: "<NAME> [--readonly]"
+      returns: "Attaches to existing session"
+      example: "pair join swift-fox-42"
+
+    leave:
+      args: "(none)"
+      returns: "Detaches from session without ending it"
+      example: "pair leave"
+
+    list:
+      args: "(none)"
+      returns: "Shows all active sessions with participant counts"
+      example: "pair list"
+
+    invite:
+      args: "(none)"
+      returns: "Displays join commands (local and remote)"
+      example: "pair invite"
+
+    end:
+      args: "[NAME]"
+      returns: "Terminates session, disconnects all participants"
+      example: "pair end feature-work"
+
+  exit_codes:
+    0: success
+    1: operation failed (session not found, tmux error)
+    2: tmux not installed
+
+examples:
+  - scenario: "Developer wants quick help from teammate"
+    context: "Stuck on weird CSS bug, teammate is across the office"
+    action: "pair start css-hell"
+    result: "Session created, run 'pair join css-hell' displayed"
+    why_it_matters: "From stuck to collaborative in 5 seconds. No screen share setup."
+
+  - scenario: "AI agent needs human oversight for risky operation"
+    context: "Agent wants to delete production logs, human needs to verify"
+    action: "pair start --navigator (human watches AI drive)"
+    result: "Human can see exactly what AI sees and intervene if needed"
+    why_it_matters: "Supervision becomes natural, not burdensome"
+
+  - scenario: "Remote developer joins via SSH"
+    context: "Team member working from home, needs to pair on debugging"
+    action: "ssh user@work -t 'pair join debug-session'"
+    result: "Remote developer immediately sees same terminal"
+    why_it_matters: "Remote pairing as easy as local. No VPN required beyond SSH."
+
+  - scenario: "Onboarding new team member"
+    context: "New hire needs to learn codebase, senior dev guides them"
+    action: "pair start --driver (senior drives, new hire watches)"
+    result: "New hire sees exactly how senior navigates codebase"
+    why_it_matters: "Implicit knowledge transfer through observation"
+
+  - scenario: "Multiple reviewers need to see same thing"
+    context: "Architecture discussion, 3 people need shared view"
+    action: "Each runs 'pair join arch-review --readonly'"
+    result: "All see driver's terminal, can discuss without fighting for control"
+    why_it_matters: "Group collaboration without chaos of multiple cursors"
+
+decisions:
+  - choice: "tmux shared sockets over screen sharing or custom protocol"
+    why: |
+      tmux is already installed everywhere. Shared sockets are a native feature.
+      No new network protocols, no NAT traversal complexity, no video encoding.
+      Terminal sharing is just... sharing the terminal. Simple.
+
+      Alternative protocols would require installation, firewalls, and debugging
+      network issues. tmux Just Works.
+    alternatives:
+      - option: "WebRTC-based screen sharing"
+        rejected_because: "Requires browser, video encoding overhead, complex NAT traversal, overkill for terminal"
+      - option: "Custom TCP protocol"
+        rejected_because: "Reinventing the wheel, firewall issues, maintenance burden"
+      - option: "SSH multiplexing only"
+        rejected_because: "Harder to set up, less intuitive, not truly shared"
+
+  - choice: "Auto-generated memorable names (swift-fox-42) instead of UUIDs"
+    why: |
+      "Join swift-fox-42" is speakable over voice, typable from memory.
+      "Join a3f8c9e2-1b4d-4a5c-8f7e-..." is not. Names should be human-friendly
+      first, collision-resistant second.
+
+      The adjective-noun-number format gives ~100k combinations - plenty for
+      any reasonable number of concurrent sessions.
+    alternatives:
+      - option: "UUIDs"
+        rejected_because: "Impossible to communicate verbally, error-prone to type"
+      - option: "User-required names"
+        rejected_because: "Friction - forces decision before action"
+      - option: "Incrementing numbers"
+        rejected_because: "Collisions across machines, not memorable"
+
+  - choice: "Default mode is 'equal' (both can control)"
+    why: |
+      Most pairing is collaborative - both partners should be able to type.
+      Making this the default encourages true pairing over one-way observation.
+
+      Driver/navigator modes exist for structured pairing or supervision,
+      but shouldn't be the barrier you hit first.
+    alternatives:
+      - option: "Default to read-only for joiner"
+        rejected_because: "Assumes hierarchy, discourages collaboration"
+      - option: "Require mode selection"
+        rejected_because: "Friction - extra decision at session start"
+
+  - choice: "chmod 777 on socket for simplicity over fine-grained permissions"
+    why: |
+      Local pairing on same machine should Just Work. Complex permission
+      schemes add setup friction and debugging headaches.
+
+      For security-sensitive environments, sockets are in user's home directory
+      anyway. Remote access requires SSH authentication.
+    alternatives:
+      - option: "Group-based permissions with shared group"
+        rejected_because: "Requires group setup, admin involvement, session-specific"
+      - option: "ACLs"
+        rejected_because: "Not universally supported, complex to manage"
+
+anti_patterns:
+  - pattern: "Requiring account creation or cloud signup"
+    why_bad: |
+      The moment you ask someone to create an account, you've lost them.
+      Pairing should be as instant as "cd" or "ls". External dependencies
+      add friction, privacy concerns, and failure modes.
+
+  - pattern: "Building a custom terminal emulator"
+    why_bad: |
+      Users already have terminal setups they like. Forcing them into a
+      special environment for pairing means they won't pair. Integrate
+      with existing workflow, don't replace it.
+
+  - pattern: "Recording sessions by default"
+    why_bad: |
+      Surveillance kills psychological safety. People won't pair if they
+      feel watched. Recording should be opt-in and obvious. The journal
+      tool handles activity logging at appropriate granularity.
+
+  - pattern: "Complex role management (admin/moderator/viewer/...)"
+    why_bad: |
+      Three modes are enough: drive, watch, or equal. More granularity
+      adds cognitive load without practical benefit. Keep it simple.
+
+  - pattern: "Session persistence across reboots"
+    why_bad: |
+      Pair sessions are ephemeral by nature. If you need persistence,
+      you're probably doing something else (remote dev, CI). Don't
+      complicate the common case.
+
+connects_to:
+  - component: env
+    relationship: |
+      Pair sessions inherit the current project environment.
+      When pair starts in a project with 'env' active, the session
+      gets all the project's environment variables and settings.
+
+  - component: journal
+    relationship: |
+      Pair session lifecycle is logged:
+      - Session start (who, when, what project)
+      - Partner joins/leaves
+      - Session end
+      This creates an audit trail without recording content.
+
+  - component: notify
+    relationship: |
+      Desktop notifications for pair events:
+      - "Partner joined: alice"
+      - "Partner left"
+      Keeps host informed without needing to watch terminal.
+
+  - component: agent
+    relationship: |
+      AI agents can initiate pair sessions when they want human oversight.
+      "I'm about to do something risky, starting pair session for review..."
+      Enables collaborative supervision model.
+
+  - component: gates
+    relationship: |
+      Gates can require pairing for certain operations.
+      "file_delete at level=collaborative requires active pair session"
+      Enforces four-eyes principle when needed.
+
+metrics:
+  success_criteria:
+    - "Session creation < 2 seconds"
+    - "Partner can join within 5 seconds of receiving command"
+    - "No configuration required for basic usage"
+    - "Works over SSH without additional setup"
+    - "Users naturally reach for 'pair' when stuck"
+
+  failure_indicators:
+    - "Users share screens instead of using pair"
+    - "Session creation requires troubleshooting"
+    - "Partners can't connect due to permissions"
+    - "'pair' is seen as heavy/complex"

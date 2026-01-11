@@ -195,6 +195,16 @@ cmd_start() {
         die "Missing required argument: --promise <cmd>"
     fi
 
+    # Load spec context for the task
+    local spec_context=""
+    if command -v spec &>/dev/null || [[ -x "$SCRIPT_DIR/../spec/bin/spec" ]]; then
+        log_info "Loading relevant specs for task..."
+        spec_context=$("$SCRIPT_DIR/../spec/bin/spec" context "$prompt" 2>/dev/null || true)
+        if [[ -n "$spec_context" ]]; then
+            log_success "Loaded spec context"
+        fi
+    fi
+
     # Run the start command via Python
     run_python -c "
 import sys
@@ -211,6 +221,17 @@ import json
 prompt = '''$prompt'''
 promise = '''$promise'''
 max_iterations = $max_iterations
+spec_context = '''$spec_context'''
+
+# If we have spec context, prepend it to the prompt
+if spec_context.strip():
+    prompt = f'''<relevant_specifications>
+{spec_context}
+</relevant_specifications>
+
+TASK: {prompt}
+
+Use the specifications above to guide your work. Pay attention to intent and anti-patterns.'''
 agent_name = '$agent'
 agent_cmd = '$agent_cmd' if '$agent_cmd' else None
 checkpoint_strategy = '$checkpoint'

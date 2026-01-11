@@ -1,0 +1,336 @@
+name: session
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Work doesn't end when the terminal closes.
+
+  You're deep in a debugging session. Three terminal tabs, specific
+  directories, environment variables set just right, a git stash you
+  haven't applied yet. Your laptop needs to restart for updates.
+  Or you need to context-switch to a production issue. Or it's 6pm
+  and you need to stop but want to resume exactly where you were
+  tomorrow morning.
+
+  The session tool captures this ephemeral state. It's like a save
+  point in a video game. The game doesn't remember where you were
+  standing, what items you had equipped, what quest you were on -
+  unless you save. Session is that save button for terminal work.
+
+  The deeper insight: sessions are documentation. Looking at a saved
+  session tells you what someone was working on, how they had things
+  configured, what files they had open. This is invaluable for
+  handoffs, debugging "it worked yesterday," and reconstructing
+  context after interruption.
+
+  For AI agents, sessions enable persistence across conversations.
+  An agent can save its state, be terminated, and resume later with
+  full context. This transforms agents from ephemeral responders
+  to persistent collaborators.
+
+constraints:
+  - Capture must complete in < 5 seconds
+  - Restore must be non-destructive (doesn't overwrite current state)
+  - Session files must be portable (can share between machines)
+  - Never capture secrets or sensitive environment variables
+  - Works without tmux/screen (but captures their state when present)
+  - Storage efficient - compress and deduplicate where possible
+  - Maximum session size: 10MB (prevents accidental large file capture)
+
+interface:
+  commands:
+    save:
+      args: "[NAME]"
+      returns: "Session saved with name, path shown"
+      example: "session save 'debugging-auth'"
+
+    restore:
+      args: "[NAME] [--dry-run]"
+      returns: "Commands to run for restoration (doesn't execute)"
+      example: "session restore debugging-auth"
+
+    list:
+      args: "[--json]"
+      returns: "All saved sessions with metadata"
+      example: "session list"
+
+    show:
+      args: "<NAME>"
+      returns: "Detailed session contents"
+      example: "session show debugging-auth"
+
+    delete:
+      args: "<NAME>"
+      returns: "Session removed"
+      example: "session delete debugging-auth"
+
+    export:
+      args: "[NAME] [FILE]"
+      returns: "Session exported to shareable file"
+      example: "session export debugging-auth ./handoff.tar.gz"
+
+    import:
+      args: "<FILE>"
+      returns: "Session imported from file"
+      example: "session import ./handoff.tar.gz"
+
+    auto:
+      args: ""
+      returns: "Toggles auto-save on shell exit"
+      example: "session auto"
+
+  exit_codes:
+    0: "Success"
+    1: "Session not found"
+    2: "Save failed (permissions, disk space)"
+    3: "Invalid session file (import)"
+    4: "Nothing to save (empty session)"
+
+examples:
+  - scenario: "End of day save"
+    context: "Developer stopping work, wants to resume tomorrow"
+    action: "session save 'friday-evening'"
+    result: "Working directory, env vars, git state, recent history saved"
+    why_it_matters: |
+      Monday morning restoration is instant. No "where was I?"
+      No reconstructing mental context. Just: session restore friday-evening
+
+  - scenario: "Context switch for urgent issue"
+    context: "Deep in feature work, production is on fire"
+    action: "session save 'feature-work' && cd ~/production"
+    result: "Feature context preserved, can return after firefighting"
+    why_it_matters: |
+      Emergency context switches don't destroy flow state. The feature
+      work is frozen, not lost. Return when the fire is out.
+
+  - scenario: "Handoff to colleague"
+    context: "Stuck on bug, asking teammate for help"
+    action: "session export 'stuck-on-bug' ./for-alice.tar.gz"
+    result: "Alice imports and sees exactly what you were seeing"
+    why_it_matters: |
+      "Can you look at this?" becomes actionable. Alice doesn't need
+      to set up the environment, navigate to the right files, understand
+      the state. It's all there.
+
+  - scenario: "Debugging 'it worked yesterday'"
+    context: "Something broke, need to understand what changed"
+    action: "session list && session show 'tuesday-working'"
+    result: "See exact environment and state from when it worked"
+    why_it_matters: |
+      Sessions are debugging artifacts. Compare working and broken
+      sessions to find what changed - env var, directory, dependency.
+
+  - scenario: "AI agent context persistence"
+    context: "Agent paused mid-task, conversation context lost"
+    action: "Agent saves session, new conversation restores it"
+    result: "Agent resumes with full context of what it was doing"
+    why_it_matters: |
+      Agents don't have perfect memory. Sessions give them external
+      memory. Long-running tasks span conversations without losing state.
+
+decisions:
+  - choice: "Restore prints commands instead of executing them"
+    why: |
+      Session restore could be dangerous if it auto-executed.
+      What if the session has 'rm -rf' in recent history?
+      What if the directory no longer exists?
+
+      Printing commands lets the user review and selectively apply.
+      They copy-paste what makes sense, skip what doesn't.
+
+      Future enhancement: --exec flag for confident users.
+    alternatives:
+      - option: "Auto-execute restoration commands"
+        rejected_because: "Dangerous, directories may not exist, state may conflict"
+      - option: "Interactive restoration with prompts"
+        rejected_because: "Annoying for frequent use, breaks scripting"
+      - option: "Only restore directory, nothing else"
+        rejected_because: "Loses valuable context, defeats the purpose"
+
+  - choice: "Filter secrets from environment capture"
+    why: |
+      Session files might be exported, shared, or accidentally committed.
+      Capturing PASSWORD, TOKEN, SECRET, KEY, etc. is a security risk.
+
+      The secrets tool handles sensitive values properly.
+      Sessions capture context, not credentials.
+    alternatives:
+      - option: "Capture all environment variables"
+        rejected_because: "Security risk, sessions would contain secrets"
+      - option: "Let user specify what to capture"
+        rejected_because: "Error-prone, users will forget to exclude secrets"
+      - option: "Encrypt sensitive variables"
+        rejected_because: "Complexity, key management, still risky on export"
+
+  - choice: "Store sessions as directories with individual files"
+    why: |
+      A session is multiple pieces of information:
+      - Basic info (JSON)
+      - Environment (text)
+      - Git state (JSON)
+      - Recent history (text)
+      - Tmux layout (text)
+
+      Individual files are easier to inspect, debug, and extend.
+      Export creates a tarball for portability.
+    alternatives:
+      - option: "Single JSON file per session"
+        rejected_because: "Large files, hard to inspect, binary content awkward"
+      - option: "SQLite database"
+        rejected_because: "Overkill, harder to inspect and debug"
+      - option: "Git repository per session"
+        rejected_because: "Heavy, unnecessary for simple state storage"
+
+  - choice: "Capture recent history, not full history"
+    why: |
+      Full shell history can be huge (100K+ lines) and contains
+      sensitive commands from other projects.
+
+      Recent history (last 100 commands) captures useful context
+      without the baggage. It shows "what was I doing" not
+      "everything I've ever typed."
+    alternatives:
+      - option: "Full history file"
+        rejected_because: "Large, contains cross-project commands, potential secrets"
+      - option: "No history capture"
+        rejected_because: "Loses valuable context about recent work"
+      - option: "History since session start"
+        rejected_because: "Requires persistent tracking, adds complexity"
+
+  - choice: "Tmux/screen state captured if present, optional"
+    why: |
+      Many developers use tmux/screen for persistent terminals.
+      Capturing their layout is valuable - which windows, which panes,
+      what each was running.
+
+      But session must work without them. Non-tmux users shouldn't
+      see errors or missing features.
+    alternatives:
+      - option: "Require tmux for session management"
+        rejected_because: "Excludes users who don't use tmux"
+      - option: "Ignore tmux entirely"
+        rejected_because: "Loses valuable context for tmux users"
+      - option: "Full tmux session save/restore"
+        rejected_because: "tmux-resurrect exists, don't reinvent it"
+
+  - choice: "Named sessions, not timestamps by default"
+    why: |
+      Timestamps are meaningless. What does "20250111_143022" tell you?
+      Nothing about what you were doing.
+
+      Names encode intent: "debugging-auth", "feature-payments", "friday-evening"
+      Default to timestamp if no name given, but encourage naming.
+    alternatives:
+      - option: "Always use timestamps"
+        rejected_because: "Meaningless, hard to find the right session"
+      - option: "Auto-detect meaningful name"
+        rejected_because: "Unreliable, git branch might not reflect actual work"
+
+anti_patterns:
+  - pattern: "Saving sessions too frequently"
+    why_bad: |
+      A session is a meaningful snapshot, not a continuous log.
+      Saving every 5 minutes creates noise and wastes storage.
+
+      Save when: ending work, switching context, before risky change.
+      Don't save: just because it's been a while.
+
+  - pattern: "Not naming sessions"
+    why_bad: |
+      "session save" creates timestamp-named session.
+      A week later: "was it 20250105_093022 or 20250105_143512?"
+
+      Spend 2 seconds naming: "session save 'auth-bug-investigation'"
+      Future you can find it instantly.
+
+  - pattern: "Expecting restore to auto-execute"
+    why_bad: |
+      restore prints commands, doesn't run them. This is intentional.
+
+      If you expect to cd into a directory that no longer exists,
+      auto-execution would error. Review and apply selectively.
+
+  - pattern: "Using sessions for backup"
+    why_bad: |
+      Sessions capture state, not content. They don't backup your
+      code, data, or files. That's what git, undo, and backup tools do.
+
+      If you lose your code, a session won't help.
+
+  - pattern: "Sharing sessions without review"
+    why_bad: |
+      Even with secret filtering, sessions might contain sensitive info:
+      - File paths reveal project structure
+      - History might have sensitive commands
+      - Environment might have internal hostnames
+
+      Review before sharing, especially outside your organization.
+
+  - pattern: "Relying on auto-save exclusively"
+    why_bad: |
+      Auto-save on exit is a safety net, not a strategy.
+      Auto-saved sessions are generic ("auto_20250111_170032").
+      Intentional saves with good names are more useful.
+
+connects_to:
+  - component: env
+    relationship: |
+      Session captures DAEDALOS_PROJECT and related env vars.
+      On restore, these help re-establish project context.
+
+      If the project has .daedalos/env.sh, restore suggests
+      sourcing it for full environment restoration.
+
+  - component: handoff
+    relationship: |
+      Handoff creates context summaries for shift changes.
+      Session complements this: handoff explains what was happening,
+      session provides the technical state to reproduce it.
+
+      Good handoff: session export + handoff summary
+
+  - component: journal
+    relationship: |
+      Session save/restore events are logged to journal:
+      "Session saved: friday-evening in ~/projects/api"
+      "Session restored: friday-evening"
+
+      This creates a timeline of work sessions for metrics.
+
+  - component: agent
+    relationship: |
+      Agents can save sessions before termination:
+      "agent-session-task-123" captures agent's working state.
+
+      New agent can restore and continue where previous left off.
+      Enables multi-conversation tasks with state persistence.
+
+  - component: undo
+    relationship: |
+      Session captures git state but not file contents.
+      Undo provides file-level restoration.
+
+      Combined: session restore tells you WHERE you were,
+      undo restore recovers WHAT the files contained.
+
+  - component: project
+    relationship: |
+      Session captures project detection results.
+      Restore shows what project type was active.
+
+      Useful for understanding environment requirements.
+
+metrics:
+  success_criteria:
+    - "Session save completes in < 5 seconds"
+    - "Users can find and restore sessions by name"
+    - "Zero secrets captured in session files"
+    - "Export/import works across machines"
+    - "Tmux users see their layout captured"
+
+  failure_indicators:
+    - "Sessions too large (> 10MB)"
+    - "Secrets found in session files"
+    - "Restore fails due to missing directories"
+    - "Users can't remember which session to restore"
+    - "Auto-save creates too many useless sessions"

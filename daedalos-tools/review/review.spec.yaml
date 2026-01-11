@@ -1,0 +1,293 @@
+name: review
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Trust but verify. Especially when AI is writing code.
+
+  Code review exists because humans make mistakes and fresh eyes catch them.
+  This is doubly true for AI-generated code, which can be confident yet wrong
+  in ways that are hard to detect without careful reading.
+
+  The review tool creates a structured checkpoint between "code written" and
+  "code deployed." It's not just "look at the diff" - it's a workflow that
+  ensures someone consciously approved changes, with that decision recorded.
+
+  This is the human-in-the-loop for AI development. When an agent finishes
+  a task, it requests review. A human examines the changes, asks questions,
+  and explicitly approves or rejects. This creates accountability and catches
+  issues before they compound.
+
+  Key insight: Review is not bureaucracy - it's the moment where quality
+  happens. Make it easy so people don't skip it, but make it explicit so
+  the decision is conscious.
+
+  The tool integrates with gates: when gates.level=collaborative, certain
+  actions require review approval before proceeding. This isn't about slowing
+  down - it's about sustainable speed through quality.
+
+constraints:
+  - Must work in any git repository
+  - Review requests must persist across terminal sessions
+  - No external services required (no GitHub, no PR system)
+  - Approvals and rejections must be recorded immutably
+  - Must integrate with gates for enforcement when configured
+  - Review workflow must be completable in single terminal
+  - Rejection requires explanation (no silent rejections)
+
+interface:
+  commands:
+    request:
+      args: "[REF] [-m MESSAGE]"
+      returns: "Creates review request, displays ID and stats"
+      example: "review request HEAD~3..HEAD -m 'Added auth feature'"
+
+    list:
+      args: "[--pending|--approved|--rejected] [--json]"
+      returns: "Shows review requests with status"
+      example: "review list --pending"
+
+    start:
+      args: "[ID]"
+      returns: "Begins review, shows diff, prompts for action"
+      example: "review start"
+
+    approve:
+      args: "[ID] [-m COMMENT]"
+      returns: "Marks review approved, records approver"
+      example: "review approve -m 'LGTM, nice work'"
+
+    reject:
+      args: "[ID] -m REASON"
+      returns: "Marks review rejected, records reason (required)"
+      example: "review reject -m 'Missing error handling for edge case'"
+
+    comment:
+      args: "[ID] -m COMMENT"
+      returns: "Adds comment without decision"
+      example: "review comment -m 'Consider renaming this variable'"
+
+    show:
+      args: "<ID>"
+      returns: "Displays full review details and comments"
+      example: "review show review-20250111143022-a3f8"
+
+  exit_codes:
+    0: success
+    1: review not found or operation failed
+    2: not in git repository
+    3: rejection requires message
+
+examples:
+  - scenario: "AI completes feature implementation"
+    context: "Agent finished adding user authentication, wants human to check"
+    action: "review request HEAD~5..HEAD -m 'Implemented user auth with JWT'"
+    result: "Review request created with summary of 5 commits, file stats"
+    why_it_matters: "Explicit handoff point - AI done, human takes over"
+
+  - scenario: "Human reviews AI-generated code"
+    context: "Developer sees pending review notification, starts reviewing"
+    action: "review start"
+    result: "Diff displayed with stats, clear options: approve/reject/comment"
+    why_it_matters: "Structured workflow keeps focus on the code, not the process"
+
+  - scenario: "Reviewer finds issue"
+    context: "During review, notices missing null check"
+    action: "review reject -m 'Line 42 needs null check for user.email'"
+    result: "Review marked rejected with specific feedback recorded"
+    why_it_matters: "Rejection is constructive - reason tells author what to fix"
+
+  - scenario: "Code passes review"
+    context: "Changes look good, tests pass, ready to merge"
+    action: "review approve -m 'Clean implementation, good test coverage'"
+    result: "Review marked approved, gates (if configured) allow merge"
+    why_it_matters: "Explicit approval creates audit trail, gates can proceed"
+
+  - scenario: "Gates enforce review before deploy"
+    context: "gates.level=collaborative, trying to push to main"
+    action: "git push (blocked) -> 'Pending review required'"
+    result: "Push blocked until review is approved"
+    why_it_matters: "Safety rails without manual checking - system enforces"
+
+  - scenario: "Multiple reviewers discuss"
+    context: "First reviewer unsure, adds comment, second reviewer weighs in"
+    action: "review comment -m 'Not sure about approach in auth.ts'"
+    result: "Comment recorded, discussion visible in review show"
+    why_it_matters: "Review can be collaborative decision, not just single approval"
+
+decisions:
+  - choice: "Rejection requires message, approval doesn't"
+    why: |
+      Rejections need to be actionable. "Rejected" alone leaves the author
+      confused about what to fix. Requiring a message ensures feedback.
+
+      Approvals are positive signals that don't necessarily need explanation.
+      "LGTM" is often sufficient. Making comments optional reduces friction
+      on the happy path while ensuring rejected code gets guidance.
+    alternatives:
+      - option: "Both require message"
+        rejected_because: "Friction on approval - people skip or write meaningless 'ok'"
+      - option: "Neither requires message"
+        rejected_because: "Rejections without reason are frustrating and useless"
+
+  - choice: "Local storage in JSON files, not tied to git commits"
+    why: |
+      Reviews are process artifacts, not code artifacts. They shouldn't
+      clutter git history or require commits to create.
+
+      JSON files in ~/.local/share/daedalos/review/ allow:
+      - Reviews on uncommitted changes
+      - Multiple reviews per commit range
+      - Persistence without git commits
+      - Easy querying and listing
+
+      The git ref is recorded, so you can always trace what was reviewed.
+    alternatives:
+      - option: "Git notes"
+        rejected_because: "Tied to commits, can't review uncommitted changes, awkward UX"
+      - option: "Branch-based (like GitHub PRs)"
+        rejected_because: "Forces branch workflow, overkill for local review"
+      - option: "Commit message conventions"
+        rejected_because: "Pollutes history, requires commit to review"
+
+  - choice: "Single reviewer workflow, not multi-approval"
+    why: |
+      Most development doesn't need enterprise approval chains. One person
+      reviewing one set of changes is the common case.
+
+      The tool records who approved/rejected, so you have accountability.
+      If you need multiple approvals, the second reviewer can also approve
+      and both are recorded. But requiring it by default adds friction.
+    alternatives:
+      - option: "Configurable required approvers count"
+        rejected_because: "Enterprise complexity, not needed for target use case"
+      - option: "Voting system"
+        rejected_because: "Overkill, adds process overhead"
+
+  - choice: "review start shows diff interactively, doesn't require separate command"
+    why: |
+      Reduce the steps. "review start" should show you what you're reviewing
+      immediately. The context (diff) and action (approve/reject) should
+      be in the same workflow.
+
+      Separating "view diff" and "make decision" means reviewers might view
+      one thing and decide on another.
+    alternatives:
+      - option: "Separate view and decide commands"
+        rejected_because: "Extra step, risks reviewing wrong thing"
+      - option: "Only show summary, require explicit diff command"
+        rejected_because: "Can't review without seeing the code"
+
+  - choice: "Implicit 'most recent' default for most commands"
+    why: |
+      If there's one pending review and you run "review approve", you
+      almost certainly mean that one. Don't require the ID.
+
+      Explicit IDs are available when there are multiple reviews or
+      when you need to be specific. But the common path should be fast.
+    alternatives:
+      - option: "Always require explicit ID"
+        rejected_because: "Tedious for common case of single pending review"
+      - option: "Interactive selection"
+        rejected_because: "Slower than implicit default"
+
+anti_patterns:
+  - pattern: "Approving without looking at the code"
+    why_bad: |
+      Rubber-stamping defeats the purpose. The tool can't prevent this,
+      but review start shows the diff by default to encourage actual review.
+      If someone approves without reading, that's a culture problem.
+
+  - pattern: "Review as gate for every change"
+    why_bad: |
+      Not everything needs review. Trivial fixes, documentation updates,
+      config changes - forcing review on these creates bottlenecks and
+      review fatigue. Reserve review for meaningful changes.
+
+  - pattern: "Letting reviews languish"
+    why_bad: |
+      Stale reviews block progress and demoralize authors. The list command
+      shows pending reviews so they're visible. Consider integrating with
+      notify to remind about old reviews.
+
+  - pattern: "Using review for discussions that should be in chat"
+    why_bad: |
+      Review comments are for code-specific feedback. Design discussions,
+      architectural debates, and brainstorming belong elsewhere. Keep
+      reviews focused on "should this code be merged?"
+
+  - pattern: "Rejecting without actionable feedback"
+    why_bad: |
+      "This is wrong" doesn't help. Rejections must include what's wrong
+      and ideally what should change. This is why -m is required for reject.
+
+  - pattern: "Approving AI-generated code without testing it"
+    why_bad: |
+      AI code can be subtly wrong in ways that look correct on review.
+      Verification (running tests, manual testing) should happen before
+      approval. Review is necessary but not sufficient for quality.
+
+connects_to:
+  - component: gates
+    relationship: |
+      gates can require review approval for actions:
+      - git push to main requires approved review
+      - deploy commands require approved review
+      When gates.level=collaborative, review becomes mandatory.
+
+      gates checks: "Is there an approved review for current changes?"
+      If not, the action is blocked with explanation.
+
+  - component: journal
+    relationship: |
+      All review activity is logged:
+      - Review requested (who, what, when)
+      - Review started (who)
+      - Review approved/rejected (who, comment)
+      Creates audit trail of code review history.
+
+  - component: notify
+    relationship: |
+      Notifications for review events:
+      - "Review requested" (to configured reviewers)
+      - "Review approved/rejected" (to requester)
+      Keeps people informed without polling.
+
+  - component: agent
+    relationship: |
+      AI agents should request review when completing work.
+      "I've implemented X, running 'review request' for human verification."
+      This is the natural handoff point from AI to human.
+
+  - component: handoff
+    relationship: |
+      Review requests often accompany handoffs.
+      "Here's what I did (handoff), please verify it (review)."
+      Both tools serve the AI-human transition.
+
+  - component: verify
+    relationship: |
+      verify should pass before requesting review.
+      Don't waste reviewer time on code that doesn't build or test.
+      "Tests pass, requesting review" is the right order.
+
+  - component: loop
+    relationship: |
+      When loop completes a task, it can auto-request review.
+      "loop start 'implement auth' --promise 'npm test' --review"
+      Integrates review into the iteration workflow.
+
+metrics:
+  success_criteria:
+    - "Review request to approval < 24 hours for normal changes"
+    - "Zero unapproved changes reach production (when gates enabled)"
+    - "Reviewers find actual issues (reviews are valuable, not theater)"
+    - "Authors address rejection feedback and resubmit"
+    - "Review workflow feels lightweight, not bureaucratic"
+
+  failure_indicators:
+    - "Reviews approved in < 1 minute (rubber stamping)"
+    - "Review requests never get reviewed (blocked forever)"
+    - "People bypass review (commit directly, disable gates)"
+    - "Rejections don't include actionable feedback"
+    - "Review becomes a blame mechanism instead of quality tool"

@@ -1,0 +1,322 @@
+================================================================================
+                    DAEDALOS + CLAUDE CODE INTEGRATION
+================================================================================
+
+This guide explains how Daedalos integrates with Claude Code for AI-native
+development workflows.
+
+================================================================================
+                              OVERVIEW
+================================================================================
+
+Daedalos provides:
+  1. SKILLS    - Specialized prompts that teach Claude how to use Daedalos
+  2. HOOKS     - Automatic integration with gates, journal, and undo
+  3. MCP       - Native tool access via daedalos-mcp server
+
+Together, these enable Claude Code to:
+  - Use the loop primitive for iterate-until-done workflows
+  - Follow TDD and debugging methodologies
+  - Respect supervision levels and gate permissions
+  - Log all actions to the journal
+  - Track changes in the undo timeline
+  - Orchestrate multiple agents
+
+================================================================================
+                              SKILLS
+================================================================================
+
+Skills are specialized prompts in .claude/skills/ that teach Claude how to
+use Daedalos effectively.
+
+AVAILABLE SKILLS:
+-----------------
+
+daedalos-loop
+    When: Implementing features, fixing bugs, any iterate-until-done task
+    Teaches: Checkpoints, loop commands, templates, promise verification
+    Usage: Invoked automatically when task matches, or via /daedalos-loop
+
+daedalos-tdd
+    When: Adding ANY new feature
+    Teaches: RED-GREEN-REFACTOR cycle, test-first development
+    Usage: /daedalos-tdd or when implementing features
+
+daedalos-verify
+    When: About to claim work is done
+    Teaches: Run verification, read output, provide evidence
+    Usage: /daedalos-verify or before success claims
+
+daedalos-debug
+    When: Encountering bugs or errors
+    Teaches: Check error-db, reproduce, isolate, hypothesize, fix
+    Usage: /daedalos-debug or when debugging
+
+daedalos-agents
+    When: Task benefits from multiple specialized agents
+    Teaches: Templates, workflows, coordination primitives
+    Usage: /daedalos-agents or for complex multi-step tasks
+
+daedalos-supervision
+    When: Working with varying autonomy levels
+    Teaches: Check gates, respect supervision, use observe/journal
+    Usage: /daedalos-supervision or when supervision matters
+
+SKILL PHILOSOPHY:
+-----------------
+
+Skills encode Daedalos best practices:
+
+  - Always checkpoint before significant work
+  - Use loops for iteration, not manual retry
+  - Verify before claiming success
+  - Debug systematically, not randomly
+  - Respect supervision levels
+
+================================================================================
+                              HOOKS
+================================================================================
+
+Hooks in .claude/hooks/ integrate Claude Code with Daedalos automatically.
+
+AVAILABLE HOOKS:
+----------------
+
+daedalos-gates.sh (PreToolUse)
+    Runs before: Edit, Write, NotebookEdit, Bash
+    Does: Checks gates permission before action
+    Blocks: Sensitive file edits, git push, file deletion (based on level)
+
+daedalos-journal.sh (PostToolUse)
+    Runs after: Edit, Write, NotebookEdit, Bash, Task
+    Does: Logs action to Daedalos journal
+    Records: File changes, bash commands, agent spawns
+
+daedalos-undo.sh (PostToolUse)
+    Runs after: Edit, Write, NotebookEdit
+    Does: Records file change for undo timeline
+    Enables: "undo last" to revert Claude's changes
+
+daedalos-session-start.sh (SessionStart)
+    Runs: When Claude Code session starts
+    Does: Creates automatic undo checkpoint
+    Enables: Roll back entire session if needed
+
+HOOK FLOW:
+----------
+
+    Claude wants to edit file
+            │
+            ▼
+    ┌─────────────────────┐
+    │  daedalos-gates.sh  │  ← PreToolUse: Check permission
+    └─────────────────────┘
+            │
+            ▼ (if allowed)
+    ┌─────────────────────┐
+    │    Edit executes    │
+    └─────────────────────┘
+            │
+            ▼
+    ┌─────────────────────┐
+    │ daedalos-journal.sh │  ← PostToolUse: Log to journal
+    └─────────────────────┘
+            │
+            ▼
+    ┌─────────────────────┐
+    │  daedalos-undo.sh   │  ← PostToolUse: Record for undo
+    └─────────────────────┘
+
+CONFIGURATION:
+--------------
+
+Hooks are configured in .claude/settings.json:
+
+    {
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": { "tool_name": "Edit|Write|NotebookEdit|Bash" },
+            "command": ".claude/hooks/daedalos-gates.sh"
+          }
+        ],
+        "PostToolUse": [
+          {
+            "matcher": { "tool_name": "Edit|Write|NotebookEdit|Bash|Task" },
+            "command": ".claude/hooks/daedalos-journal.sh"
+          }
+        ],
+        "SessionStart": [
+          { "command": ".claude/hooks/daedalos-session-start.sh" }
+        ]
+      }
+    }
+
+================================================================================
+                              MCP SERVER
+================================================================================
+
+The daedalos-mcp server exposes all Daedalos tools as MCP tools.
+
+SETUP:
+------
+
+Add to your Claude Code MCP configuration:
+
+    {
+      "mcpServers": {
+        "daedalos": {
+          "command": "daedalos-mcp",
+          "args": []
+        }
+      }
+    }
+
+AVAILABLE TOOLS (~90):
+----------------------
+
+Loop tools:
+    loop_start, loop_status, loop_watch, loop_pause, loop_resume,
+    loop_cancel, loop_inject, loop_checkpoint, loop_rollback
+
+Verify tools:
+    verify, verify_quick, verify_staged, verify_fix
+
+Undo tools:
+    undo_checkpoint, undo_timeline, undo_last, undo_restore
+
+Project tools:
+    project_info, project_tree, project_symbols, project_deps
+
+Codex tools:
+    codex_search, codex_index
+
+Agent tools:
+    agent_spawn, agent_list, agent_focus, agent_kill, agent_send,
+    agent_inbox, agent_signal_*, agent_lock_*, agent_claim_*
+
+Workflow tools:
+    workflow_list, workflow_start, workflow_status, workflow_stop
+
+And more: context_*, error_*, scratch_*, sandbox_*, mcp_hub_*, lsp_pool_*
+
+================================================================================
+                              SETUP GUIDE
+================================================================================
+
+OPTION 1: Use in Daedalos Project
+---------------------------------
+
+If you're working in a cloned Daedalos repo, everything is already set up.
+The .claude/ directory contains all skills, hooks, and settings.
+
+OPTION 2: Add to Your Project
+-----------------------------
+
+Copy or symlink the Daedalos .claude/ directory:
+
+    # Copy everything
+    cp -r /path/to/daedalos/.claude /your/project/
+
+    # Or symlink
+    ln -s /path/to/daedalos/.claude /your/project/.claude
+
+OPTION 3: Global Installation
+-----------------------------
+
+Install skills globally for all projects:
+
+    # Skills
+    mkdir -p ~/.claude/skills
+    ln -s /path/to/daedalos/.claude/skills/* ~/.claude/skills/
+
+    # Hooks (project-specific recommended)
+    # Copy hooks to each project that needs them
+
+OPTION 4: MCP Only
+------------------
+
+Just use the MCP server without skills/hooks:
+
+    # Add daedalos-mcp to your MCP config
+    # Tools will be available but skills won't guide usage
+
+================================================================================
+                              WORKFLOWS
+================================================================================
+
+STANDARD DEVELOPMENT WORKFLOW:
+------------------------------
+
+    1. Session starts → automatic checkpoint created
+    2. Explore codebase with /daedalos-agents (explorer template)
+    3. Plan implementation
+    4. Create manual checkpoint: undo checkpoint "before-feature"
+    5. Use loop for implementation: loop start "task" --promise "verify"
+    6. Monitor with: loop status, observe
+    7. After completion: verify (evidence before assertions)
+    8. Review changes: git diff, journal show
+    9. If wrong: undo restore "before-feature"
+
+TDD WORKFLOW:
+-------------
+
+    1. /daedalos-tdd to load TDD skill
+    2. Write failing test (RED)
+    3. loop start "make test pass" --promise "pytest"
+    4. Refactor while green
+    5. verify to confirm all checks pass
+
+DEBUGGING WORKFLOW:
+-------------------
+
+    1. /daedalos-debug to load debug skill
+    2. error-db search "<error message>"
+    3. If not found: reproduce, isolate, hypothesize
+    4. undo checkpoint "before-debug"
+    5. loop start "fix bug" --promise "pytest"
+    6. error-db add "<pattern>" "<solution>" (if new error)
+
+MULTI-AGENT WORKFLOW:
+---------------------
+
+    1. /daedalos-agents to load agents skill
+    2. agent workflow start feature "task description"
+    3. Monitor: agent workflow status, observe
+    4. Review results from each agent
+    5. verify before declaring done
+
+================================================================================
+                              BEST PRACTICES
+================================================================================
+
+1. ALWAYS CHECKPOINT BEFORE SIGNIFICANT WORK
+   The session-start hook creates one automatically, but create more:
+       undo checkpoint "before-refactor"
+
+2. USE LOOPS, NOT MANUAL RETRY
+   Don't: Try, fail, try again manually
+   Do: loop start "task" --promise "verify"
+
+3. VERIFY BEFORE SUCCESS CLAIMS
+   Don't: "Done! Tests pass."
+   Do: Run verify, show output, then claim success
+
+4. RESPECT SUPERVISION LEVELS
+   Check gates before significant actions
+   If blocked, ask human - don't bypass
+
+5. LOG SIGNIFICANT EVENTS
+   Hooks do this automatically, but for custom events:
+       journal log "completed phase 1" --category milestone
+
+6. USE APPROPRIATE AGENT TEMPLATES
+   explorer for research (read-only)
+   implementer for changes (full access)
+   reviewer for feedback (read-only)
+
+================================================================================
+
+                           "Iterate Until Done"
+
+================================================================================

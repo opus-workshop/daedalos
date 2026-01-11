@@ -931,6 +931,75 @@ TOOLS = [
         },
     ),
 
+    # Spec tools - rich specification management
+    Tool(
+        name="spec_show",
+        description="Display the spec for a component. Specs contain intent (WHY), constraints, interface, examples, decisions, and anti-patterns.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "component": {"type": "string", "description": "Component name (e.g., 'undo', 'loop')"},
+                "section": {"type": "string", "description": "Specific section: intent, constraints, interface, examples, decisions, anti_patterns"},
+            },
+            "required": ["component"],
+        },
+    ),
+    Tool(
+        name="spec_query",
+        description="Search across all specs semantically. Find answers to 'why' questions and design decisions.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query (e.g., 'why sqlite', 'what to avoid with undo')"},
+            },
+            "required": ["query"],
+        },
+    ),
+    Tool(
+        name="spec_list",
+        description="List all specs in the project",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "missing": {"type": "boolean", "description": "Show components without specs", "default": False},
+                "stale": {"type": "boolean", "description": "Show specs older than implementation", "default": False},
+            },
+        },
+    ),
+    Tool(
+        name="spec_context",
+        description="Get relevant spec sections for a task. Use before starting work to load intent and anti-patterns.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Task description (e.g., 'fix undo restore command')"},
+            },
+            "required": ["task"],
+        },
+    ),
+    Tool(
+        name="spec_validate",
+        description="Validate spec format and completeness",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to validate (default: current directory)"},
+            },
+        },
+    ),
+    Tool(
+        name="spec_new",
+        description="Create a new spec from template",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Component name"},
+                "type": {"type": "string", "description": "Type: tool, library, service, doc", "default": "tool"},
+            },
+            "required": ["name"],
+        },
+    ),
+
     # Journal tools - narrative reconstruction
     Tool(
         name="journal_what",
@@ -1427,6 +1496,39 @@ async def handle_tool(name: str, arguments: dict[str, Any]) -> str:
         if arguments.get("limit"):
             args.extend(["--limit", str(arguments["limit"])])
         return run_tool("gates", args)
+
+    # Spec tools
+    elif name == "spec_show":
+        args = ["show", arguments["component"]]
+        if arguments.get("section"):
+            args.extend(["--section", arguments["section"]])
+        return run_tool("spec", args, cwd)
+
+    elif name == "spec_query":
+        return run_tool("spec", ["query", arguments["query"]], cwd)
+
+    elif name == "spec_list":
+        args = ["list"]
+        if arguments.get("missing"):
+            args.append("--missing")
+        if arguments.get("stale"):
+            args.append("--stale")
+        return run_tool("spec", args, cwd)
+
+    elif name == "spec_context":
+        return run_tool("spec", ["context", arguments["task"]], cwd)
+
+    elif name == "spec_validate":
+        args = ["validate"]
+        if arguments.get("path"):
+            args.append(arguments["path"])
+        return run_tool("spec", args, cwd)
+
+    elif name == "spec_new":
+        args = ["new", arguments["name"]]
+        if arguments.get("type"):
+            args.extend(["--type", arguments["type"]])
+        return run_tool("spec", args, cwd)
 
     # Journal tools
     elif name == "journal_what":

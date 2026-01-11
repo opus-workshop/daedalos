@@ -1,0 +1,341 @@
+name: sandbox
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Fear kills experimentation.
+
+  Every developer has hesitated before a risky change. "What if this breaks
+  everything?" "What if I can't get back to working state?" This fear is
+  rational - broken state costs time, momentum, and mental energy.
+
+  The sandbox exists to eliminate that fear. Create an isolated copy, try
+  anything, break everything. The original is untouched. Experiment worked?
+  Promote it. Didn't work? Discard and try again.
+
+  This isn't just about safety - it's about changing how developers think.
+  When experimentation is free, you try more things. When trying is cheap,
+  you find better solutions. The sandbox makes "what if?" the default mode.
+
+  The deeper insight: undo/checkpoint recovers from known mistakes.
+  Sandbox protects against unknown mistakes - the experiments you don't
+  even know will fail. It's the difference between "I can go back" and
+  "I can't break anything in the first place."
+
+  "Try anything. Break nothing." isn't a safety feature. It's a creativity
+  enabler.
+
+constraints:
+  - Instant creation: Must be < 1 second for Btrfs/overlay backends
+  - True isolation: Changes cannot leak to source under any circumstance
+  - Graceful fallback: Works on any filesystem (rsync as fallback)
+  - Full fidelity: Sandbox is exact copy, not filtered or modified
+  - Promotion is atomic: Either all changes apply or none
+  - No daemon required: Pure CLI, works anywhere
+  - Resource-aware: Warn on large sandboxes, support size limits
+  - Network isolation optional: Must work without special permissions
+
+interface:
+  commands:
+    create:
+      args: "[name] [--from <path>] [--copy <strategy>] [--isolated-network]"
+      returns: "New sandbox ready for experimentation"
+      example: "sandbox create risky-refactor --from ~/project"
+
+    list:
+      args: "[--json] [--all]"
+      returns: "All sandboxes with source, age, and status"
+      example: "sandbox list"
+
+    enter:
+      args: "<name> [--command <cmd>] [--no-prompt]"
+      returns: "Shell inside sandbox environment"
+      example: "sandbox enter risky-refactor"
+
+    diff:
+      args: "<name> [--stat] [--files]"
+      returns: "Changes between sandbox and source"
+      example: "sandbox diff risky-refactor --files"
+
+    promote:
+      args: "<name> [--dry-run] [--yes] [--backup]"
+      returns: "Applies sandbox changes to original source"
+      example: "sandbox promote risky-refactor --backup"
+
+    discard:
+      args: "<name> [--force]"
+      returns: "Deletes sandbox and all changes permanently"
+      example: "sandbox discard risky-refactor -f"
+
+    sync:
+      args: "<name> [--direction <dir>]"
+      returns: "Sync changes between sandbox and source"
+      example: "sandbox sync risky-refactor source-to-sandbox"
+
+    fork:
+      args: "<name> <new-name>"
+      returns: "Create sandbox from existing sandbox"
+      example: "sandbox fork risky-refactor risky-variant-b"
+
+    run:
+      args: "<name> <command>"
+      returns: "Execute command inside sandbox without entering"
+      example: "sandbox run risky-refactor 'npm test'"
+
+    info:
+      args: "<name> [--json]"
+      returns: "Detailed sandbox information"
+      example: "sandbox info risky-refactor"
+
+  exit_codes:
+    0: "Success"
+    1: "General error"
+    2: "Sandbox not found"
+    3: "Permission denied"
+    4: "Source not found"
+    5: "Promote conflict (manual resolution needed)"
+    6: "Disk space exhausted"
+
+examples:
+  - scenario: "Risky refactor"
+    context: "Developer wants to restructure a module but isn't sure it'll work"
+    action: |
+      sandbox create refactor-attempt
+      sandbox enter refactor-attempt
+      # ... make changes, run tests ...
+      exit
+      sandbox diff refactor-attempt
+    result: "If tests pass, promote. If not, discard. Source never at risk."
+    why_it_matters: |
+      Without sandbox, developer either makes a backup (tedious) or just
+      hopes for the best (risky). Sandbox makes the safe path the easy path.
+
+  - scenario: "A/B experimentation"
+    context: "Two possible approaches to a feature, want to try both"
+    action: |
+      sandbox create approach-a
+      sandbox create approach-b
+      # ... implement differently in each ...
+      sandbox run approach-a 'npm test && npm run bench'
+      sandbox run approach-b 'npm test && npm run bench'
+    result: "Compare results, promote the winner, discard the loser"
+    why_it_matters: |
+      Parallel experimentation without git branch overhead. Both
+      approaches exist simultaneously, easy to compare.
+
+  - scenario: "AI agent wild experimentation"
+    context: "Want to let AI agent try aggressive changes safely"
+    action: |
+      sandbox create agent-experiment
+      sandbox run agent-experiment "loop start 'refactor for performance' --promise 'bench < 100ms'"
+    result: "Agent iterates freely inside sandbox. Source protected."
+    why_it_matters: |
+      Agents can be more aggressive when isolation is guaranteed.
+      "Try anything" becomes safe instruction.
+
+  - scenario: "Upgrade testing"
+    context: "Want to test dependency upgrade before committing"
+    action: |
+      sandbox create upgrade-test
+      sandbox enter upgrade-test
+      npm update some-package
+      npm test
+      exit
+    result: "If tests pass, promote. If not, discard and investigate."
+    why_it_matters: |
+      Dependency upgrades are high-risk. Sandbox lets you test
+      without polluting your working environment.
+
+  - scenario: "Forking exploration paths"
+    context: "Sandbox experiment is going well, want to try a variant"
+    action: |
+      sandbox fork risky-refactor risky-variant
+      sandbox enter risky-variant
+      # ... try the variant approach ...
+    result: "Original sandbox preserved, variant explores different direction"
+    why_it_matters: |
+      Fork avoids recreating from source. Builds on existing
+      work while exploring alternatives.
+
+decisions:
+  - choice: "Btrfs snapshots as primary backend"
+    why: |
+      Btrfs copy-on-write snapshots are instant (< 1ms) and space-efficient
+      (only stores changes). This makes sandbox creation so fast it's
+      effectively free.
+
+      When creation is instant, developers use sandboxes more. More use
+      = more experimentation = better outcomes.
+    alternatives:
+      - option: "Always use rsync copy"
+        rejected_because: "Minutes for large projects, discourages use"
+      - option: "Git worktrees"
+        rejected_because: "Requires git repo, doesn't capture untracked files"
+      - option: "Docker containers"
+        rejected_because: "Heavy, requires daemon, not filesystem-transparent"
+
+  - choice: "OverlayFS as second-tier backend"
+    why: |
+      Not everyone runs Btrfs. OverlayFS works on any filesystem and
+      provides similar benefits: instant creation, space efficiency.
+
+      The tradeoff is complexity (mount management) and permission
+      requirements (root or fuse-overlayfs).
+    alternatives:
+      - option: "Skip overlay, go straight to rsync"
+        rejected_because: "Overlay is significantly better when available"
+
+  - choice: "Rsync as universal fallback"
+    why: |
+      Works everywhere. Slow, uses more space, but always available.
+      A slow sandbox is better than no sandbox.
+
+      Graceful degradation ensures the tool is useful on any system.
+    alternatives:
+      - option: "Require Btrfs or overlay"
+        rejected_because: "Excludes too many users, limits adoption"
+
+  - choice: "Promote requires explicit confirmation"
+    why: |
+      Sandbox changes are experimental by definition. Auto-promoting
+      defeats the safety model - you'd lose the isolation guarantee.
+
+      The extra step (confirm promotion) ensures deliberate choice.
+    alternatives:
+      - option: "Auto-promote on sandbox exit"
+        rejected_because: "Loses safety guarantee, accidental changes propagate"
+      - option: "Promote requires re-entering changes manually"
+        rejected_because: "Too tedious, discourages using sandboxes"
+
+  - choice: "Shell prompt modification in sandbox"
+    why: |
+      Visual feedback matters. If you're in a sandbox, you should
+      know it. The modified prompt ([sandbox:name]) makes state obvious.
+
+      This prevents "wait, am I in the sandbox or not?" confusion.
+    alternatives:
+      - option: "No prompt modification"
+        rejected_because: "Easy to forget you're in sandbox, make mistakes"
+      - option: "Environment variable only (IN_SANDBOX=1)"
+        rejected_because: "Not visible enough, requires explicit check"
+
+  - choice: "Network isolation via unshare, not iptables"
+    why: |
+      Network namespaces (unshare -n) provide clean isolation without
+      complex firewall rules. Simpler is better for this use case.
+
+      Optional because it requires privileges and isn't always needed.
+    alternatives:
+      - option: "iptables rules for sandbox IPs"
+        rejected_because: "Complex, requires root, hard to clean up"
+      - option: "Application-level blocking (LD_PRELOAD)"
+        rejected_because: "Leaky, doesn't catch all network access"
+      - option: "No network isolation option"
+        rejected_because: "Some experiments benefit from network isolation"
+
+anti_patterns:
+  - pattern: "Using sandbox for normal development"
+    why_bad: |
+      Sandboxes are for experiments, not daily work. If you're always
+      in a sandbox, you're adding promote overhead to every change.
+
+      Use sandbox when you're uncertain. Use normal workflow when
+      you're confident.
+
+  - pattern: "Never promoting sandboxes"
+    why_bad: |
+      If you always discard, sandboxes become busywork. The value is
+      in the promote path - experiments that become permanent.
+
+      If you never promote, you're not learning from experiments.
+
+  - pattern: "Creating sandbox inside sandbox"
+    why_bad: |
+      Nested sandboxes create confusion about which level you're at
+      and complicate the promote path.
+
+      If you need branching experiments, use fork, not nesting.
+
+  - pattern: "Huge sandboxes of entire home directory"
+    why_bad: |
+      "sandbox create --from ~" copies everything. Even with Btrfs,
+      this is wasteful and slow to diff.
+
+      Sandbox the specific project, not the universe.
+
+  - pattern: "Ignoring sync when source changes"
+    why_bad: |
+      Long-lived sandbox while source evolves = merge conflicts on
+      promote. The sandbox drifts further from reality.
+
+      Sync periodically, or keep sandboxes short-lived.
+
+  - pattern: "Using sandbox to avoid version control"
+    why_bad: |
+      Sandbox is not a substitute for git. Sandboxes are ephemeral.
+      They don't have history, branches, or remote backup.
+
+      Use sandbox for experiments, git for persistence.
+
+connects_to:
+  - component: undo
+    relationship: |
+      Sandbox provides isolation before changes happen.
+      Undo provides recovery after changes happen.
+
+      They complement: sandbox when uncertainty is high (experiment),
+      undo when uncertainty is low (working but might break).
+
+      Promote can optionally create an undo checkpoint before applying.
+
+  - component: loop
+    relationship: |
+      Loops inside sandboxes are maximally safe. The loop can iterate
+      aggressively because sandbox isolates all changes.
+
+      "sandbox run <name> 'loop start ...'" is the safest way to run
+      exploratory loops.
+
+  - component: verify
+    relationship: |
+      Verification in sandbox confirms experiment works before promoting.
+      "sandbox run <name> 'verify'" validates the sandbox state.
+
+      Only promote sandboxes that pass verification.
+
+  - component: scratch
+    relationship: |
+      Scratch is project-scoped ephemeral space (quick notes, temp files).
+      Sandbox is full project copy for experimentation.
+
+      Use scratch for small experiments, sandbox for full project copies.
+
+  - component: agent
+    relationship: |
+      Agent templates can specify sandbox execution. A "risky" agent
+      template might always run in sandbox.
+
+      Sandboxes give agents freedom to try aggressive approaches
+      without risk to the actual codebase.
+
+  - component: gates
+    relationship: |
+      Gates can require sandbox for certain operations. "Refactor"
+      permission might mandate sandbox usage.
+
+      This enforces safety policy at the supervision level.
+
+metrics:
+  success_criteria:
+    - "Sandbox creation < 1 second on Btrfs"
+    - "Developers report reduced hesitation for risky changes"
+    - "Promote/discard ratio indicates useful experimentation (not all discards)"
+    - "No incidents where sandbox changes leaked to source"
+    - "Fallback backends work reliably when Btrfs unavailable"
+
+  failure_indicators:
+    - "Sandbox creation too slow, developers skip it"
+    - "Frequent sandbox leakage (changes appearing in source)"
+    - "Users never promote (sandbox = busywork)"
+    - "Users always promote (sandbox = extra step, no real experimentation)"
+    - "Confusion about sandbox state (in or out)"

@@ -1,0 +1,306 @@
+name: container
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Containers are the escape hatch when the host is wrong.
+
+  Development hits walls: wrong Python version, missing system library,
+  conflicting dependencies. The traditional answer is "fix your machine"
+  but that's fragile and non-reproducible. Containers let you say:
+  "I need this exact environment" and get it instantly.
+
+  The deeper insight: AI agents need reproducible environments MORE than
+  humans do. An agent debugging in one container must be able to hand off
+  to another agent in an identical container. "Works on my machine" is
+  fatal to agent collaboration.
+
+  Container abstracts Docker vs Podman because the choice shouldn't matter.
+  You want a container - you get a container. The runtime is an
+  implementation detail that the tool figures out.
+
+  Human equivalent: "Give me a clean room to work in that I can trash
+  without consequences, and make sure everyone gets the same room."
+
+constraints:
+  - Works with Docker OR Podman (auto-detected, no preference)
+  - Never requires sudo (rootless containers preferred)
+  - Dev containers mount current directory by default
+  - Auto-detect project type for smart defaults (Node, Python, Rust, Go)
+  - Clean up after itself (--rm by default for run)
+  - Compose compatibility (docker-compose or podman-compose)
+  - No config files required (sensible defaults for everything)
+
+interface:
+  commands:
+    status:
+      args: ""
+      returns: "Runtime info, daemon status, container/image counts"
+      example: "container status"
+
+    ps:
+      args: "[-a|--all]"
+      returns: "Running containers (all with -a)"
+      example: "container ps -a"
+
+    images:
+      args: ""
+      returns: "Available images with size and age"
+      example: "container images"
+
+    run:
+      args: "<IMAGE> [--name NAME] [--mount SRC:DST] [--port HOST:CONT] [--env KEY=VAL] [-d]"
+      returns: "Runs container interactively (or detached with -d)"
+      example: "container run ubuntu --mount .:/workspace"
+
+    exec:
+      args: "<CONTAINER> [COMMAND]"
+      returns: "Executes command in running container (bash default)"
+      example: "container exec myapp bash"
+
+    dev:
+      args: "[IMAGE] [--name NAME] [--mount SRC:DST] [--port HOST:CONT]"
+      returns: "Development container with auto-detection and workspace mount"
+      example: "container dev"
+
+    build:
+      args: "[PATH] [-t TAG] [-f DOCKERFILE]"
+      returns: "Builds image from Dockerfile"
+      example: "container build -t myapp:latest"
+
+    clean:
+      args: "[--dry-run]"
+      returns: "Removes stopped containers and dangling images"
+      example: "container clean"
+
+    compose:
+      args: "<ARGS...>"
+      returns: "Passthrough to docker-compose or podman-compose"
+      example: "container compose up -d"
+
+    up:
+      args: "[ARGS...]"
+      returns: "Shortcut for compose up -d"
+      example: "container up"
+
+    down:
+      args: "[ARGS...]"
+      returns: "Shortcut for compose down"
+      example: "container down"
+
+  options:
+    runtime: "--runtime RUNTIME: Force docker or podman"
+    name: "--name NAME: Container name"
+    mount: "--mount SRC:DST: Mount directory"
+    port: "--port HOST:CONT: Port mapping"
+    env: "--env KEY=VALUE: Environment variable"
+
+  exit_codes:
+    0: "Success"
+    1: "Runtime not found or daemon not running"
+    2: "Container or image not found"
+    3: "Build or execution error"
+
+examples:
+  - scenario: "Quick environment for dependency hell"
+    context: "Project needs Python 3.8 but system has 3.11, conflicts everywhere"
+    action: "container dev python:3.8"
+    result: "Instant Python 3.8 shell with project mounted at /workspace"
+    why_it_matters: |
+      No virtualenv wrestling, no pyenv setup, no system pollution.
+      The container IS the environment. Destroy and recreate freely.
+
+  - scenario: "Agent needs isolated testing"
+    context: "AI agent running tests that might corrupt filesystem"
+    action: "container run ubuntu --mount .:/workspace"
+    result: "Tests run in isolation, host filesystem protected"
+    why_it_matters: |
+      Agents can experiment fearlessly. Bad commands can't escape
+      the container. Perfect for untrusted code execution.
+
+  - scenario: "Multi-service development"
+    context: "Project needs postgres, redis, and app server"
+    action: "container up"
+    result: "All services from docker-compose.yml start detached"
+    why_it_matters: |
+      One command replaces manual orchestration. Compose files become
+      the source of truth for environment setup.
+
+  - scenario: "Disk space recovery"
+    context: "Development images and stopped containers piling up"
+    action: "container clean"
+    result: "Removes all stopped containers and dangling images"
+    why_it_matters: |
+      Containers are cheap to create but forget to delete. Regular
+      cleanup prevents "no space left on device" surprises.
+
+  - scenario: "Auto-detect project environment"
+    context: "New developer (human or AI) joins project, unsure what runtime needed"
+    action: "container dev"
+    result: "Detects package.json -> node:20, requirements.txt -> python:3.11, etc"
+    why_it_matters: |
+      Zero config for common cases. Project structure implies environment.
+      New contributors start working immediately without setup docs.
+
+decisions:
+  - choice: "Auto-detect Docker vs Podman, prefer Podman"
+    why: |
+      Podman is rootless by default (security win), daemonless (simpler),
+      and Docker-compatible. But Docker has wider adoption.
+
+      Detection order: podman first, then docker. This nudges toward
+      better security without forcing it. Docker users work fine.
+
+      The --runtime flag overrides when needed.
+    alternatives:
+      - option: "Docker only"
+        rejected_because: "Excludes Podman users, ignores security benefits"
+      - option: "Podman only"
+        rejected_because: "Many teams standardized on Docker, too disruptive"
+      - option: "Require explicit choice"
+        rejected_because: "Unnecessary friction, auto-detection handles 99% of cases"
+
+  - choice: "Dev containers mount cwd to /workspace by default"
+    why: |
+      The most common use case is "give me this runtime with my code."
+      Making this the default eliminates --mount boilerplate.
+
+      /workspace is a convention that tools recognize (VS Code, etc).
+
+      Additional mounts can be added; default doesn't prevent customization.
+    alternatives:
+      - option: "No default mount"
+        rejected_because: "Every dev session needs mount anyway, just boilerplate"
+      - option: "Mount to /app or /code"
+        rejected_because: "/workspace is industry convention, tooling expects it"
+      - option: "Mount home directory"
+        rejected_because: "Too broad, exposes unnecessary files, security risk"
+
+  - choice: "Run with --rm by default"
+    why: |
+      Interactive containers are ephemeral by nature. Users forget to
+      clean up, leading to container sprawl.
+
+      If you want persistence, use dev (which keeps the container) or
+      explicit --name (implies intention to reuse).
+
+      This is opinionated but matches actual usage patterns.
+    alternatives:
+      - option: "Keep containers by default"
+        rejected_because: "Leads to clutter, users rarely need the container after exit"
+      - option: "Ask user each time"
+        rejected_because: "Friction, and the answer is almost always 'remove it'"
+
+  - choice: "Dev command reattaches to existing container"
+    why: |
+      Starting a dev session, doing work, exiting, coming back.
+      Creating a new container loses state (installed packages, history).
+
+      If container exists with same name: start and attach.
+      This makes dev containers feel persistent while being explicit.
+    alternatives:
+      - option: "Always create new container"
+        rejected_because: "Loses state between sessions, frustrating"
+      - option: "Fail if exists"
+        rejected_because: "Forces manual cleanup, annoying"
+
+  - choice: "Project type detection for dev images"
+    why: |
+      package.json -> Node, requirements.txt -> Python, etc.
+
+      This removes the "what image should I use?" question for
+      common projects. The project structure already tells us.
+
+      Explicit image always wins if specified.
+    alternatives:
+      - option: "Always require explicit image"
+        rejected_because: "Unnecessary when project structure implies it"
+      - option: "Use a generic dev image"
+        rejected_because: "Bloated, slow, missing project-specific tools"
+
+anti_patterns:
+  - pattern: "Using container for file operations outside workspace"
+    why_bad: |
+      "container run ubuntu rm -rf /important"
+      Containers should work on mounted project, not host filesystem.
+      The mount is intentional scoping. Don't break out of it.
+
+  - pattern: "Hardcoding docker commands in scripts"
+    why_bad: |
+      "docker run..." fails for Podman users.
+      Use "container run..." or check runtime dynamically.
+      Let the abstraction handle runtime differences.
+
+  - pattern: "Running production workloads with dev command"
+    why_bad: |
+      Dev containers are for development: mounts, interactive, ephemeral.
+      Production needs proper orchestration (Kubernetes, Compose, etc).
+      Don't blur the line between dev and prod containers.
+
+  - pattern: "Ignoring clean after intensive work"
+    why_bad: |
+      Build cache, stopped containers, dangling images accumulate.
+      Run "container clean" periodically. Disk space isn't infinite.
+      A full disk breaks everything, not just containers.
+
+  - pattern: "Not using compose for multi-service projects"
+    why_bad: |
+      "container run postgres" + "container run redis" + "container run app"
+      This is manual orchestration that compose files automate.
+      Compose captures the whole environment declaratively.
+
+connects_to:
+  - component: env
+    relationship: |
+      Env sets project environment variables.
+      Container dev inherits these into the container.
+
+      env activate myproject -> sets vars -> container dev -> container has same vars
+
+  - component: secrets
+    relationship: |
+      Secrets stores sensitive values (API keys, passwords).
+      Containers can request secret injection without exposing values in commands.
+
+      container dev --secret DB_PASSWORD
+      (value comes from secrets vault, not command line)
+
+  - component: sandbox
+    relationship: |
+      Sandbox provides filesystem isolation (Btrfs snapshots).
+      Containers provide process isolation.
+
+      Both achieve isolation differently:
+      - sandbox: fast snapshots, native performance, Btrfs-only
+      - container: any filesystem, includes process isolation, heavier
+
+      Use sandbox for quick experiments, containers for environment differences.
+
+  - component: remote
+    relationship: |
+      Remote syncs code to/from remote hosts.
+      Remote hosts often run containers for deployment.
+
+      remote sync prod -> container build -> container up (on remote)
+
+  - component: journal
+    relationship: |
+      Journal logs operations for audit trail.
+      Container logs key operations (dev start, build, clean).
+
+      Useful for understanding what environments were used when.
+
+metrics:
+  success_criteria:
+    - "Developer starts container in < 5 seconds (cached image)"
+    - "Dev command works without any configuration"
+    - "Docker and Podman users both work without changes"
+    - "Clean removes all cruft without affecting running containers"
+    - "Auto-detection correct for 95%+ of standard project layouts"
+
+  failure_indicators:
+    - "Users manually running docker/podman instead of container"
+    - "Dev containers missing project files (mount failed)"
+    - "Disk space warnings due to container accumulation"
+    - "Runtime errors on Podman (Docker-isms leaking through)"
+    - "Repeated image pulls (caching not working)"

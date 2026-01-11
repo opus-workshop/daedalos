@@ -2549,4 +2549,117 @@ Supervision tools needing specs:
 Low priority as these are simpler and less frequently used.
 
 ================================================================================
+SESSION: 2026-01-11 - Human-Focused Tool Specs: Developer Experience
+================================================================================
+
+Created rich .spec.yaml files for the four developer experience tools.
+
+SPECS CREATED:
+--------------
+
+1. env.spec.yaml (~280 lines)
+   Intent: "Context switching should be invisible until it's not."
+
+   Key insights:
+   - Environment setup is tax on every work session
+   - Five seconds saved per context switch compounds into hours
+   - Foundation of reproducible development
+
+   Decisions:
+   - Print activation script instead of modifying environment directly
+     (subprocess cannot modify parent shell)
+   - Priority order: .daedalos/env.sh > .envrc > nix
+   - Shell hook uses PROMPT_COMMAND, not chpwd (more reliable)
+
+   Anti-patterns:
+   - Running env enter without eval
+   - Storing secrets in env.sh
+   - Putting heavy initialization in env.sh (runs on every cd)
+   - Not using the hook
+
+2. notify.spec.yaml (~260 lines)
+   Intent: "Attention is scarce. Interruption should be meaningful."
+
+   Key insights:
+   - Developers can start builds and actually do something else
+   - For AI agents, notify surfaces important events
+   - Philosophy: notify for state changes, not progress updates
+
+   Decisions:
+   - Auto-detect notification backend by platform
+   - Sound on by default (defeats purpose otherwise)
+   - watch command wraps any shell command
+   - History as simple pipe-delimited file (not database)
+
+   Anti-patterns:
+   - Using notify for progress updates (trains users to ignore)
+   - Notify without context ("Done" is not helpful)
+   - Using urgent for everything
+   - Not using watch for long commands
+
+3. session.spec.yaml (~280 lines)
+   Intent: "Work doesn't end when the terminal closes."
+
+   Key insights:
+   - Sessions are save points for terminal work
+   - Sessions are documentation of what someone was working on
+   - For AI agents, enables persistence across conversations
+
+   Decisions:
+   - Restore prints commands instead of executing (safer)
+   - Filter secrets from environment capture
+   - Store as directories with individual files
+   - Capture recent history (100 lines), not full history
+
+   Anti-patterns:
+   - Saving sessions too frequently
+   - Not naming sessions
+   - Expecting restore to auto-execute
+   - Using sessions for backup
+
+4. secrets.spec.yaml (~280 lines)
+   Intent: "Secrets should be invisible until you need them."
+
+   Key insights:
+   - Makes the right thing easy (encrypted storage by default)
+   - Secrets are first-class citizens, not afterthoughts
+   - inject provides ephemeral access (process environment only)
+
+   Decisions:
+   - age encryption (modern, audited, single-purpose, not GPG)
+   - Prompt for secret value (don't accept as argument - history!)
+   - Filesystem-based vault (natural namespacing, easy backup)
+   - Convert key names to env vars automatically (api/openai -> API_OPENAI)
+
+   Anti-patterns:
+   - Putting secrets in .env files
+   - secrets set api/key 'sk-1234' (value in command line)
+   - Sharing identity key
+   - Using secrets for config (non-sensitive values)
+
+FILES CREATED:
+--------------
+
+- daedalos-tools/env/env.spec.yaml
+- daedalos-tools/notify/notify.spec.yaml
+- daedalos-tools/session/session.spec.yaml
+- daedalos-tools/secrets/secrets.spec.yaml
+
+SPEC TOOL STATUS:
+-----------------
+
+spec list now shows 14 tools with rich specifications:
+- AI-focused: agent, codex, context, error-db, loop, project, scratch, verify
+- Developer experience: env, notify, session, secrets
+- Meta: spec, undo
+
+REMAINING WORK:
+---------------
+
+Collaboration tools: pair, handoff, review
+Productivity tools: focus, metrics, template
+System integration: container, remote, backup
+Supervision tools: observe, gates, journal
+
+================================================================================
 

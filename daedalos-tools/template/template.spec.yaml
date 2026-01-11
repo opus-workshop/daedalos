@@ -1,0 +1,337 @@
+name: template
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Never start from scratch. Build on proven foundations.
+
+  The template tool exists because project scaffolding is both tedious and critical.
+  Every new project needs the same boilerplate: directory structure, config files,
+  CI setup, gitignore, license, README. Doing this manually wastes time and introduces
+  inconsistency. But existing solutions (create-react-app, cargo new) are language-specific
+  and opinionated.
+
+  Template is language-agnostic. It's literally "copy directory, replace placeholders."
+  Simple enough to understand in 5 minutes, flexible enough to template anything.
+
+  The deeper insight: templates encode organizational knowledge. When your team has
+  figured out the right way to structure a Python CLI (with specific linting config,
+  test setup, CI pipeline), that knowledge should be capturable and reproducible.
+  "template new our-python-cli myproject" bootstraps a new project with all the
+  institutional conventions baked in.
+
+  Templates also enable consistency. When every project starts from the same template,
+  navigation is predictable. New team members can jump into any project knowing where
+  to find things.
+
+  The file system IS the template. No DSL, no complex config. Just files with
+  {{PLACEHOLDERS}}.
+
+constraints:
+  - Zero external dependencies: Pure bash, no Python/Node/etc required
+  - File system as template: Templates are directories, not archives or databases
+  - Simple placeholder syntax: {{NAME}} style, easily greppable
+  - Preserve file permissions: Executable scripts stay executable
+  - Binary file handling: Don't mangle binaries with text replacement
+  - Git initialization optional: Some projects don't want git immediately
+  - User templates override built-in: Local customization always wins
+  - Cross-platform: Works on macOS and Linux (BSD and GNU tools)
+
+interface:
+  commands:
+    new:
+      args: "<TEMPLATE> <NAME> [--var KEY=VALUE...] [--no-git] [--force]"
+      returns: "Created project with next steps guidance"
+      example: "template new python-cli myapp --var DESC=\"A CLI tool\""
+
+    list:
+      args: ""
+      returns: "Available templates (built-in and user)"
+      example: "template list"
+
+    show:
+      args: "<TEMPLATE>"
+      returns: "Template details, metadata, and file structure"
+      example: "template show rust-cli"
+
+    add:
+      args: "<PATH> [NAME]"
+      returns: "Saves directory as reusable template"
+      example: "template add ./my-project my-template"
+
+    remove:
+      args: "<TEMPLATE>"
+      returns: "Removes user template"
+      example: "template remove old-template"
+
+    vars:
+      args: "<TEMPLATE>"
+      returns: "Shows available variables for template"
+      example: "template vars python-cli"
+
+    init:
+      args: "[NAME]"
+      returns: "Creates template.json in current directory"
+      example: "template init my-template"
+
+  exit_codes:
+    0: "Success"
+    1: "Template not found or already exists"
+    2: "Invalid arguments"
+    3: "Directory already exists (without --force)"
+
+  variables:
+    standard:
+      NAME: "Project name (from command line)"
+      AUTHOR: "From git config user.name or $USER"
+      EMAIL: "From git config user.email"
+      DATE: "Current date (YYYY-MM-DD)"
+      YEAR: "Current year"
+      DESCRIPTION: "Project description (from --var or default)"
+    custom:
+      description: "Any {{KEY}} in template files can be set via --var KEY=value"
+
+examples:
+  - scenario: "Starting a new Daedalos tool"
+    context: "Developer adding a new tool to the daedalos-tools collection"
+    action: "template new daedalos-tool my-tool"
+    result: "Creates my-tool/ with SPEC.txt, prompt.txt, bin/my-tool structure"
+    why_it_matters: |
+      All Daedalos tools have consistent structure. Using the template ensures
+      you don't forget SPEC.txt, you get the standard bash header, argument
+      parsing is set up correctly. Consistency across the project.
+
+  - scenario: "Creating Python CLI with organization conventions"
+    context: "Team has standardized on specific tooling (ruff, mypy, pytest)"
+    action: "template new python-cli myapp --var DESC=\"Data processing tool\""
+    result: "Creates myapp/ with pyproject.toml, src/, tests/, configured tooling"
+    why_it_matters: |
+      Institutional knowledge encoded. The pyproject.toml has the team's
+      preferred ruff rules, mypy settings, test configuration. No setup
+      decisions to make - they've already been made.
+
+  - scenario: "Saving a project as template"
+    context: "You've perfected a project structure and want to reuse it"
+    action: "template add ./reference-project our-standard"
+    result: "Copies project to user templates, adds template.json if missing"
+    why_it_matters: |
+      Knowledge capture. That project you spent weeks perfecting can now
+      bootstrap future projects instantly. The effort compounds.
+
+  - scenario: "Checking what variables a template uses"
+    context: "About to use a template, want to know what to customize"
+    action: "template vars python-cli"
+    result: "Lists standard variables and all {{CUSTOM}} placeholders in files"
+    why_it_matters: |
+      No surprises. You know what needs customizing before you create
+      the project. Maybe the template has {{LICENSE}} and you need to
+      specify --var LICENSE=MIT.
+
+  - scenario: "Understanding template structure before using"
+    context: "Unfamiliar with a template, want to preview what it creates"
+    action: "template show rust-cli"
+    result: "Shows template.json metadata and file tree"
+    why_it_matters: |
+      Preview before commit. See the directory structure, understand
+      what you're getting. Maybe it's not quite right and you need
+      a different template.
+
+decisions:
+  - choice: "File system as template format (directory with files)"
+    why: |
+      A template IS a directory. No special format. No serialization.
+      You can:
+      - Browse it in your file manager
+      - Edit files with any editor
+      - Version control it with git
+      - Copy it manually if needed
+
+      The template tool just automates copy + placeholder replacement.
+      The format is maximally transparent.
+    alternatives:
+      - option: "Archive format (zip, tar)"
+        rejected_because: "Can't browse/edit without extraction, adds complexity"
+      - option: "Database of templates"
+        rejected_because: "Overkill, harder to manage, can't use standard tools"
+      - option: "DSL for template definition"
+        rejected_because: "Learning curve, inflexibility, harder to debug"
+
+  - choice: "{{PLACEHOLDER}} syntax with uppercase"
+    why: |
+      Double braces are distinctive - unlikely to conflict with actual code.
+      Uppercase makes them visually obvious and easy to grep:
+        grep -r '{{[A-Z_]*}}' my-template/
+
+      No escaping needed for most code. If you need literal {{NAME}} in
+      output, you're in an unusual case (template-generating template).
+    alternatives:
+      - option: "Single braces {NAME}"
+        rejected_because: "Conflicts with JSON, many languages"
+      - option: "Dollar syntax $NAME"
+        rejected_because: "Conflicts with shell variables"
+      - option: "Jinja/Mustache style"
+        rejected_because: "Requires template engine, more complex"
+
+  - choice: "Replace variables in filenames too, not just content"
+    why: |
+      Templates often need dynamic filenames:
+        src/{{NAME}}/__init__.py
+        bin/{{NAME}}
+
+      When you create project "myapp", you get:
+        src/myapp/__init__.py
+        bin/myapp
+
+      This makes templates truly flexible - structure adapts to project name.
+    alternatives:
+      - option: "Only replace in file content"
+        rejected_because: "Requires manual renaming, breaks automation"
+      - option: "Separate filename mapping in config"
+        rejected_because: "Extra complexity, harder to understand template"
+
+  - choice: "Optional git init, but default to yes"
+    why: |
+      Most projects should be git repos immediately. But some use cases don't:
+      - Creating in existing repo (subdir)
+      - Using different VCS
+      - Experimenting before committing to git
+
+      Default --git (initialize git), flag --no-git to skip.
+    alternatives:
+      - option: "Never init git (user does it)"
+        rejected_because: "Extra step for 90% case"
+      - option: "Always init git (no option)"
+        rejected_because: "Inflexible for edge cases"
+
+  - choice: "Built-in templates + user templates, user overrides built-in"
+    why: |
+      Built-in templates provide starting points:
+        bash-tool, python-cli, daedalos-tool, etc.
+
+      User templates in ~/.local/share/daedalos/template/ can:
+        - Add new templates (company-standard, personal-project)
+        - Override built-in (your python-cli replaces the default)
+
+      This gives sensible defaults with full customization.
+    alternatives:
+      - option: "Only built-in templates"
+        rejected_because: "Can't encode organizational conventions"
+      - option: "Only user templates"
+        rejected_because: "No starting point for new users"
+      - option: "No override, require unique names"
+        rejected_because: "Can't improve on built-in without different name"
+
+  - choice: "template.json for metadata, but optional"
+    why: |
+      Metadata (description, author, next_steps) is nice to have but not required.
+      A template without template.json still works - it's just a directory.
+
+      If template.json exists:
+        - list shows description
+        - show displays metadata
+        - new can show next_steps guidance
+
+      If missing:
+        - Template still works
+        - add creates basic template.json automatically
+    alternatives:
+      - option: "Require template.json"
+        rejected_because: "Barrier to creating templates, any directory should work"
+      - option: "No metadata at all"
+        rejected_because: "Lose discoverability and guidance"
+
+anti_patterns:
+  - pattern: "Overly complex templates with conditional logic"
+    why_bad: |
+      Templates should be simple: copy + replace. If you need:
+        "if database == postgres then include X else include Y"
+
+      That's not a template anymore - it's a generator. Use a real code
+      generation tool, or create separate templates (app-postgres, app-mysql).
+
+      Complexity in templates defeats the purpose of transparency.
+
+  - pattern: "Templates with hardcoded absolute paths"
+    why_bad: |
+      /home/alice/projects/myapp in a template will break for everyone else.
+
+      Templates should be self-contained. Use relative paths or {{PLACEHOLDERS}}.
+      If a template needs to reference external resources, document it in
+      template.json next_steps.
+
+  - pattern: "Committing secrets to templates"
+    why_bad: |
+      A template with a real API key or password will propagate that secret
+      to every project created from it.
+
+      Use {{API_KEY}} placeholder and require --var API_KEY=xxx.
+      Or better, have the project read from environment/secrets vault.
+
+  - pattern: "Massive all-in-one templates"
+    why_bad: |
+      A template that includes React frontend, Express backend, PostgreSQL
+      setup, Redis cache, and Kubernetes manifests is:
+      - Hard to maintain
+      - Usually partly wrong for any specific project
+      - Overwhelming to customize
+
+      Better: smaller focused templates that can be combined or serve as
+      starting points for customization.
+
+  - pattern: "Not updating templates after learning"
+    why_bad: |
+      Templates encode "how we do things." If your team learns a better
+      approach (new linting rules, better CI config, improved structure),
+      the template should be updated.
+
+      Stale templates propagate outdated practices to new projects.
+      Review templates quarterly.
+
+connects_to:
+  - component: verify
+    relationship: |
+      Templates should include verify configuration:
+        - .daedalos/verify.yaml if custom pipeline needed
+        - Or rely on auto-detection from package.json/pyproject.toml
+
+      New projects created from templates should "just work" with verify.
+
+  - component: project
+    relationship: |
+      Templates can include .daedalos/ configuration:
+        - Pre-configured project metadata
+        - Custom verification pipelines
+        - Tool-specific settings
+
+      Projects from templates start with intelligence baked in.
+
+  - component: journal
+    relationship: |
+      template new logs project creation:
+        journal log "Created project 'myapp' from template 'python-cli'"
+
+      Useful for tracking project bootstrapping over time.
+
+  - component: loop
+    relationship: |
+      After template new, common workflow:
+        template new python-cli myapp
+        cd myapp
+        loop start "get tests passing" --promise "pytest"
+
+      Template bootstraps, loop iterates to working state.
+
+metrics:
+  success_criteria:
+    - "New projects use templates (not manual setup)"
+    - "Organization templates capture team conventions"
+    - "Templates stay updated as practices evolve"
+    - "template new to verify passing < 5 minutes"
+    - "Built-in templates work for common languages"
+
+  failure_indicators:
+    - "Users copy-paste from old projects instead of using templates"
+    - "Templates become stale and propagate outdated patterns"
+    - "Templates too complex, users customize heavily after creation"
+    - "No organization templates (only using built-in)"
+    - "Templates fail verify immediately (broken out of box)"

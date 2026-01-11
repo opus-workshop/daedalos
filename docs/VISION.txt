@@ -597,6 +597,26 @@ Anthropic's official CLI. Requires API key or subscription.
     Models:  Claude (API)
     Config:  ~/.config/daedalos/engines/claude.yaml
 
+CLAUDE CODE INTEGRATION
+-----------------------
+Daedalos provides deep integration with Claude Code via:
+
+    Skills:     Specialized prompts that teach Claude how to use Daedalos
+                - daedalos-loop, daedalos-tdd, daedalos-verify
+                - daedalos-debug, daedalos-agents, daedalos-supervision
+
+    Hooks:      Automatic integration with Daedalos tools
+                - Gates checking before file edits
+                - Journal logging of all actions
+                - Undo tracking of file changes
+                - Automatic checkpoint at session start
+
+    MCP Server: daedalos-mcp exposes all tools natively
+                - ~90 tools available via MCP protocol
+                - No shell commands needed
+
+See docs/CLAUDE_CODE.txt for full integration guide.
+
 ENGINE CONFIGURATION
 --------------------
 ~/.config/daedalos/config.yaml:
