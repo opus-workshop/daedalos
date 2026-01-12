@@ -1,17 +1,17 @@
 # Daedalos
 
-AI development tools: loop, verify, undo, agent, codex, and 25+ more.
+Meta-project for AI development environment and eventual OS.
 
-## Structure
+## Projects
 
-- `crates/` - Rust tool implementations
-- `crates/daedalos-mcp/` - MCP server exposing all tools
-- `docs/` - Specifications and plans
+- **daedalos-tools**: https://github.com/opus-workshop/daedalos-tools
+- **aether**: https://github.com/opus-workshop/aether
+
+## This Repo
+
+- `docs/` - Specifications and designs
+- `research/` - Notes and explorations
 - `.claude/skills/` - Claude Code integration
-
-## Related
-
-- Aether (terminal): https://github.com/opus-workshop/aether
 
 ## Autonomy
 

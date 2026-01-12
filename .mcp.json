@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "daedalos": {
-      "command": "/Users/asher/Daedalos/daedalos-tools/target/release/daedalos-mcp",
+      "command": "/Users/asher/Daedalos/target/release/daedalos-mcp",
       "args": []
     }
   }

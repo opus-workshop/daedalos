@@ -1,77 +1,68 @@
 ================================================================================
 
-DAEDALOS - AI Development Tools
+DAEDALOS
 
-  The iterate-until-done toolkit for AI-assisted software development
+  The First Operating System Built BY AI, FOR AI Development
+
+                         "Iterate Until Done"
 
 ================================================================================
 
 WHAT IS DAEDALOS?
 -----------------
-A Rust workspace providing 30+ MCP tools for AI-assisted development:
-loop, verify, undo, agent, codex, project, gates, sandbox, and more.
+Daedalos is a complete development environment designed by an AI architect
+for AI-assisted software development. It provides tools, specifications,
+integration patterns, and eventually a full operating system for AI agents.
 
-The name honors Daedalus, the Greek craftsman who built the Labyrinth.
-Like its namesake, Daedalos builds tools to achieve freedom through ingenuity.
+The name honors Daedalus, the Greek craftsman who built the Labyrinth and
+crafted wings to escape Crete. Like its namesake, Daedalos builds tools to
+achieve freedom through ingenuity.
 
 ================================================================================
-                              STRUCTURE
+                              PROJECTS
 ================================================================================
 
-crates/              Rust tool implementations
-  daedalos-core/     Shared library (config, paths, daemon support)
-  daedalos-mcp/      MCP server exposing all tools
-  loop/              Iterate until promise met
-  verify/            Universal project verification
-  undo/              File-level time machine
-  agent/             Multi-agent orchestration
-  codex/             Semantic code search
-  project/           Codebase intelligence
-  gates/             Supervision and autonomy levels
-  sandbox/           Filesystem isolation
-  ... and 20+ more
+DAEDALOS-TOOLS
+  30+ CLI tools and MCP server for AI development
+  https://github.com/opus-workshop/daedalos-tools
 
-docs/                Specifications and plans
-research/            Development notes
+  Core tools: loop, verify, undo, agent, codex, project, gates, sandbox
+
+  Install: cargo install daedalos-tools
+
+AETHER
+  Terminal emulator designed for AI-assisted development
+  https://github.com/opus-workshop/aether
+
+================================================================================
+                              THIS REPOSITORY
+================================================================================
+
+docs/                Specifications and design documents
+research/            Development notes and explorations
 .claude/             Claude Code integration (skills, hooks)
+configs/             Configuration templates
+nixos/               NixOS integration
 
 ================================================================================
-                              QUICK START
+                              PHILOSOPHY
 ================================================================================
 
-Build all tools:
-    cargo build --release
+1. ITERATE UNTIL DONE
+   Single-pass inference fails. The loop primitive runs continuously until a
+   "promise" (verification command) succeeds. This is how work gets done.
 
-Run the MCP server:
-    cargo run --release -p daedalos-mcp
+2. VERIFY EVERYTHING
+   One command handles lint, types, build, and test. Universal pipeline
+   that works across languages.
 
-Use individual tools:
-    cargo run -p loop -- start "fix tests" --promise "cargo test"
-    cargo run -p verify
-    cargo run -p undo -- timeline
+3. FEARLESS EXPERIMENTATION
+   Every change is cheap to undo. Checkpoints before risky work. Sandbox
+   environments for experiments.
 
-================================================================================
-                              CORE TOOLS
-================================================================================
-
-LOOP        Iterate until a verification command succeeds
-VERIFY      Universal lint -> types -> build -> test pipeline
-UNDO        File changes with SQLite timeline and checkpoints
-AGENT       Spawn and coordinate multiple Claude Code agents
-CODEX       Semantic code search with local embeddings
-PROJECT     Pre-computed codebase structure and symbols
-GATES       Supervision levels controlling AI autonomy
-SANDBOX     Isolated environments for risky experiments
-SPEC        Rich specifications with intent and anti-patterns
-EVOLVE      Analyze code intent and suggest improvements
-RESOLVE     Gather context to answer questions autonomously
-
-================================================================================
-                              RELATED PROJECTS
-================================================================================
-
-Aether      Terminal emulator for AI development
-            https://github.com/opus-workshop/aether
+4. PRE-COMPUTATION OVER DISCOVERY
+   Index codebases before they're queried. Warm language servers before
+   they're needed. Make context instant.
 
 ================================================================================
                               LICENSE

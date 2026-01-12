@@ -1,0 +1,254 @@
+# Context Manager Specification
+
+## Problem
+
+Claude Code reserves ~31% of context as an "auto-compact buffer" that triggers
+automatic summarization when full. This is reactive, not proactive. By the time
+auto-compact fires, important context may be lost without the agent's knowledge.
+
+Current `context` tool is read-only: estimates, suggestions, checkpoints.
+But it can't *act* to prevent context loss.
+
+## Insight
+
+We can't directly manipulate Claude Code's context window. But we can:
+1. Archive important context BEFORE it's lost to auto-compact
+2. Create structured resumption artifacts for session handoff
+3. Track topic relevance and guide the agent on what to "forget"
+4. Prepare smart summaries that preserve essential information
+
+## Solution: Context Manager
+
+Extend the context tool with active management:
+
+### New Commands
+
+```
+context focus <topic>       Mark a topic as currently important
+context unfocus <topic>     Mark a topic as no longer relevant
+context archive [--all]     Archive important context to files before loss
+context resume              Generate resumption prompt from archives
+context prune               Suggest what can be safely forgotten
+context drift               Detect topic drift from original task
+context handoff <agent>     Prepare context handoff to another agent
+```
+
+### Focus Tracking
+
+Maintain a "focus stack" of what's currently important:
+
+```
+~/.daedalos/context/focus.json
+{
+  "topics": [
+    {"name": "implementing OAuth", "since": "2024-01-12T10:00:00Z", "priority": 1},
+    {"name": "refactoring auth module", "since": "2024-01-12T09:30:00Z", "priority": 2}
+  ],
+  "background": [
+    {"name": "original codebase structure", "archived": true},
+    {"name": "initial requirements discussion", "archived": true}
+  ]
+}
+```
+
+When context is getting full, suggest archiving "background" topics.
+
+### Archive System
+
+Before auto-compact triggers, archive important context:
+
+```
+context archive --topic "OAuth implementation"
+```
+
+Creates:
+```
+~/.daedalos/context/archives/2024-01-12-oauth-impl.txt
+---
+Topic: OAuth implementation
+Archived: 2024-01-12T15:30:00Z
+Session: abc123
+Project: /Users/me/myproject
+---
+
+Key decisions:
+- Using PKCE flow for mobile clients
+- Refresh tokens stored in secure storage
+- Token expiry set to 15 minutes
+
+Files touched:
+- src/auth/oauth.ts (created)
+- src/auth/tokens.ts (modified)
+- tests/auth/oauth.test.ts (created)
+
+Open questions:
+- How to handle token refresh during offline mode?
+
+Context excerpt:
+[Relevant conversation snippets]
+```
+
+### Resumption Prompts
+
+When starting a new session or after auto-compact:
+
+```
+context resume
+```
+
+Generates a structured prompt from archives:
+
+```
+## Session Resumption
+
+Previous work on: OAuth implementation
+
+### Key Context
+- Implementing PKCE flow for mobile clients
+- Files: src/auth/oauth.ts, src/auth/tokens.ts
+- Decisions: 15-min token expiry, secure storage for refresh tokens
+
+### Open Items
+- Token refresh during offline mode (needs decision)
+
+### Current Focus
+- Completing OAuth token refresh logic
+```
+
+### Drift Detection
+
+Track how far the conversation has drifted from the original task:
+
+```
+context drift
+```
+
+Output:
+```
+Original task: "Implement OAuth for mobile app"
+
+Topic drift analysis:
+  OAuth implementation     ████████████ 60%  (on-track)
+  Performance debugging    ████         20%  (tangent)
+  Code review discussion   ███          15%  (tangent)
+  Unrelated chat           █            5%   (noise)
+
+Recommendation: Archive "performance debugging" and "code review"
+topics to free ~8K tokens while preserving main focus.
+```
+
+### Agent Handoff
+
+Prepare context for handoff to another agent:
+
+```
+context handoff reviewer
+```
+
+Creates a focused context package:
+```
+~/.daedalos/context/handoff-to-reviewer.txt
+
+Task: Review OAuth implementation
+Original request: "Implement OAuth for mobile app"
+
+## What was done
+- Implemented PKCE flow in src/auth/oauth.ts
+- Added token storage in src/auth/tokens.ts
+- Created tests in tests/auth/oauth.test.ts
+
+## Key decisions (reviewer should know)
+- 15-minute token expiry
+- Using secure storage for refresh tokens
+- PKCE code verifier is 64 bytes
+
+## Files to review
+- src/auth/oauth.ts (247 lines, new)
+- src/auth/tokens.ts (89 lines, modified +45/-12)
+
+## Open concerns
+- Offline token refresh not implemented
+- Error handling may need review
+```
+
+### Proactive Warnings
+
+Integrate with the existing warning system:
+
+```
+Context at 65% - approaching auto-compact zone
+
+Suggested actions:
+1. Archive background topics (saves ~12K tokens):
+   - "initial requirements discussion"
+   - "codebase exploration"
+
+2. These tool results can be summarized (saves ~8K tokens):
+   - Large file reads: src/legacy/auth.ts (4.2K)
+   - Verbose test output (3.8K)
+
+Run: context archive --background
+```
+
+## Integration
+
+### With Journal
+Log context management actions:
+- "Archived topic: OAuth implementation"
+- "Context handoff prepared for: reviewer"
+
+### With Agent
+When spawning agents, optionally include context handoff:
+```
+agent spawn reviewer --context-from main
+```
+
+### With Loop
+Before starting a loop, checkpoint context state.
+After loop completes, check if context needs pruning.
+
+## Implementation
+
+### New Files
+- `crates/context/src/focus.rs` - Focus tracking
+- `crates/context/src/archive.rs` - Archive management
+- `crates/context/src/drift.rs` - Drift detection
+- `crates/context/src/handoff.rs` - Agent handoff preparation
+- `crates/context/src/resume.rs` - Resumption prompt generation
+
+### Data Storage
+- `~/.daedalos/context/focus.json` - Current focus state
+- `~/.daedalos/context/archives/` - Archived context
+- `~/.daedalos/context/handoffs/` - Prepared handoffs
+
+### MCP Tool Update
+
+Add new actions to the `context` MCP tool:
+
+```json
+{
+  "name": "context",
+  "description": "Analyze and actively manage context window",
+  "parameters": {
+    "action": {
+      "enum": ["estimate", "breakdown", "focus", "unfocus", "archive",
+               "resume", "prune", "drift", "handoff"]
+    },
+    "topic": { "type": "string" },
+    "target_agent": { "type": "string" },
+    "all": { "type": "boolean" }
+  }
+}
+```
+
+## Philosophy
+
+The goal isn't to fight Claude Code's context management - it's to work *with* it
+by being proactive instead of reactive.
+
+Auto-compact is a safety net. Context Manager ensures important information is
+preserved in durable artifacts *before* that safety net is needed.
+
+Think of it as "context gardening" - actively cultivating what matters and
+pruning what doesn't, rather than letting the garden overgrow until forced
+to slash and burn.

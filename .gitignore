@@ -1,31 +1,16 @@
-# Rust
-/target/
-
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
 *.egg-info/
-dist/
-build/
-*.egg
 .venv/
-venv/
 
 # IDE
 .idea/
 .vscode/
 *.swp
-*.swo
 
 # OS files
 .DS_Store
-Thumbs.db
-
-# Runtime data
-*.log
-*.pid
-*.sock
 
 # Local configuration
 .claude/settings.local.json

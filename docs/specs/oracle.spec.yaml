@@ -50,10 +50,34 @@ interface:
     -b, --backend: "Override backend (claude, opencode, ollama)"
     -j, --json: "Output as JSON for tool consumption"
     -q, --quiet: "Suppress non-essential output"
-  invocation_names:
-    oracle: "REPL mode, verbose output"
-    ora: "REPL mode, standard output"
-    ask: "One-shot if prompt given, REPL otherwise"
+    -P, --progress: "Show progress indicator (auto-enabled for TTY)"
+    --no-progress: "Disable progress indicator"
+
+progress_display:
+  description: "Color-coded activity indicator while waiting for response"
+  behavior: "Auto-enabled when stderr is a TTY, unless --json or --quiet"
+  states:
+    thinking:
+      color: yellow
+      indicator: "⠋ thinking... [5s]"
+      description: "Model is reasoning"
+    reading:
+      color: blue
+      indicator: "⠋ reading: Read [3s]"
+      description: "Tool use: Read, Glob, Grep, WebFetch, WebSearch"
+    editing:
+      color: magenta
+      indicator: "⠋ editing: Edit [2s]"
+      description: "Tool use: Edit, Write, NotebookEdit"
+    running:
+      color: cyan
+      indicator: "⠋ running: Bash [1s]"
+      description: "Tool use: Bash, Task"
+    writing:
+      color: green
+      indicator: "⠋ writing... [8s]"
+      description: "Model is generating text output"
+  implementation: "Uses Claude's --output-format stream-json to detect activity"
 
 backends:
   description: "Declarative config for backend CLIs"
