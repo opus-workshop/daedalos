@@ -1000,6 +1000,54 @@ TOOLS = [
         },
     ),
 
+    # Resolve tools - uncertainty resolution
+    Tool(
+        name="resolve",
+        description="Resolve uncertainty through context gathering. Instead of asking the user, gathers context from specs, codebase patterns, project conventions, and decision history to make confident implementation decisions.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The question or uncertainty to resolve"},
+                "json": {"type": "boolean", "description": "Return structured JSON output", "default": True},
+            },
+            "required": ["question"],
+        },
+    ),
+    Tool(
+        name="resolve_intent",
+        description="Analyze the intent of a question - determine if it's about implementation (resolvable) or goals (may need clarification).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The question to analyze"},
+            },
+            "required": ["question"],
+        },
+    ),
+    Tool(
+        name="resolve_gather",
+        description="Gather context for a question from specs, codebase, project conventions, and decision history.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The question to gather context for"},
+            },
+            "required": ["question"],
+        },
+    ),
+    Tool(
+        name="resolve_log",
+        description="Log a decision to .claude/DECISIONS.md for future reference. Builds institutional memory.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "decision": {"type": "string", "description": "The decision that was made"},
+                "reasoning": {"type": "string", "description": "Why this decision was made"},
+            },
+            "required": ["decision"],
+        },
+    ),
+
     # Journal tools - narrative reconstruction
     Tool(
         name="journal_what",
@@ -1529,6 +1577,26 @@ async def handle_tool(name: str, arguments: dict[str, Any]) -> str:
         if arguments.get("type"):
             args.extend(["--type", arguments["type"]])
         return run_tool("spec", args, cwd)
+
+    # Resolve tools
+    elif name == "resolve":
+        args = []
+        if arguments.get("json", True):
+            args.append("--json")
+        args.append(arguments["question"])
+        return run_tool("resolve", args, cwd)
+
+    elif name == "resolve_intent":
+        return run_tool("resolve", ["--intent", arguments["question"]], cwd)
+
+    elif name == "resolve_gather":
+        return run_tool("resolve", ["--gather", arguments["question"]], cwd)
+
+    elif name == "resolve_log":
+        args = ["--log", arguments["decision"]]
+        if arguments.get("reasoning"):
+            args.append(arguments["reasoning"])
+        return run_tool("resolve", args, cwd)
 
     # Journal tools
     elif name == "journal_what":
