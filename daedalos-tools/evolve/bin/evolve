@@ -1,0 +1,678 @@
+#!/usr/bin/env bash
+#
+# evolve - Understand intent, then grow code toward it
+#
+# Code wants to become something. This tool helps it get there by:
+# 1. Understanding intent from specs, commits, tests, structure
+# 2. Analyzing how well current code serves that intent
+# 3. Identifying what's missing to fully realize the intent
+# 4. Suggesting an evolution path
+#
+# Usage:
+#   evolve <path>                    Full evolution analysis
+#   evolve intent <path>             Just intent analysis
+#   evolve analyze <path>            Just current state analysis
+#   evolve gaps <path>               Just missing pieces
+#   evolve path <path>               Just suggested path
+#   evolve --json <path>             JSON output
+#
+
+set -eo pipefail
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# Data directory
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/daedalos/evolve"
+mkdir -p "$DATA_DIR"
+
+usage() {
+    cat << 'EOF'
+evolve - Understand intent, then grow code toward it
+
+USAGE:
+    evolve <path>                    Full evolution analysis
+    evolve intent <path>             Just intent analysis
+    evolve analyze <path>            Just current state analysis
+    evolve gaps <path>               Just missing pieces
+    evolve path <path>               Just evolution path
+    evolve --json <path>             JSON output
+
+EXAMPLES:
+    evolve src/auth/
+    evolve intent daedalos-tools/resolve/
+    evolve gaps .
+    evolve --json src/cache.ts
+
+The tool gathers intent from:
+  - Specs (.spec.yaml files)
+  - README and documentation
+  - Git commit history
+  - Tests and their expectations
+  - Code comments and docstrings
+  - Naming conventions
+  - Usage patterns
+
+Then identifies:
+  - How well code serves its intent
+  - What's missing to fully realize intent
+  - Prioritized evolution path
+EOF
+}
+
+# Check if tool exists
+has_tool() {
+    command -v "$1" &>/dev/null
+}
+
+# Run tool with timeout
+run_tool() {
+    local tool="$1"
+    shift
+    if has_tool "$tool"; then
+        timeout 15 "$tool" "$@" 2>/dev/null || echo ""
+    else
+        echo ""
+    fi
+}
+
+# Find spec file for a path
+find_spec() {
+    local path="$1"
+    local dir
+
+    if [[ -f "$path" ]]; then
+        dir=$(dirname "$path")
+    else
+        dir="$path"
+    fi
+
+    # Look for spec in various locations
+    local specs=(
+        "$dir/*.spec.yaml"
+        "$dir/../*.spec.yaml"
+        "$dir/spec.yaml"
+        "$dir/../spec.yaml"
+    )
+
+    for pattern in "${specs[@]}"; do
+        for f in $pattern; do
+            if [[ -f "$f" ]]; then
+                echo "$f"
+                return 0
+            fi
+        done
+    done
+
+    return 1
+}
+
+# Extract intent from spec file
+extract_spec_intent() {
+    local spec_file="$1"
+
+    if [[ ! -f "$spec_file" ]]; then
+        return
+    fi
+
+    echo -e "${GREEN}From spec:${NC} $spec_file"
+
+    # Extract intent section
+    local intent=$(awk '/^intent:/{flag=1; next} /^[a-z_]+:/{flag=0} flag' "$spec_file" | head -10)
+    if [[ -n "$intent" ]]; then
+        echo "$intent" | sed 's/^  //' | head -5
+    fi
+
+    # Extract success criteria if available
+    local success=$(awk '/success_criteria:/{flag=1; next} /^[a-z_]+:/{flag=0} flag' "$spec_file" | head -5)
+    if [[ -n "$success" ]]; then
+        echo ""
+        echo -e "${DIM}Success criteria:${NC}"
+        echo "$success" | sed 's/^    - /  • /' | head -3
+    fi
+}
+
+# Extract intent from git history
+extract_git_intent() {
+    local path="$1"
+
+    if ! git rev-parse --git-dir &>/dev/null; then
+        return
+    fi
+
+    # Get first commit that introduced this path
+    local first_commit=$(git log --diff-filter=A --format="%h %s" -- "$path" 2>/dev/null | tail -1)
+    if [[ -n "$first_commit" ]]; then
+        echo -e "${GREEN}First commit:${NC} $first_commit"
+    fi
+
+    # Get recent meaningful commits
+    local recent=$(git log --oneline -5 -- "$path" 2>/dev/null | head -3)
+    if [[ -n "$recent" ]]; then
+        echo -e "${GREEN}Recent changes:${NC}"
+        echo "$recent" | sed 's/^/  /'
+    fi
+}
+
+# Extract intent from README/docs
+extract_doc_intent() {
+    local path="$1"
+    local dir
+
+    if [[ -f "$path" ]]; then
+        dir=$(dirname "$path")
+    else
+        dir="$path"
+    fi
+
+    # Look for README
+    local readme=""
+    for f in "$dir/README.md" "$dir/README.txt" "$dir/README" "$dir/../README.md"; do
+        if [[ -f "$f" ]]; then
+            readme="$f"
+            break
+        fi
+    done
+
+    if [[ -n "$readme" ]]; then
+        echo -e "${GREEN}From docs:${NC} $readme"
+        head -10 "$readme" | grep -v "^#" | head -3
+    fi
+}
+
+# Extract intent from tests
+extract_test_intent() {
+    local path="$1"
+    local dir
+    local name
+
+    if [[ -f "$path" ]]; then
+        dir=$(dirname "$path")
+        name=$(basename "$path" | sed 's/\.[^.]*$//')
+    else
+        dir="$path"
+        name=$(basename "$path")
+    fi
+
+    # Look for test files
+    local test_files=$(find "$dir" -maxdepth 2 -name "*test*" -o -name "*spec*" 2>/dev/null | head -3)
+
+    if [[ -n "$test_files" ]]; then
+        echo -e "${GREEN}From tests:${NC}"
+        for tf in $test_files; do
+            # Extract test descriptions (it/test/describe blocks)
+            grep -h -E "(it|test|describe)\s*\(" "$tf" 2>/dev/null | head -3 | sed 's/^/  /'
+        done
+    fi
+}
+
+# Extract intent from code comments
+extract_comment_intent() {
+    local path="$1"
+
+    if [[ ! -f "$path" ]]; then
+        # For directories, check main files
+        local main_file=$(find "$path" -maxdepth 2 -name "*.ts" -o -name "*.py" -o -name "*.js" -o -name "*.go" 2>/dev/null | head -1)
+        if [[ -n "$main_file" ]]; then
+            path="$main_file"
+        else
+            return
+        fi
+    fi
+
+    # Look for file-level comments at the top
+    local top_comment=$(head -20 "$path" | grep -E "^(//|#|\*|/\*)" | head -5)
+    if [[ -n "$top_comment" ]]; then
+        echo -e "${GREEN}From code comments:${NC}"
+        echo "$top_comment" | sed 's/^/  /'
+    fi
+}
+
+# Full intent analysis
+phase_intent() {
+    local path="$1"
+    local json_mode="$2"
+
+    if [[ "$json_mode" != "true" ]]; then
+        echo -e "${BOLD}PHASE 1: UNDERSTAND INTENT${NC}"
+        echo -e "${DIM}\"What is this code trying to become?\"${NC}"
+        echo ""
+    fi
+
+    local spec_file=$(find_spec "$path")
+    local has_spec="false"
+    local intent_sources=0
+
+    # 1. Check for spec (primary source)
+    if [[ -n "$spec_file" ]]; then
+        has_spec="true"
+        ((intent_sources++))
+        if [[ "$json_mode" != "true" ]]; then
+            extract_spec_intent "$spec_file"
+            echo ""
+        fi
+    fi
+
+    # 2. Git history
+    local git_info=$(extract_git_intent "$path" 2>/dev/null)
+    if [[ -n "$git_info" ]]; then
+        ((intent_sources++))
+        if [[ "$json_mode" != "true" ]]; then
+            echo "$git_info"
+            echo ""
+        fi
+    fi
+
+    # 3. Documentation
+    local doc_info=$(extract_doc_intent "$path" 2>/dev/null)
+    if [[ -n "$doc_info" ]]; then
+        ((intent_sources++))
+        if [[ "$json_mode" != "true" ]]; then
+            echo "$doc_info"
+            echo ""
+        fi
+    fi
+
+    # 4. Tests
+    local test_info=$(extract_test_intent "$path" 2>/dev/null)
+    if [[ -n "$test_info" ]]; then
+        ((intent_sources++))
+        if [[ "$json_mode" != "true" ]]; then
+            echo "$test_info"
+            echo ""
+        fi
+    fi
+
+    # 5. Code comments
+    local comment_info=$(extract_comment_intent "$path" 2>/dev/null)
+    if [[ -n "$comment_info" ]]; then
+        ((intent_sources++))
+        if [[ "$json_mode" != "true" ]]; then
+            echo "$comment_info"
+            echo ""
+        fi
+    fi
+
+    if [[ "$json_mode" != "true" ]]; then
+        if [[ $intent_sources -eq 0 ]]; then
+            echo -e "${YELLOW}No intent sources found.${NC}"
+            echo -e "${DIM}Consider adding a .spec.yaml or README.${NC}"
+        else
+            echo -e "${DIM}Intent sources found: $intent_sources${NC}"
+        fi
+    fi
+
+    echo "has_spec:$has_spec"
+    echo "intent_sources:$intent_sources"
+}
+
+# Analyze current state
+phase_analyze() {
+    local path="$1"
+    local json_mode="$2"
+
+    if [[ "$json_mode" != "true" ]]; then
+        echo -e "${BOLD}PHASE 2: ANALYZE CURRENT STATE${NC}"
+        echo -e "${DIM}\"How well does code serve the intent?\"${NC}"
+        echo ""
+    fi
+
+    local issues=0
+    local warnings=0
+
+    # Check against spec anti-patterns if spec exists
+    local spec_file=$(find_spec "$path")
+    if [[ -n "$spec_file" ]]; then
+        local anti_patterns=$(awk '/^anti_patterns:/{flag=1; next} /^[a-z_]+:/{flag=0} flag' "$spec_file" 2>/dev/null)
+        if [[ -n "$anti_patterns" ]]; then
+            if [[ "$json_mode" != "true" ]]; then
+                echo -e "${CYAN}Checking against spec anti-patterns...${NC}"
+                echo -e "${DIM}(Manual review needed for semantic checks)${NC}"
+                echo ""
+            fi
+        fi
+    fi
+
+    # Use codex to find inconsistencies
+    if has_tool codex; then
+        local name=$(basename "$path")
+        local patterns=$(run_tool codex search "similar to $name" --limit 3 2>/dev/null)
+        if [[ -n "$patterns" && "$patterns" != *"No results"* ]]; then
+            if [[ "$json_mode" != "true" ]]; then
+                echo -e "${CYAN}Similar patterns in codebase:${NC}"
+                echo "$patterns" | head -10 | sed 's/^/  /'
+                echo ""
+            fi
+        fi
+    fi
+
+    # Basic code quality checks
+    if [[ -f "$path" ]]; then
+        # Check for TODO/FIXME comments
+        local todos=$(grep -c -E "(TODO|FIXME|XXX|HACK)" "$path" 2>/dev/null || echo "0")
+        if [[ "$todos" -gt 0 ]]; then
+            ((warnings += todos))
+            if [[ "$json_mode" != "true" ]]; then
+                echo -e "${YELLOW}Found $todos TODO/FIXME comments${NC}"
+            fi
+        fi
+
+        # Check file size (large files often need splitting)
+        local lines=$(wc -l < "$path" 2>/dev/null || echo "0")
+        if [[ "$lines" -gt 500 ]]; then
+            ((warnings++))
+            if [[ "$json_mode" != "true" ]]; then
+                echo -e "${YELLOW}Large file ($lines lines) - consider splitting${NC}"
+            fi
+        fi
+    elif [[ -d "$path" ]]; then
+        # For directories, check structure
+        local file_count=$(find "$path" -type f -name "*.ts" -o -name "*.py" -o -name "*.js" -o -name "*.go" 2>/dev/null | wc -l)
+        if [[ "$json_mode" != "true" ]]; then
+            echo -e "${CYAN}Files in scope:${NC} $file_count"
+        fi
+    fi
+
+    if [[ "$json_mode" != "true" ]]; then
+        echo ""
+        echo -e "${DIM}Issues: $issues, Warnings: $warnings${NC}"
+    fi
+
+    echo "issues:$issues"
+    echo "warnings:$warnings"
+}
+
+# Identify missing pieces
+phase_gaps() {
+    local path="$1"
+    local json_mode="$2"
+
+    if [[ "$json_mode" != "true" ]]; then
+        echo -e "${BOLD}PHASE 3: IDENTIFY MISSING PIECES${NC}"
+        echo -e "${DIM}\"What's not there that should be?\"${NC}"
+        echo ""
+    fi
+
+    local gaps=0
+
+    # Check spec for mentioned but not implemented features
+    local spec_file=$(find_spec "$path")
+    if [[ -n "$spec_file" ]]; then
+        # Look at interface section for unimplemented commands
+        local interface=$(awk '/^interface:/{flag=1} /^[a-z_]+:$/{if(flag && !/interface:/) flag=0} flag' "$spec_file" 2>/dev/null)
+        if [[ -n "$interface" ]]; then
+            if [[ "$json_mode" != "true" ]]; then
+                echo -e "${CYAN}From spec interface (verify implementation):${NC}"
+                echo "$interface" | grep -E "^\s+\w+:" | head -5 | sed 's/^/  /'
+                echo ""
+            fi
+        fi
+
+        # Check connects_to for integration points
+        local connects=$(awk '/^connects_to:/{flag=1; next} /^[a-z_]+:/{flag=0} flag' "$spec_file" 2>/dev/null | head -10)
+        if [[ -n "$connects" ]]; then
+            ((gaps++))
+            if [[ "$json_mode" != "true" ]]; then
+                echo -e "${CYAN}Integration points (from spec):${NC}"
+                echo "$connects" | grep -E "component:" | sed 's/.*component: /  • /' | head -5
+                echo ""
+            fi
+        fi
+    fi
+
+    # Check for common missing pieces
+    if [[ -d "$path" ]]; then
+        # No tests?
+        if ! find "$path" -name "*test*" -o -name "*spec*" 2>/dev/null | grep -q .; then
+            ((gaps++))
+            if [[ "$json_mode" != "true" ]]; then
+                echo -e "${YELLOW}Missing: Tests${NC}"
+            fi
+        fi
+
+        # No README?
+        if [[ ! -f "$path/README.md" && ! -f "$path/README.txt" ]]; then
+            ((gaps++))
+            if [[ "$json_mode" != "true" ]]; then
+                echo -e "${YELLOW}Missing: README documentation${NC}"
+            fi
+        fi
+
+        # No spec?
+        if [[ -z "$spec_file" ]]; then
+            ((gaps++))
+            if [[ "$json_mode" != "true" ]]; then
+                echo -e "${YELLOW}Missing: Spec file (.spec.yaml)${NC}"
+            fi
+        fi
+    fi
+
+    if [[ "$json_mode" != "true" ]]; then
+        echo ""
+        echo -e "${DIM}Gaps identified: $gaps${NC}"
+    fi
+
+    echo "gaps:$gaps"
+}
+
+# Suggest evolution path
+phase_path() {
+    local path="$1"
+    local json_mode="$2"
+
+    if [[ "$json_mode" != "true" ]]; then
+        echo -e "${BOLD}PHASE 4: EVOLUTION PATH${NC}"
+        echo -e "${DIM}\"How to grow toward full intent\"${NC}"
+        echo ""
+    fi
+
+    local suggestions=()
+
+    # Priority 1: Fix critical issues
+    if [[ "$json_mode" != "true" ]]; then
+        echo -e "${MAGENTA}Priority 1: Fix before extend${NC}"
+    fi
+
+    # Check for TODOs
+    if [[ -f "$path" ]]; then
+        local todos=$(grep -n -E "(TODO|FIXME)" "$path" 2>/dev/null | head -3)
+        if [[ -n "$todos" ]]; then
+            if [[ "$json_mode" != "true" ]]; then
+                echo "  • Address TODO/FIXME items:"
+                echo "$todos" | sed 's/^/    /'
+            fi
+        fi
+    fi
+
+    # Priority 2: Add missing fundamentals
+    if [[ "$json_mode" != "true" ]]; then
+        echo ""
+        echo -e "${MAGENTA}Priority 2: Missing fundamentals${NC}"
+    fi
+
+    local spec_file=$(find_spec "$path")
+    if [[ -z "$spec_file" ]]; then
+        if [[ "$json_mode" != "true" ]]; then
+            echo "  • Create .spec.yaml to document intent"
+        fi
+    fi
+
+    if [[ -d "$path" ]]; then
+        if ! find "$path" -name "*test*" 2>/dev/null | grep -q .; then
+            if [[ "$json_mode" != "true" ]]; then
+                echo "  • Add tests for core functionality"
+            fi
+        fi
+    fi
+
+    # Priority 3: Extend toward full intent
+    if [[ "$json_mode" != "true" ]]; then
+        echo ""
+        echo -e "${MAGENTA}Priority 3: Extend toward intent${NC}"
+    fi
+
+    if [[ -n "$spec_file" ]]; then
+        # Check for features mentioned in spec examples
+        local examples=$(awk '/^examples:/{flag=1; next} /^[a-z_]+:/{flag=0} flag' "$spec_file" 2>/dev/null | head -20)
+        if [[ -n "$examples" ]]; then
+            if [[ "$json_mode" != "true" ]]; then
+                echo "  • Verify all spec examples are implemented"
+                echo "  • Check spec success_criteria are met"
+            fi
+        fi
+    fi
+
+    if [[ "$json_mode" != "true" ]]; then
+        echo ""
+        echo -e "${DIM}Use 'loop' to implement each suggestion iteratively${NC}"
+    fi
+}
+
+# Full evolution analysis
+evolve_full() {
+    local path="$1"
+    local json_mode="$2"
+
+    # Resolve to absolute path
+    if [[ ! -e "$path" ]]; then
+        echo -e "${RED}Error: Path not found: $path${NC}"
+        exit 1
+    fi
+
+    local abs_path=$(cd "$(dirname "$path")" && pwd)/$(basename "$path")
+    local name=$(basename "$path")
+
+    if [[ "$json_mode" == "true" ]]; then
+        # Gather data silently
+        local intent_result=$(phase_intent "$path" "true" 2>/dev/null)
+        local analyze_result=$(phase_analyze "$path" "true" 2>/dev/null)
+        local gaps_result=$(phase_gaps "$path" "true" 2>/dev/null)
+
+        local has_spec=$(echo "$intent_result" | grep "^has_spec:" | cut -d: -f2)
+        local intent_sources=$(echo "$intent_result" | grep "^intent_sources:" | cut -d: -f2)
+        local issues=$(echo "$analyze_result" | grep "^issues:" | cut -d: -f2)
+        local warnings=$(echo "$analyze_result" | grep "^warnings:" | cut -d: -f2)
+        local gaps=$(echo "$gaps_result" | grep "^gaps:" | cut -d: -f2)
+
+        cat << EOF
+{
+  "path": "$abs_path",
+  "name": "$name",
+  "intent": {
+    "has_spec": $has_spec,
+    "sources_found": $intent_sources
+  },
+  "analysis": {
+    "issues": $issues,
+    "warnings": $warnings
+  },
+  "gaps": $gaps,
+  "evolution_needed": $([ "$gaps" -gt 0 ] || [ "$issues" -gt 0 ] && echo "true" || echo "false")
+}
+EOF
+    else
+        echo ""
+        echo -e "${BOLD}╔══════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${BOLD}║                        EVOLVE                                 ║${NC}"
+        echo -e "${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${BOLD}Target:${NC} $abs_path"
+        echo ""
+        echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+
+        phase_intent "$path" "false" | grep -v "^[a-z_]*:[a-z0-9]*$"
+
+        echo ""
+        echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+
+        phase_analyze "$path" "false" | grep -v "^[a-z_]*:[0-9]*$"
+
+        echo ""
+        echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+
+        phase_gaps "$path" "false" | grep -v "^[a-z_]*:[0-9]*$"
+
+        echo ""
+        echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+
+        phase_path "$path" "false"
+
+        echo ""
+    fi
+}
+
+# Main
+main() {
+    local mode="full"
+    local path=""
+    local json_mode="false"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            --json)
+                json_mode="true"
+                shift
+                ;;
+            intent|understand)
+                mode="intent"
+                shift
+                ;;
+            analyze|analysis)
+                mode="analyze"
+                shift
+                ;;
+            gaps|missing)
+                mode="gaps"
+                shift
+                ;;
+            path|suggest)
+                mode="path"
+                shift
+                ;;
+            *)
+                path="$1"
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$path" ]]; then
+        path="."
+    fi
+
+    case "$mode" in
+        intent)
+            phase_intent "$path" "$json_mode"
+            ;;
+        analyze)
+            phase_analyze "$path" "$json_mode"
+            ;;
+        gaps)
+            phase_gaps "$path" "$json_mode"
+            ;;
+        path)
+            phase_path "$path" "$json_mode"
+            ;;
+        full)
+            evolve_full "$path" "$json_mode"
+            ;;
+    esac
+}
+
+main "$@"

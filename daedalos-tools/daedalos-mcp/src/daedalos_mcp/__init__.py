@@ -1000,6 +1000,53 @@ TOOLS = [
         },
     ),
 
+    # Evolve tools - code evolution analysis
+    Tool(
+        name="evolve",
+        description="Understand code intent and suggest evolution path. Analyzes specs, commits, tests to understand what code is trying to become, then identifies gaps and suggests prioritized improvements.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to file or directory to evolve"},
+                "json": {"type": "boolean", "description": "Return structured JSON output", "default": True},
+            },
+            "required": ["path"],
+        },
+    ),
+    Tool(
+        name="evolve_intent",
+        description="Extract the intent of code from specs, commits, tests, and structure. Understand what this code is trying to become.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to analyze"},
+            },
+            "required": ["path"],
+        },
+    ),
+    Tool(
+        name="evolve_gaps",
+        description="Identify what's missing from code to fully realize its intent. Features implied but not implemented, edge cases not handled.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to analyze"},
+            },
+            "required": ["path"],
+        },
+    ),
+    Tool(
+        name="evolve_path",
+        description="Get prioritized evolution path for code. Fix before extend, with reasoning tied to intent.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to analyze"},
+            },
+            "required": ["path"],
+        },
+    ),
+
     # Resolve tools - uncertainty resolution
     Tool(
         name="resolve",
@@ -1577,6 +1624,23 @@ async def handle_tool(name: str, arguments: dict[str, Any]) -> str:
         if arguments.get("type"):
             args.extend(["--type", arguments["type"]])
         return run_tool("spec", args, cwd)
+
+    # Evolve tools
+    elif name == "evolve":
+        args = []
+        if arguments.get("json", True):
+            args.append("--json")
+        args.append(arguments["path"])
+        return run_tool("evolve", args, cwd)
+
+    elif name == "evolve_intent":
+        return run_tool("evolve", ["intent", arguments["path"]], cwd)
+
+    elif name == "evolve_gaps":
+        return run_tool("evolve", ["gaps", arguments["path"]], cwd)
+
+    elif name == "evolve_path":
+        return run_tool("evolve", ["path", arguments["path"]], cwd)
 
     # Resolve tools
     elif name == "resolve":
