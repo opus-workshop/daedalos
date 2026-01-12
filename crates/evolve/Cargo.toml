@@ -1,0 +1,25 @@
+[package]
+name = "evolve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Understand code intent and suggest evolution paths - help code become what it wants to be"
+
+[[bin]]
+name = "evolve"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace dependencies
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+
+# Local dependencies
+serde_yaml = "0.9"
+walkdir = "2"
+glob = "0.3"
+colored = "2"

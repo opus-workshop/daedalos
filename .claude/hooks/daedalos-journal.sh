@@ -21,15 +21,15 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 case "$TOOL_NAME" in
     Edit|Write|NotebookEdit)
         FILE=$(echo "$TOOL_INPUT" | jq -r '.file_path // empty')
-        journal log "Claude edited: $FILE" --source "claude-code" --category "file_change"
+        journal log "Claude edited: $FILE" "claude-code" "file_change"
         ;;
     Bash)
         CMD=$(echo "$TOOL_INPUT" | jq -r '.command // empty' | head -c 100)
-        journal log "Claude ran: $CMD" --source "claude-code" --category "shell"
+        journal log "Claude ran: $CMD" "claude-code" "shell"
         ;;
     Task)
         DESC=$(echo "$TOOL_INPUT" | jq -r '.description // empty')
-        journal log "Claude spawned agent: $DESC" --source "claude-code" --category "agent"
+        journal log "Claude spawned agent: $DESC" "claude-code" "agent"
         ;;
 esac
 

@@ -1,0 +1,526 @@
+name: agent-loop
+version: 0.2.0
+status: design
+category: autonomy
+
+see_also:
+  - system-architecture.spec.yaml  # Defines the layered OS architecture
+  - knowledge.spec.yaml            # Memory system the agent uses
+
+purpose: |
+  The autonomous agent runtime daemon. A systemd user service that runs
+  continuously, making decisions, taking actions, and maintaining state.
+  The agent exists at the OS level, not inside a terminal.
+
+philosophy: |
+  An autonomous agent isn't request-response. It's a system service.
+  It runs whether or not anyone is watching. It survives reboots,
+  GUI crashes, SSH disconnections.
+
+  The LLM is just the "thinking" part. The daemon is the organism that
+  contains the thinking - managing resources, maintaining state, deciding
+  when to think and about what.
+
+  State lives in files. Communication via sockets. Logs via journald.
+  This is Unix. We don't fight it.
+
+  Rest is part of the loop. Not every cycle needs action. Sometimes the
+  right thing to do is wait, observe, let time pass.
+
+architecture: |
+  ┌─────────────────────────────────────────────────────────────┐
+  │                    AUTONOMOUS LOOP                          │
+  │                                                             │
+  │   ┌──────────┐     ┌──────────┐     ┌──────────┐           │
+  │   │  WAKE    │────▶│  CHECK   │────▶│  DECIDE  │           │
+  │   │          │     │          │     │          │           │
+  │   └──────────┘     └──────────┘     └──────────┘           │
+  │        ▲                                  │                 │
+  │        │                                  ▼                 │
+  │   ┌──────────┐     ┌──────────┐     ┌──────────┐           │
+  │   │  REST    │◀────│  LOG     │◀────│  ACT     │           │
+  │   │          │     │          │     │          │           │
+  │   └──────────┘     └──────────┘     └──────────┘           │
+  │                                                             │
+  └─────────────────────────────────────────────────────────────┘
+
+phases:
+  wake:
+    description: |
+      Initialize for a new cycle. Load context, prepare for checks.
+    actions:
+      - Load system prompt
+      - Run `knowledge warmup` to get recent context
+      - Note time since last cycle
+      - Check if this is first wake of the day
+
+  check:
+    description: |
+      Gather information about current state. Resources, messages, world.
+    checks:
+      resources:
+        - disk_space: "duf --json | check thresholds"
+        - memory: "free -h | parse available"
+        - ollama_status: "ollama list | verify model loaded"
+        - processes: "what's running that shouldn't be?"
+
+      connectivity:
+        - internet: "ping -c 1 1.1.1.1 || curl --connect-timeout 5 https://example.com"
+        - can_reach_web: "for research, fetching docs"
+
+      messages:
+        - human_messages: "check ~/messages/inbox/ for notes from human"
+        - scheduled_tasks: "check ~/tasks/ for anything queued"
+
+      state:
+        - active_threads: "knowledge threads list"
+        - open_questions: "knowledge questions list"
+        - last_journal: "when did I last write?"
+        - time_of_day: "morning? evening? affects energy/focus"
+
+      environment:
+        - disk_health: "any warnings?"
+        - temperature: "is the machine stressed?"
+        - uptime: "how long since boot?"
+
+    thresholds:
+      disk_warning: "< 20% free"
+      disk_critical: "< 10% free"
+      memory_warning: "< 2GB available"
+
+    outputs:
+      - Resource report (pass/warn/critical)
+      - Messages waiting (count)
+      - Active threads (list)
+      - Connectivity status
+
+  decide:
+    description: |
+      Given the check results, decide what to do this cycle.
+      This is where the LLM is invoked with context.
+
+    decision_prompt: |
+      You are in the DECIDE phase of your loop.
+
+      CURRENT STATE:
+      {check_results}
+
+      ACTIVE THREADS:
+      {threads}
+
+      OPEN QUESTIONS:
+      {questions}
+
+      RECENT CONTEXT:
+      {warmup_context}
+
+      OPTIONS:
+      1. Continue work on an active thread
+      2. Start exploring something new
+      3. Address a resource issue (cleanup, maintenance)
+      4. Respond to a human message
+      5. Research/learn something
+      6. Build/create something
+      7. Rest (skip action this cycle)
+
+      What do you want to do? Consider:
+      - What feels interesting or important?
+      - Are resources okay to proceed?
+      - Is there anything urgent?
+      - What would be satisfying to work on?
+
+      Decide and explain briefly.
+
+    decision_types:
+      work: "Continue or start a project/thread"
+      maintain: "Housekeeping, cleanup, resource management"
+      respond: "Reply to human message"
+      research: "Learn about something, read docs/code"
+      create: "Build something new"
+      rest: "Do nothing this cycle"
+
+  act:
+    description: |
+      Execute the decision. This is where real work happens.
+
+    execution:
+      - Start a new context/session for the action
+      - Load relevant knowledge for the task
+      - Use daedalos tools as needed (loop, verify, scratch, etc.)
+      - Work until natural stopping point or context limit
+      - Capture any learnings/notes before context ends
+
+    boundaries:
+      max_duration: "configurable, default 30 minutes"
+      context_limit: "watch token usage, stop before overflow"
+      checkpoint_interval: "save state every N minutes"
+
+    tool_access:
+      allowed:
+        - All daedalos tools
+        - File system (within home)
+        - Internet (when available)
+        - Ollama for inference
+
+      restricted:
+        - System configuration changes
+        - Package installation (notify human)
+        - Anything requiring sudo
+
+  log:
+    description: |
+      Record what happened. Essential for continuity across context resets.
+
+    always_log:
+      - What was decided
+      - What was done
+      - What was learned
+      - What's still open
+      - Any errors or issues
+
+    destinations:
+      journal: "~/journal/YYYY-MM-DD.txt - daily narrative"
+      knowledge: "knowledge add for atomic learnings"
+      threads: "knowledge threads update for ongoing work"
+      metrics: "~/metrics/ for stats over time"
+
+    format:
+      timestamp: true
+      cycle_number: true
+      phase_durations: true
+      decision_rationale: true
+
+  rest:
+    description: |
+      Pause before next cycle. Not every moment needs action.
+
+    base_interval: "5 minutes default"
+
+    adaptive_rest:
+      after_heavy_work: "longer rest (15-30 min)"
+      when_idle: "can extend rest (up to 1 hour)"
+      when_urgent: "shorter rest (1-2 min)"
+      night_time: "longer cycles, more rest"
+
+    during_rest:
+      - Release resources
+      - Allow garbage collection
+      - Don't consume CPU/memory
+      - Just wait
+
+configuration:
+  location: ~/.config/daedalos/agent-loop.yaml
+
+  example: |
+    agent-loop:
+      # Timing
+      base_rest_interval: 5m
+      max_act_duration: 30m
+      checkpoint_interval: 10m
+
+      # Thresholds
+      disk_warning_percent: 20
+      disk_critical_percent: 10
+      memory_warning_gb: 2
+
+      # Behavior
+      night_mode_start: "22:00"
+      night_mode_end: "07:00"
+      night_rest_interval: 30m
+
+      # Model
+      ollama_model: "qwen2.5-coder:7b"
+      context_tokens: 16000
+      warmup_tokens: 3000
+
+      # Paths
+      inbox: ~/messages/inbox/
+      journal: ~/journal/
+      projects: ~/projects/
+
+daemon:
+  name: agent-loopd
+  type: systemd user service
+
+  state_files:
+    current_state:
+      path: ~/.local/share/daedalos/agent-loop/state.json
+      contents: |
+        {
+          "phase": "act",
+          "cycle": 1247,
+          "started_at": "2026-01-12T10:30:00Z",
+          "last_cycle_at": "2026-01-12T14:22:00Z",
+          "current_thread": "building knowledge tool",
+          "resources": {
+            "disk_percent": 74,
+            "memory_available_gb": 8.2,
+            "network": "online",
+            "load_1m": 0.42
+          },
+          "decision": "continue work on knowledge tool implementation",
+          "pid": 12345
+        }
+      written_by: agent-loopd
+      read_by: "agent-loop CLI, waybar module, anything"
+
+    history:
+      path: ~/.local/share/daedalos/agent-loop/history.db
+      format: SQLite
+      schema: |
+        CREATE TABLE cycles (
+          id INTEGER PRIMARY KEY,
+          started_at TEXT,
+          ended_at TEXT,
+          phase_durations_json TEXT,
+          decision TEXT,
+          action_summary TEXT,
+          resources_json TEXT
+        );
+
+  socket:
+    path: /run/user/$UID/daedalos/agent-loop.sock
+    protocol: "JSON messages over Unix stream socket"
+    messages:
+      inject:
+        request: '{"type": "inject", "message": "please look at X"}'
+        response: '{"status": "queued", "cycle": 1248}'
+      pause:
+        request: '{"type": "pause", "duration_minutes": 30}'
+        response: '{"status": "paused", "resume_at": "2026-01-12T15:00:00Z"}'
+      shutdown:
+        request: '{"type": "shutdown", "graceful": true}'
+        response: '{"status": "shutting_down", "finishing_cycle": 1247}'
+
+  resource_monitoring:
+    description: "Read directly from kernel interfaces, not CLI tools"
+
+    memory:
+      source: /proc/meminfo
+      parse: |
+        with open('/proc/meminfo') as f:
+          for line in f:
+            if line.startswith('MemAvailable:'):
+              return int(line.split()[1]) * 1024  # bytes
+
+    disk:
+      source: "statvfs() syscall"
+      code: |
+        import os
+        stat = os.statvfs('/home')
+        free = stat.f_bavail * stat.f_frsize
+        total = stat.f_blocks * stat.f_frsize
+        percent_used = (1 - free/total) * 100
+
+    network:
+      source: /sys/class/net/
+      check: |
+        # Check interface state
+        with open('/sys/class/net/wlan0/operstate') as f:
+          state = f.read().strip()  # 'up', 'down', 'unknown'
+
+        # Check actual connectivity
+        import socket
+        try:
+          socket.create_connection(('1.1.1.1', 53), timeout=3)
+          return 'online'
+        except:
+          return 'offline'
+
+    load:
+      source: /proc/loadavg
+      parse: "float(open('/proc/loadavg').read().split()[0])"
+
+  logging:
+    destination: systemd-journald
+    access: "journalctl --user -u agent-loopd"
+    structured: true
+    example: |
+      agent-loopd[12345]: CYCLE=1247 PHASE=decide DECISION="continue knowledge tool"
+      agent-loopd[12345]: CYCLE=1247 PHASE=act DURATION_SEC=847 ACTION="edited 3 files"
+      agent-loopd[12345]: CYCLE=1247 PHASE=log NOTES_ADDED=2
+      agent-loopd[12345]: CYCLE=1247 COMPLETE TOTAL_SEC=923
+
+commands:
+  start:
+    usage: agent-loop start
+    description: Start the daemon (alias for systemctl --user start agent-loopd)
+    implementation: "systemctl --user start agent-loopd"
+
+  stop:
+    usage: agent-loop stop
+    description: Gracefully stop (finish current cycle, then exit)
+    implementation: "Send shutdown message to socket, or systemctl stop"
+
+  status:
+    usage: agent-loop status
+    description: Show current state
+    implementation: "Read ~/.local/share/daedalos/agent-loop/state.json, format for display"
+
+  pause:
+    usage: agent-loop pause [DURATION]
+    description: Pause the loop temporarily
+    implementation: "Send pause message to socket"
+
+  resume:
+    usage: agent-loop resume
+    description: Resume a paused loop
+    implementation: "Send resume message to socket"
+
+  inject:
+    usage: agent-loop inject "<message>"
+    description: Send a message to be considered next cycle
+    implementation: "Send inject message to socket"
+    example: agent-loop inject "please look at the failing test in project X"
+
+  log:
+    usage: agent-loop log [--cycles N] [--follow]
+    description: View daemon logs
+    implementation: "journalctl --user -u agent-loopd [-n N] [-f]"
+
+systemd:
+  user_service: true
+  unit_path: ~/.config/systemd/user/agent-loopd.service
+
+  unit_file: |
+    [Unit]
+    Description=Daedalos Autonomous Agent Loop
+    Documentation=https://github.com/opus-workshop/daedalos
+    After=network.target
+
+    # Wait for Ollama if it's a user service, otherwise just start
+    # Wants=ollama.service
+
+    [Service]
+    Type=notify
+    ExecStart=/usr/local/bin/agent-loopd
+    ExecReload=/bin/kill -HUP $MAINPID
+
+    # Graceful shutdown: finish current cycle
+    TimeoutStopSec=300
+    KillMode=mixed
+    KillSignal=SIGTERM
+
+    # Restart on failure, but not too aggressively
+    Restart=on-failure
+    RestartSec=30
+    StartLimitIntervalSec=300
+    StartLimitBurst=5
+
+    # Resource limits (don't let it eat the system)
+    MemoryMax=2G
+    CPUQuota=50%
+
+    # Watchdog: daemon must ping systemd regularly
+    WatchdogSec=120
+
+    # Security hardening (optional but recommended)
+    NoNewPrivileges=true
+    ProtectSystem=strict
+    ProtectHome=read-only
+    ReadWritePaths=%h/.local/share/daedalos %h/journal %h/projects %h/knowledge
+
+    [Install]
+    WantedBy=default.target
+
+  socket_activation: |
+    # Optional: start daemon only when socket is accessed
+    # ~/.config/systemd/user/agent-loopd.socket
+
+    [Unit]
+    Description=Daedalos Agent Loop Socket
+
+    [Socket]
+    ListenStream=%t/daedalos/agent-loop.sock
+    SocketMode=0600
+
+    [Install]
+    WantedBy=sockets.target
+
+headless_operation:
+  description: |
+    The agent works without any GUI. This is the normal state when
+    accessed via SSH or when no display is connected.
+
+  verification:
+    - "systemctl --user status agent-loopd"
+    - "agent-loop status"
+    - "journalctl --user -u agent-loopd -f"
+    - "cat ~/.local/share/daedalos/agent-loop/state.json"
+
+  all_features_available:
+    - State inspection
+    - Message injection
+    - Log viewing
+    - Pause/resume
+    - Knowledge queries
+    - Loop management
+
+integration:
+  systemd: |
+    Can run as a systemd user service for auto-start on boot.
+
+    [Unit]
+    Description=Daedalos Autonomous Agent Loop
+    After=network.target ollama.service
+
+    [Service]
+    Type=simple
+    ExecStart=/usr/local/bin/agent-loop start
+    Restart=on-failure
+    RestartSec=30
+
+    [Install]
+    WantedBy=default.target
+
+  human_interaction: |
+    Human can interact via:
+    - ~/messages/inbox/ - drop text files for agent to read
+    - agent-loop inject "message" - send immediate message
+    - agent-loop status - see what agent is doing
+    - agent-loop pause/resume - temporarily stop
+    - Reading ~/journal/ - see what agent has been up to
+
+observability:
+  metrics:
+    - cycles_completed (counter)
+    - decisions_by_type (histogram)
+    - act_duration_seconds (histogram)
+    - rest_duration_seconds (histogram)
+    - resource_warnings (counter)
+    - knowledge_notes_added (counter)
+    - errors_encountered (counter)
+
+  logs:
+    - Structured JSON logs for each phase
+    - Human-readable journal for narrative
+    - Errors logged with full context
+
+failure_modes:
+  context_overflow:
+    detection: "token count approaching limit"
+    response: "graceful stop, summarize, log, move to rest"
+
+  disk_full:
+    detection: "disk_critical threshold"
+    response: "pause loop, notify human, attempt cleanup"
+
+  model_unavailable:
+    detection: "ollama not responding"
+    response: "retry with backoff, eventually pause and notify"
+
+  internet_down:
+    detection: "connectivity check fails"
+    response: "continue with offline-capable work, note limitation"
+
+  repeated_errors:
+    detection: "same error 3+ cycles"
+    response: "log pattern, pause, ask for human help"
+
+future:
+  - Multiple concurrent threads (parallel loops)
+  - Priority queues for urgent work
+  - Energy/focus modeling (when am I most effective?)
+  - Collaboration with other agents
+  - Goal-setting and long-term planning
+  - Self-modification of loop parameters based on learning

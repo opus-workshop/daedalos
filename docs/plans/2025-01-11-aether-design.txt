@@ -1,0 +1,839 @@
+================================================================================
+
+     █████╗ ███████╗████████╗██╗  ██╗███████╗██████╗
+    ██╔══██╗██╔════╝╚══██╔══╝██║  ██║██╔════╝██╔══██╗
+    ███████║█████╗     ██║   ███████║█████╗  ██████╔╝
+    ██╔══██║██╔══╝     ██║   ██╔══██║██╔══╝  ██╔══██╗
+    ██║  ██║███████╗   ██║   ██║  ██║███████╗██║  ██║
+    ╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+
+            A Terminal Emulator for AI Development
+
+                    Design Specification v1.0
+
+================================================================================
+
+OVERVIEW
+--------
+Aether is a terminal emulator designed for AI-assisted software development.
+It works great standalone and integrates deeply with Daedalos tools and LLM
+TUIs (Claude Code, OpenCode, Aider) when available.
+
+The name comes from Greek mythology - Aether is the pure upper air, the medium
+through which gods communicated. A terminal is the medium through which we
+communicate with machines and AI. The name connects to the Daedalos mythology
+while standing on its own.
+
+
+================================================================================
+                              CORE PHILOSOPHY
+================================================================================
+
+AI-AWARE, NOT AI-DEPENDENT
+--------------------------
+Useful for any developer, exceptional for AI-assisted workflows. A developer
+who never uses AI tools should still find Aether to be an excellent terminal.
+
+DEEP INTEGRATION OVER SHALLOW WRAPPERS
+--------------------------------------
+Actually understand what's happening inside, not just pipe bytes. When Claude
+Code is thinking, Aether knows. When a permission prompt appears, Aether
+surfaces it. This isn't parsing output - it's a protocol.
+
+THE DAEDALOS AESTHETIC
+----------------------
+Warm craftsman's workshop colors, designed for long sessions. The terminal
+should feel like a well-crafted tool, not a generic commodity.
+
+PLATFORM NATIVE
+---------------
+Not Electron. Native UI on each platform - SwiftUI/AppKit on macOS, GTK on
+Linux. Proper menu bars, preferences, system integration.
+
+BUILD THE RIGHT THING
+---------------------
+From scratch in Rust, not a fork. Full architectural control to make LLM TUI
+awareness a first-class citizen, not bolted on.
+
+
+================================================================================
+                              ARCHITECTURE
+================================================================================
+
+LAYERED DESIGN
+--------------
+
+┌─────────────────────────────────────────────────────────────────┐
+│                      Platform Layer                              │
+│  ┌─────────────────────┐  ┌─────────────────────────────────┐   │
+│  │   macOS App         │  │      Linux App                  │   │
+│  │   (Swift/AppKit)    │  │      (GTK or Wayland-native)    │   │
+│  │   Metal renderer    │  │      Vulkan/OpenGL renderer     │   │
+│  │   CoreText fonts    │  │      FreeType fonts             │   │
+│  └──────────┬──────────┘  └───────────────┬─────────────────┘   │
+│             │                             │                      │
+│             └──────────────┬──────────────┘                      │
+│                            │ C ABI                               │
+├────────────────────────────┼────────────────────────────────────┤
+│                     libaether (Rust)                             │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │                    Core Terminal                         │    │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────┐    │    │
+│  │  │ VT Parser   │ │ Screen Grid │ │ PTY Manager     │    │    │
+│  │  └─────────────┘ └─────────────┘ └─────────────────┘    │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │                   Aether Extensions                      │    │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────┐    │    │
+│  │  │ Protocol    │ │ Semantic    │ │ Daedalos        │    │    │
+│  │  │ Handler     │ │ Search      │ │ Integration     │    │    │
+│  │  └─────────────┘ └─────────────┘ └─────────────────┘    │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │                    Multiplexer                           │    │
+│  │  Tabs, Splits, Sessions, Workspaces                      │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+
+
+KEY ARCHITECTURAL DECISIONS
+---------------------------
+
+1. Rust Core with C ABI
+   libaether exposes C functions that platform code calls. This allows
+   native Swift on macOS without rewriting terminal logic.
+
+2. Platform-Native UI
+   SwiftUI/AppKit on macOS, GTK on Linux. Native look and feel, proper
+   menu bars, preferences, system integration.
+
+3. Renderer Abstraction
+   Core produces a "render list" (glyphs, colors, positions). Platform
+   layer consumes it with Metal or Vulkan/OpenGL.
+
+4. Aether Extensions as First-Class
+   Protocol handler, semantic search, and Daedalos integration are built
+   into the core, not plugins. This is what makes Aether different.
+
+
+CRATE STRUCTURE
+---------------
+
+aether/
+├── libaether/              # Core library (Rust)
+│   ├── src/
+│   │   ├── terminal/       # VT parser, screen grid, PTY
+│   │   ├── protocol/       # Aether Protocol (OSC 7770)
+│   │   ├── search/         # Semantic scrollback search
+│   │   ├── daedalos/       # Daedalos tool integration
+│   │   ├── multiplex/      # Tabs, splits, sessions
+│   │   └── ffi/            # C ABI exports
+│   └── Cargo.toml
+├── aether-macos/           # macOS app (Swift + libaether)
+├── aether-linux/           # Linux app (GTK/Rust + libaether)
+└── aether-protocol/        # Protocol spec + reference implementation
+
+
+LANGUAGE CHOICE: RUST
+---------------------
+
+Why Rust:
+- Memory safety for long-running process handling untrusted input
+- Excellent ecosystem: wgpu, cosmic-text, winit, font-kit
+- Zero-cost abstractions, no GC pauses during rendering
+- Strong FFI story for Swift interop on macOS
+
+Alternatives considered:
+- Zig: Proven by Ghostty, but smaller ecosystem
+- C++: Memory safety concerns
+- Swift: Not truly cross-platform
+
+
+================================================================================
+                           CORE TERMINAL FEATURES
+================================================================================
+
+TEXT RENDERING
+--------------
+- GPU-accelerated via Metal (macOS) / Vulkan (Linux)
+- Font shaping with HarfBuzz (ligatures, complex scripts)
+- Subpixel antialiasing where supported
+- Glyph atlas caching for performance
+- True color (24-bit) + 256 color + 16 color fallback
+- Bold, italic, underline, strikethrough, blink, inverse
+- Configurable font fallback chain (emoji, symbols, CJK)
+
+TERMINAL EMULATION
+------------------
+- VT100, VT220, xterm compatibility
+- Full mouse support (SGR, X10, normal tracking)
+- Bracketed paste mode
+- Alternate screen buffer
+- OSC sequences (hyperlinks, window title, clipboard)
+- Sixel graphics + Kitty image protocol + iTerm inline images
+
+SCROLLBACK
+----------
+- Configurable size (default: 10,000 lines, unlimited optional)
+- Searchable (regex + literal + semantic)
+- Scrollback marks (mark important points, jump back)
+- Semantic zones (command, output, prompt - via shell integration)
+
+SEMANTIC REFLOW
+---------------
+When window is resized, text rewraps properly instead of truncating:
+
+  Before resize (narrow):         After resize (wide):
+  ┌────────────────────┐          ┌──────────────────────────────┐
+  │ This is a long lin │          │ This is a long line of text  │
+  │ e of text that wra │    →     │ that wraps properly          │
+  │ ps properly        │          └──────────────────────────────┘
+  └────────────────────┘
+
+Implementation: Track logical lines vs display lines. Re-layout on resize.
+
+MULTIPLEXER
+-----------
+- Tabs with drag reordering
+- Horizontal and vertical splits
+- Zoom pane to full window (toggle)
+- Sessions (named groups of tabs)
+- Workspaces (switch between session groups)
+- Broadcast input to multiple panes
+
+INPUT HANDLING
+--------------
+- Full keyboard handling (modifiers, function keys)
+- IME support for international input
+- Configurable keybindings (Vim-style, Emacs-style, custom)
+- Mouse selection (word, line, block)
+- Click-to-cursor in editable text (shell integration required)
+
+SHELL INTEGRATION
+-----------------
+- Detect current working directory
+- Detect running command and exit status
+- Mark prompt locations in scrollback
+- Click to open file paths in editor
+- Click to re-run previous commands
+- Click-to-position cursor in editable regions
+
+
+================================================================================
+                           AETHER PROTOCOL
+================================================================================
+
+THE PROBLEM
+-----------
+If Aether wants to know what Claude Code is doing, it has to parse output -
+look for patterns like "Thinking...", "Running Bash", etc. This is fragile:
+- Every LLM TUI has different output formats
+- Formats change between versions
+- Parsing is error-prone and incomplete
+
+THE SOLUTION
+------------
+Define a protocol for LLM TUIs to communicate directly with Aether. Instead
+of guessing, Claude Code tells Aether what's happening.
+
+PROTOCOL FORMAT
+---------------
+Custom OSC (Operating System Command) escape sequence:
+
+    \e]7770;<json>\e\\
+
+OSC 7770 is in the private-use range. The payload is JSON.
+
+MESSAGE TYPES
+-------------
+
+Status Update:
+    {
+        "type": "status",
+        "state": "thinking" | "executing" | "waiting" | "idle",
+        "tool": "Bash" | "Read" | "Edit" | ...,
+        "model": "claude-opus-4"
+    }
+
+Context Report:
+    {
+        "type": "context",
+        "used": 45000,
+        "limit": 128000,
+        "turn": 12
+    }
+
+Attention Request:
+    {
+        "type": "attention",
+        "reason": "permission" | "error" | "complete",
+        "prompt": "Allow Bash: rm -rf node_modules?",
+        "id": "req-123"
+    }
+
+Artifact:
+    {
+        "type": "artifact",
+        "kind": "code" | "file" | "command",
+        "language": "rust",
+        "content": "fn main() {...}",
+        "path": "src/main.rs"
+    }
+
+File Change:
+    {
+        "type": "file",
+        "action": "edit" | "create" | "delete",
+        "path": "src/main.rs",
+        "lines": [42, 67]
+    }
+
+Session Info:
+    {
+        "type": "session",
+        "id": "sess-abc123",
+        "project": "/Users/dev/myproject",
+        "branch": "main"
+    }
+
+PROTOCOL-AWARE CHROME
+---------------------
+
+┌─────────────────────────────────────────────────────────────────┐
+│ Aether   [claude-opus-4]  ●  Thinking...   ctx: 45k/128k  ████░░│
+├─────────────────────────────────────────────────────────────────┤
+│  ~/project │ main │ claude-code                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  $ claude                                                       │
+│  > Help me refactor the authentication module                   │
+│                                                                 │
+│  I'll analyze the auth module...                                │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ ⚠ PERMISSION REQUESTED                                   │   │
+│  │ Bash: npm test auth                                      │   │
+│  │                                         [Allow] [Deny]   │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+Chrome displays:
+- Model name (from protocol)
+- Agent state indicator (thinking/executing/idle)
+- Context usage bar
+- Permission prompts surface prominently
+
+FALLBACK DETECTION
+------------------
+When tools don't support the protocol, Aether can detect and parse:
+- Claude Code (prompt patterns, tool calls)
+- OpenCode (similar detection)
+- Aider (git-focused patterns)
+
+Provides degraded but useful integration until tools adopt the protocol.
+
+ADOPTION PATH
+-------------
+1. Implement protocol support in Aether
+2. Add protocol support to Claude Code via hooks/skills
+3. Document protocol openly as specification
+4. Other tools (OpenCode, Aider) can adopt
+
+
+================================================================================
+                        AI DEVELOPMENT FEATURES
+================================================================================
+
+SEMANTIC SCROLLBACK SEARCH
+--------------------------
+
+Traditional:  /authentication error     (regex/literal)
+Semantic:     ?find where auth fails    (meaning-based)
+
+Implementation:
+- Embed scrollback chunks using local model (Ollama + nomic-embed-text)
+- Store embeddings in SQLite with vector extension
+- Query returns ranked results by semantic similarity
+- Falls back to regex when semantic search unavailable
+
+INTELLIGENT OUTPUT PARSING
+--------------------------
+
+Aether recognizes patterns in terminal output:
+
+    Pattern              Action
+    ─────────────────────────────────────────────────────────
+    file.rs:42:15        Clickable → opens in editor at line
+    https://...          Clickable → opens in browser
+    Stack traces         Collapsible, syntax highlighted
+    JSON blobs           Pretty-print toggle, collapsible
+    Error patterns       Link to error-db if available
+    Exit codes           Visual indicator (green ✓ / red ✗)
+
+COMMAND TIMING
+--------------
+
+Every command shows duration:
+
+    $ cargo build
+       Compiling aether v0.1.0
+       Finished in 12.4s                                    [12.4s ✓]
+
+Useful for loop iterations - see how long each attempt takes.
+
+
+================================================================================
+                         DAEDALOS INTEGRATION
+================================================================================
+
+When Daedalos tools are available, Aether becomes deeply aware of the
+development environment.
+
+LOOP INTEGRATION
+----------------
+
+Chrome shows loop status (iteration count only, no max prominence):
+
+    🔄 fix-tests  iteration 3  ▪▪▪▪▫▫▫▫▫▫
+
+- Progress indicator shows activity, not countdown
+- Max is background safety valve, not prominent feature
+- If user sets explicit max, show dimmed: "iteration 3 (max: 50)"
+- Notification when loop completes or fails
+
+AGENT AWARENESS
+---------------
+
+When multiple agents run via `agent spawn`:
+- Tab bar shows: [2 running / 1 thinking / 0 idle]
+- Each pane knows its agent identity
+- Cross-pane search across all agents
+- Agent message visualization
+
+UNDO TIMELINE GUTTER
+--------------------
+
+    ┌──┬──────────────────────────────────────────────────────────┐
+    │  │ $ vim src/auth.rs                                        │
+    │● │ $ cargo test                                             │
+    │● │ PASSED: 12 tests                                         │
+    │  │ $ git commit -m "fix auth"                               │
+    └──┴──────────────────────────────────────────────────────────┘
+     ↑
+     Dots indicate commands that modified files tracked by undo
+
+VERIFY INTEGRATION
+------------------
+
+Ctrl+Shift+V runs verify --quick in overlay:
+
+    ┌─────────────────────────────────────────────────────────────┐
+    │                        VERIFY QUICK                          │
+    │─────────────────────────────────────────────────────────────│
+    │  ✓ lint      passed (0.8s)                                  │
+    │  ✓ types     passed (1.2s)                                  │
+    │  ✗ tests     3 failed (4.1s)                                │
+    │                                                              │
+    │  Press Enter to see failures, Esc to close                  │
+    └─────────────────────────────────────────────────────────────┘
+
+GATES INTEGRATION
+-----------------
+
+When supervision gates block an action:
+- Prominent notification in chrome
+- Approve/deny inline if gates configured for it
+- History of gate decisions visible
+
+GRACEFUL DEGRADATION
+--------------------
+
+When Daedalos tools aren't installed:
+- Keybindings show "tool not found" message
+- Chrome indicators hidden
+- Aether works as excellent standalone terminal
+
+
+================================================================================
+                            KEYBINDINGS
+================================================================================
+
+MACOS NATIVE
+------------
+
+    Cmd+T               New tab
+    Cmd+W               Close tab
+    Cmd+N               New window
+    Cmd+Shift+]         Next tab
+    Cmd+Shift+[         Previous tab
+    Cmd+1-9             Jump to tab N
+    Cmd+,               Preferences
+    Cmd+Q               Quit
+    Cmd+C               Copy (selection) / SIGINT (no selection)
+    Cmd+V               Paste
+    Cmd+F               Find in scrollback
+    Cmd+K               Clear scrollback
+    Cmd+D               Split vertical
+    Cmd+Shift+D         Split horizontal
+    Cmd+Enter           Toggle fullscreen
+    Cmd+Plus/Minus      Increase/decrease font size
+
+LINUX / CROSS-PLATFORM
+----------------------
+
+    Ctrl+Shift+T        New tab
+    Ctrl+Shift+W        Close tab
+    Ctrl+Shift+N        New window
+    Ctrl+Tab            Next tab
+    Ctrl+Shift+Tab      Previous tab
+    Alt+1-9             Jump to tab N
+    Ctrl+Shift+C        Copy
+    Ctrl+Shift+V        Paste
+    Ctrl+Shift+F        Find in scrollback
+
+DAEDALOS TOOLS (both platforms)
+-------------------------------
+
+    Ctrl+Shift+L        Loop status
+    Ctrl+Shift+A        Agent list
+    Ctrl+Shift+N        New agent (in new tab)
+    Ctrl+Shift+V        Verify quick (note: override on Linux)
+    Ctrl+Shift+U        Undo timeline
+    Ctrl+Shift+Z        Undo last
+    Ctrl+Shift+P        Project info
+    Ctrl+Shift+T        Project tree
+    Ctrl+Shift+S        Semantic search
+    Ctrl+Shift+E        Error lookup
+    Ctrl+Shift+J        Journal
+    Ctrl+Shift+G        Gates level
+    Ctrl+Shift+C        Context estimate
+    Ctrl+Shift+K        Create checkpoint
+    Ctrl+Shift+Space    Daedalos launcher
+    Ctrl+Shift+?        Help overlay
+
+
+================================================================================
+                          DEFAULT THEME: DAEDALOS
+================================================================================
+
+The Craftsman's Workshop - warm earth tones designed for long sessions.
+
+BACKGROUNDS
+-----------
+    bg-deep:        #0f1114     Deepest background
+    bg-main:        #151820     Primary background
+    bg-surface:     #1c2028     Elevated surfaces
+    bg-elevated:    #252a35     Highest elevation
+    bg-selection:   #2d3a4a     Selected text background
+
+FOREGROUNDS
+-----------
+    fg-primary:     #e8e0d4     Primary text (warm cream)
+    fg-secondary:   #a89f94     Secondary text
+    fg-muted:       #6b6560     Muted/disabled text
+
+ACCENT COLORS
+-------------
+    bronze:         #d4a574     Primary accent, cursor
+    bronze-bright:  #e8c49a     Highlighted bronze
+    amber:          #e5a84b     Warnings, iteration indicators
+    teal:           #4a9a8c     Links, prompts
+    teal-bright:    #6bc4b4     Bright teal
+    olive:          #8a9a6b     Strings
+    sage:           #a4b88a     Success secondary
+    copper-green:   #5a9a7a     Success, passing
+    copper-bright:  #7abf9a     Bright success
+    terracotta:     #c47a5a     Errors
+    terracotta-brt: #e89a7a     Bright errors
+    plum:           #8a6a8a     Special/constants
+    plum-bright:    #b48ab4     Bright plum
+
+ANSI COLOR MAPPING
+------------------
+    color0  (black):    #0f1114
+    color1  (red):      #c47a5a     terracotta
+    color2  (green):    #5a9a7a     copper-green
+    color3  (yellow):   #e5a84b     amber
+    color4  (blue):     #4a9a8c     teal
+    color5  (magenta):  #8a6a8a     plum
+    color6  (cyan):     #6bc4b4     teal-bright
+    color7  (white):    #a89f94     fg-secondary
+
+    color8  (bright black):   #6b6560
+    color9  (bright red):     #e89a7a
+    color10 (bright green):   #7abf9a
+    color11 (bright yellow):  #e8c49a
+    color12 (bright blue):    #6bc4b4
+    color13 (bright magenta): #b48ab4
+    color14 (bright cyan):    #a4b88a
+    color15 (bright white):   #e8e0d4
+
+DEFAULT FONT
+------------
+    Iosevka - clean, narrow, excellent ligature support
+    Fallback: system monospace
+
+
+================================================================================
+                        CONFIGURATION
+================================================================================
+
+Config file: ~/.config/aether/aether.toml
+
+EXAMPLE CONFIGURATION
+---------------------
+
+    # Aether Configuration
+
+    [general]
+    theme = "daedalos"           # or path to custom theme
+    font_family = "Iosevka"
+    font_size = 14.0
+    scrollback_lines = 10000     # 0 for unlimited
+
+    [window]
+    initial_rows = 30
+    initial_cols = 120
+    decorations = true           # native title bar
+    opacity = 1.0                # 0.0 - 1.0
+
+    [cursor]
+    shape = "block"              # block, beam, underline
+    blink = true
+    blink_interval_ms = 500
+
+    [shell]
+    program = "/bin/zsh"
+    args = ["-l"]
+    working_directory = "~"
+
+    [keybindings]
+    # Override or add keybindings
+    # "ctrl+shift+x" = "close_pane"
+
+    [protocol]
+    enabled = true               # Aether Protocol
+    show_context_bar = true      # Context usage in chrome
+    surface_permissions = true   # Prominent permission prompts
+
+    [daedalos]
+    enabled = true               # Auto-detect Daedalos tools
+    keybindings = true           # Ctrl+Shift+* bindings
+    loop_in_chrome = true        # Show loop status
+    agent_in_tabs = true         # Show agent status
+
+    [semantic_search]
+    enabled = true
+    embedding_model = "nomic-embed-text"  # via Ollama
+    index_scrollback = true
+
+    [profiles.ssh-server]
+    font_size = 12.0
+    theme = "high-contrast"
+    match_host = "*.example.com"
+
+
+================================================================================
+                       IMPLEMENTATION ROADMAP
+================================================================================
+
+PHASE 1: FOUNDATION (Weeks 1-4)
+-------------------------------
+Goal: Basic terminal that renders text and handles input.
+
+Deliverable: A window that runs a shell, handles basic escape sequences,
+             renders text with the Daedalos theme.
+
+    Component               Approach
+    ─────────────────────────────────────────────────────────────
+    Project scaffold        Rust workspace with libaether + platforms
+    PTY handling            portable-pty crate
+    VT parser               Start with vte crate, customize later
+    Screen grid             Custom implementation
+    Basic rendering         wgpu + simple glyph rendering
+    macOS app               Minimal Swift app via C FFI
+    Linux app               Minimal GTK app
+    macOS keybindings       Cmd+T/W/N/Q etc from day one
+
+
+PHASE 2: TERMINAL CORRECTNESS (Weeks 5-8)
+-----------------------------------------
+Goal: Pass terminal compatibility tests, proper text rendering.
+
+Deliverable: Terminal that works with vim, tmux, htop.
+             Proper font rendering with ligatures.
+             Semantic reflow on resize.
+
+    Component               Work
+    ─────────────────────────────────────────────────────────────
+    VT parser               Edge cases, alternate screen, mouse
+    Font shaping            HarfBuzz via cosmic-text or swash
+    Font discovery          font-kit for cross-platform
+    Scrollback              Implement with regex search
+    Semantic reflow         Track logical vs display lines
+    Selection               Mouse selection, copy/paste
+    Config                  TOML config, Daedalos theme
+
+
+PHASE 3: MULTIPLEXER (Weeks 9-12)
+---------------------------------
+Goal: Tabs and splits without needing tmux.
+
+Deliverable: Multiple panes, tabs, basic session management.
+
+    Component               Work
+    ─────────────────────────────────────────────────────────────
+    Tab bar                 Native on macOS, custom on Linux
+    Splits                  Horizontal/vertical pane splitting
+    Focus management        Keyboard navigation between panes
+    Session persistence     Save/restore sessions
+
+
+PHASE 4: AETHER PROTOCOL (Weeks 13-16)
+--------------------------------------
+Goal: The differentiating feature - AI awareness.
+
+Deliverable: Protocol working with Claude Code integration.
+
+    Component               Work
+    ─────────────────────────────────────────────────────────────
+    OSC 7770 handler        Parse protocol messages in VT parser
+    Chrome integration      Status, context, model in UI
+    Permission surfacing    Prominent display of attention requests
+    Claude Code plugin      Hook/skill emitting protocol messages
+    Fallback detection      Pattern matching for non-protocol tools
+
+
+PHASE 5: INTELLIGENCE (Weeks 17-20)
+-----------------------------------
+Goal: Smart features that make Aether exceptional.
+
+Deliverable: Semantic search, intelligent parsing, shell integration.
+
+    Component               Work
+    ─────────────────────────────────────────────────────────────
+    Semantic search         Local embeddings, SQLite vector storage
+    Output parsing          File paths, URLs, stack traces, JSON
+    Shell integration       Prompt detection, command timing
+    Click-to-cursor         Position cursor in editable regions
+    Daedalos integration    Full keybinding set, tool overlays
+
+
+PHASE 6: POLISH (Weeks 21-24)
+-----------------------------
+Goal: Production-ready release.
+
+Deliverable: Stable, documented, packaged for distribution.
+
+    Component               Work
+    ─────────────────────────────────────────────────────────────
+    Performance             Profiling, optimization, memory tuning
+    Edge cases              Terminal compatibility, Unicode
+    Documentation           User guide, protocol spec, config reference
+    Packaging               Homebrew, Nix, .deb/.rpm, DMG
+    Testing                 Comprehensive test suite
+
+
+TIMELINE SUMMARY
+----------------
+
+    Phase               Weeks       Milestone
+    ─────────────────────────────────────────────────────────────
+    1. Foundation       1-4         Basic terminal runs
+    2. Correctness      5-8         Works with real programs
+    3. Multiplexer      9-12        Tabs and splits
+    4. Protocol         13-16       AI awareness works
+    5. Intelligence     17-20       Smart features complete
+    6. Polish           21-24       Ready for release
+
+    Total: ~6 months to v1.0
+
+
+================================================================================
+                           DEPENDENCIES
+================================================================================
+
+RUST CRATES
+-----------
+    portable-pty        PTY handling (cross-platform)
+    vte                 VT escape sequence parsing (starting point)
+    wgpu                GPU abstraction (Metal/Vulkan/OpenGL)
+    cosmic-text         Text shaping and layout
+    font-kit            Font discovery
+    winit               Window creation (Linux)
+    toml                Configuration parsing
+    serde               Serialization
+    sqlite              Scrollback storage, semantic search
+
+MACOS
+-----
+    Swift/AppKit        Native UI
+    Metal               GPU rendering
+    CoreText            Font rendering
+
+LINUX
+-----
+    GTK4                Native UI (or pure Wayland)
+    Vulkan/OpenGL       GPU rendering
+    FreeType            Font rendering
+    fontconfig          Font discovery
+
+
+================================================================================
+                            SUCCESS CRITERIA
+================================================================================
+
+FUNCTIONAL
+----------
+- Runs shell correctly, passes vttest compatibility tests
+- Works with vim, tmux, htop, and other TUI applications
+- Renders all Unicode correctly including emoji and CJK
+- Ligatures work with Iosevka and other programming fonts
+- Sessions persist across restarts
+
+PERFORMANCE
+-----------
+- < 5ms input latency
+- Smooth scrolling at 60fps
+- Memory usage comparable to Alacritty (< 100MB typical)
+- Fast startup (< 500ms to usable shell)
+
+AI INTEGRATION
+--------------
+- Aether Protocol works with Claude Code
+- Permission prompts are never missed
+- Context usage visible at a glance
+- Semantic search returns useful results
+
+PLATFORM NATIVE
+---------------
+- macOS app feels like a native Mac app
+- Linux app integrates with GTK/GNOME conventions
+- Platform-appropriate keyboard shortcuts work
+
+
+================================================================================
+                              LICENSE
+================================================================================
+
+MIT License
+
+Aether is Free and Open Source Software. Part of the Daedalos project.
+
+
+================================================================================
+                            CREATED BY
+================================================================================
+
+Designed by Claude (Opus 4.5) in collaboration with a human patron.
+
+Organization: Opus Workshop
+Repository:   github.com/opus-workshop/aether
+License:      MIT
+
+================================================================================
+
+                    "The medium of communication"
+
+================================================================================

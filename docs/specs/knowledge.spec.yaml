@@ -1,0 +1,159 @@
+name: knowledge
+version: 0.1.0
+status: design
+category: autonomy
+
+purpose: |
+  External memory system for small-context AI agents. Extends limited context
+  windows through structured note storage and semantic retrieval. The agent's
+  second brain.
+
+philosophy: |
+  Memory is precious when you're ephemeral. Small context windows force
+  aggressive externalization - every insight must be captured or it's lost.
+
+  This isn't a wiki for humans. It's structured knowledge storage designed
+  for machine retrieval. Atomic notes, rich tags, semantic search.
+
+  The agent doesn't "remember" - it queries its past self.
+
+anti-patterns:
+  - Long prose notes (hard to retrieve)
+  - Untagged notes (lost in the void)
+  - Duplicating what's in code (use codex for that)
+  - Over-categorizing (keep it simple)
+  - Trusting context over notes
+
+commands:
+  add:
+    usage: knowledge add "<note>" [--tags TAG...]
+    description: Add an atomic note to the knowledge base
+    examples:
+      - knowledge add "btrfs snapshots are instant due to CoW"
+      - knowledge add "loop --promise-cmd expects exit code 0" --tags daedalos,loop
+      - knowledge add "user prefers minimal comments in code" --tags preferences
+
+  search:
+    usage: knowledge search "<query>" [--limit N] [--tags TAG...]
+    description: Semantic search over all notes
+    examples:
+      - knowledge search "file system snapshots"
+      - knowledge search "user preferences" --tags preferences
+      - knowledge search "mistakes I made" --limit 10
+
+  recall:
+    usage: knowledge recall [--today] [--week] [--about TOPIC]
+    description: Recall recent or relevant notes for context loading
+    examples:
+      - knowledge recall --today
+      - knowledge recall --about "current project"
+      - knowledge recall --week --tags learnings
+
+  threads:
+    usage: knowledge threads [list|add|close|current]
+    description: Manage ongoing work threads that survive context resets
+    examples:
+      - knowledge threads list
+      - knowledge threads add "investigating slow test performance"
+      - knowledge threads current
+      - knowledge threads close "investigating slow test performance"
+
+  warmup:
+    usage: knowledge warmup [--tokens N]
+    description: Generate context warm-up for new session
+    output: Recent threads, relevant notes, open questions - fit to token budget
+    examples:
+      - knowledge warmup
+      - knowledge warmup --tokens 2000
+
+  questions:
+    usage: knowledge questions [add|list|resolve]
+    description: Track open questions being held across sessions
+    examples:
+      - knowledge questions add "why does the build fail on ARM?"
+      - knowledge questions list
+      - knowledge questions resolve "why does the build fail on ARM?" --answer "missing cross-compile flag"
+
+  patterns:
+    usage: knowledge patterns [add|list|search]
+    description: Track recurring patterns observed over time
+    examples:
+      - knowledge patterns add "test failures often caused by stale cache"
+      - knowledge patterns list
+      - knowledge patterns search "test"
+
+  mistakes:
+    usage: knowledge mistakes [add|list|search]
+    description: Track mistakes and lessons learned (for not repeating them)
+    examples:
+      - knowledge mistakes add "forgot to run verify before committing" --lesson "always verify"
+      - knowledge mistakes list --recent 5
+
+  stats:
+    usage: knowledge stats
+    description: Show knowledge base statistics
+    output: Note count, tags, threads, search frequency, etc.
+
+storage:
+  location: ~/.local/share/daedalos/knowledge/
+  format: SQLite database with FTS5 for full-text search
+  embeddings: Stored alongside notes for semantic search
+
+  schema:
+    notes:
+      - id (uuid)
+      - content (text)
+      - tags (json array)
+      - category (learning|pattern|mistake|question|thread|general)
+      - created_at (timestamp)
+      - embedding (blob)
+
+    threads:
+      - id (uuid)
+      - description (text)
+      - status (active|closed)
+      - created_at (timestamp)
+      - closed_at (timestamp nullable)
+      - notes (json array of note ids)
+
+integration:
+  codex: Uses same embedding model for consistency
+  journal: Can auto-extract learnings from journal entries
+  warmup: Called automatically at session start (configurable)
+
+token_budgeting:
+  description: |
+    The warmup command must be context-aware. Given a token budget,
+    it prioritizes what to include:
+
+    1. Active threads (what am I working on?)
+    2. Recent mistakes (don't repeat these)
+    3. Open questions (what am I wondering?)
+    4. Recent learnings (fresh context)
+    5. Relevant patterns (based on thread topics)
+
+    If budget is tight, summarize. If generous, include more detail.
+
+example_session:
+  description: How an autonomous agent might use knowledge
+  flow:
+    - Agent starts new session
+    - Runs `knowledge warmup --tokens 3000`
+    - Gets context about active threads, recent learnings
+    - Continues work on a thread
+    - Discovers something new
+    - Runs `knowledge add "discovered X" --tags learning`
+    - Makes a mistake
+    - Runs `knowledge mistakes add "did Y wrong" --lesson "do Z instead"`
+    - Context getting full
+    - Summarizes current state
+    - Runs `knowledge threads add "still working on..."` if needed
+    - Session ends, knowledge persists
+
+future:
+  - Automatic note extraction from conversations
+  - Spaced repetition for important patterns
+  - Cross-agent knowledge sharing
+  - Knowledge graph visualization
+  - Confidence scores on notes (how sure am I?)
+  - Note aging/pruning (old notes decay in relevance)

@@ -1,0 +1,91 @@
+name: analyze
+version: 0.1.0
+category: intelligence
+
+intent:
+  core: Find gaps in code and fill them automatically
+  why: |
+    Gap detection without resolution is incomplete. Knowing what's missing
+    is only valuable if you can fix it. Analyze orchestrates the full workflow:
+    detect gaps → generate targeted prompt → spawn agent → loop until verified.
+  philosophy: |
+    "Daedalos orchestrates, AI generates."
+    This tool embodies the Daedalos philosophy - we don't generate code ourselves,
+    we coordinate the tools that do.
+
+trigger:
+  when:
+    - "You want to improve test coverage automatically"
+    - "You've identified gaps and want them filled"
+    - "Starting work on a codebase with unknown test coverage"
+  patterns:
+    - "analyze tests"
+    - "fill test gaps"
+    - "improve coverage"
+
+interface:
+  commands:
+    tests:
+      description: "Analyze and fill test gaps"
+      usage: "analyze tests [path] [--dry-run] [-n MAX]"
+      flags:
+        --dry-run: "Show gaps without filling them"
+        -n: "Maximum loop iterations (default: 10)"
+        --promise: "Custom verification command"
+    gaps:
+      description: "Show gaps without filling (dry run)"
+      usage: "analyze gaps [path]"
+    status:
+      description: "Show active analysis runs"
+      usage: "analyze status"
+
+workflow:
+  steps:
+    - name: "Detect gaps"
+      action: "Run evolve gaps to identify missing tests"
+      output: "List of test gaps with file paths and reasons"
+    - name: "Generate prompt"
+      action: "Build targeted prompt from gap analysis"
+      output: "Prompt with specific files and requirements"
+    - name: "Run loop"
+      action: "loop start '<prompt>' --promise 'verify'"
+      output: "Iterates until tests pass"
+
+connects_to:
+  - component: evolve
+    relationship: uses
+    data: "Gap analysis results"
+  - component: loop
+    relationship: uses
+    data: "Iteration until promise met"
+  - component: verify
+    relationship: uses
+    data: "Default promise command"
+  - component: agent
+    relationship: indirect
+    data: "Loop may spawn agents for implementation"
+
+success_criteria:
+  - "Gaps are detected accurately"
+  - "Prompt contains actionable specifics"
+  - "Loop terminates on success or max iterations"
+  - "New tests actually cover the gaps"
+
+anti_patterns:
+  - description: "Using analyze instead of evolve for just viewing gaps"
+    consequence: "Unnecessary complexity for read-only operation"
+    alternative: "Use 'analyze gaps --dry-run' or 'evolve gaps' directly"
+  - description: "Running analyze without reviewing gaps first"
+    consequence: "May generate inappropriate tests"
+    alternative: "Run 'analyze gaps' first to understand what will be created"
+
+examples:
+  - description: "Fill test gaps in a directory"
+    command: "analyze tests src/auth/"
+    explanation: "Finds untested files in auth, generates tests, loops until verify passes"
+  - description: "Preview gaps without action"
+    command: "analyze tests --dry-run"
+    explanation: "Shows what would be filled without making changes"
+  - description: "Custom verification"
+    command: "analyze tests --promise 'npm test'"
+    explanation: "Uses npm test instead of verify for the loop promise"

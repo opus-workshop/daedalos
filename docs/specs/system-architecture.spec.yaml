@@ -1,0 +1,447 @@
+name: system-architecture
+version: 0.1.0
+status: design
+category: core
+
+purpose: |
+  Defines how Daedalos operates at the OS level. Everything is built from
+  low-level primitives upward. State lives in files. Daemons manage processes.
+  GUIs are optional consumers. The system works headless.
+
+philosophy: |
+  The lowest level that works is the right level.
+
+  GUIs are viewers, not sources of truth. A terminal is a window into the
+  system, not the system itself. If the window manager crashes, nothing is
+  lost. If you SSH in, everything still works.
+
+  State is files. Communication is sockets or files. Processes are managed
+  by systemd. This is how Unix works. We don't fight it.
+
+  An autonomous agent doesn't "run in a terminal" - it runs as a daemon.
+  It can open terminals when it needs them. The agent IS a system service.
+
+layers:
+  layer0_kernel:
+    name: "Kernel + Init"
+    description: |
+      The foundation. Linux kernel, systemd for process management,
+      cgroups for resource limits, journald for logging.
+
+    components:
+      kernel:
+        - Process scheduling
+        - Memory management
+        - Filesystem access
+        - Network stack
+
+      systemd:
+        - Service management (start, stop, restart, enable)
+        - Socket activation
+        - Timer units (cron replacement)
+        - User services (~/.config/systemd/user/)
+        - journald (structured logging)
+
+      cgroups:
+        - Resource limits per service
+        - Memory limits for runaway processes
+        - CPU quotas if needed
+
+    interfaces:
+      - /proc (process info, meminfo, cpuinfo)
+      - /sys (device info, block devices)
+      - journalctl (log access)
+      - systemctl (service control)
+
+  layer1_state:
+    name: "State Layer"
+    description: |
+      All persistent state lives here. Files and SQLite databases.
+      This is the source of truth. Everything above reads from here.
+
+    locations:
+      user_state:
+        path: ~/.local/share/daedalos/
+        contents:
+          - agent-loop/state.json      # Current agent-loop state
+          - agent-loop/history.db      # Cycle history
+          - knowledge/knowledge.db     # Notes, threads, questions
+          - loops/active.json          # Currently running loops
+          - loops/history.db           # Loop history
+          - undo/undo.db               # File change tracking
+          - project/cache/             # Project intelligence cache
+          - codex/embeddings.db        # Semantic search vectors
+
+      user_runtime:
+        path: /run/user/$UID/daedalos/
+        contents:
+          - agent-loop.sock            # Agent-loop IPC socket
+          - loopd.sock                 # Loop daemon socket
+          - agent-loop.pid             # PID file
+          - loopd.pid                  # PID file
+
+      user_config:
+        path: ~/.config/daedalos/
+        contents:
+          - config.yaml                # Main configuration
+          - agent-loop.yaml            # Agent-loop config
+          - engines/                   # LLM engine configs
+          - templates/                 # Loop templates
+
+      user_content:
+        path: ~/
+        contents:
+          - journal/                   # Daily journals (human-readable)
+          - knowledge/                 # Knowledge base (markdown mirror)
+          - projects/                  # Work directories
+          - messages/inbox/            # Messages from human
+
+    formats:
+      json:
+        use_for: "Current state (small, frequently updated)"
+        example: "agent-loop/state.json"
+
+      sqlite:
+        use_for: "History, searchable data, structured queries"
+        example: "knowledge/knowledge.db, loops/history.db"
+
+      yaml:
+        use_for: "Configuration (human-editable)"
+        example: "config.yaml"
+
+      markdown:
+        use_for: "Human-readable mirrors, journals"
+        example: "journal/2026-01-12.txt"
+
+  layer2_daemons:
+    name: "Daemon Layer"
+    description: |
+      Long-running processes managed by systemd. They read/write state,
+      expose sockets for IPC, and do the actual work.
+
+    services:
+      agent-loopd:
+        description: "The autonomous agent loop - the core of self-directed operation"
+        type: systemd user service
+        unit_file: ~/.config/systemd/user/agent-loopd.service
+        socket: /run/user/$UID/daedalos/agent-loop.sock
+        state: ~/.local/share/daedalos/agent-loop/
+
+        responsibilities:
+          - Execute the WAKE → CHECK → DECIDE → ACT → LOG → REST cycle
+          - Monitor system resources (/proc, /sys)
+          - Invoke LLM for decision-making
+          - Spawn terminals/processes as needed
+          - Write state for consumers
+          - Handle graceful shutdown
+
+        resource_checks:
+          disk:
+            source: "statfs() or /proc/mounts + statvfs"
+            interval: "every cycle"
+          memory:
+            source: "/proc/meminfo"
+            interval: "every cycle"
+          network:
+            source: "socket connect test or /sys/class/net/*/operstate"
+            interval: "every cycle"
+          load:
+            source: "/proc/loadavg"
+            interval: "every cycle"
+
+      loopd:
+        description: "Manages iteration loops (the inner loop primitive)"
+        type: systemd user service
+        socket: /run/user/$UID/daedalos/loopd.sock
+        state: ~/.local/share/daedalos/loops/
+
+        responsibilities:
+          - Track active loops
+          - Monitor promise completion
+          - Handle loop lifecycle (start, pause, resume, cancel)
+          - Coordinate with agent-loopd
+
+      ollama:
+        description: "Local LLM inference (external, pre-existing)"
+        type: system service
+        socket: localhost:11434 (HTTP)
+        note: "Not ours, but we depend on it"
+
+      projectd:
+        description: "Project intelligence indexer (optional)"
+        type: systemd user service
+        responsibilities:
+          - Watch for file changes
+          - Update project cache
+          - Pre-compute summaries
+
+    service_template: |
+      # Example: agent-loopd.service
+      [Unit]
+      Description=Daedalos Autonomous Agent Loop
+      After=network.target ollama.service
+
+      [Service]
+      Type=notify
+      ExecStart=/usr/local/bin/agent-loopd
+      ExecReload=/bin/kill -HUP $MAINPID
+      Restart=on-failure
+      RestartSec=30
+
+      # Resource limits
+      MemoryMax=2G
+      CPUQuota=50%
+
+      # Watchdog
+      WatchdogSec=120
+
+      [Install]
+      WantedBy=default.target
+
+  layer3_tools:
+    name: "Tool Layer"
+    description: |
+      CLI tools that read/write state and communicate with daemons.
+      These are the human (and agent) interface to the system.
+
+    tools:
+      agent-loop:
+        purpose: "Control and query the agent-loop daemon"
+        commands:
+          - agent-loop status          # Read state, show current phase
+          - agent-loop start           # Start daemon (or systemctl)
+          - agent-loop stop            # Stop daemon gracefully
+          - agent-loop inject "msg"    # Send message via socket
+          - agent-loop log             # Read from journald
+
+        implementation:
+          status: "Read ~/.local/share/daedalos/agent-loop/state.json"
+          inject: "Write to socket, daemon reads"
+          log: "journalctl --user -u agent-loopd"
+
+      knowledge:
+        purpose: "Query and update knowledge base"
+        implementation:
+          - All commands read/write knowledge.db directly
+          - No daemon needed (SQLite handles concurrency)
+          - CLI is the interface, DB is the truth
+
+      loop:
+        purpose: "Manage iteration loops"
+        implementation:
+          - Communicates with loopd via socket
+          - Reads state from loops/active.json
+
+      verify:
+        purpose: "Run verification pipeline"
+        implementation:
+          - Standalone, no daemon
+          - Reads project config, runs checks, exits
+
+      # ... other tools follow same pattern
+
+  layer4_gui:
+    name: "GUI Layer (Optional)"
+    description: |
+      Graphical interfaces that consume state. They are viewers, not sources.
+      The system works without them.
+
+    components:
+      waybar:
+        purpose: "Status bar with Daedalos modules"
+        implementation:
+          - Custom modules that read state files
+          - Poll interval (1-5 seconds)
+          - No socket communication (keep it simple)
+
+        modules:
+          agent-loop:
+            reads: ~/.local/share/daedalos/agent-loop/state.json
+            displays: "Current phase, cycle count"
+
+          resources:
+            reads: "State file written by agent-loopd"
+            displays: "Disk %, memory, network status"
+
+          loop:
+            reads: ~/.local/share/daedalos/loops/active.json
+            displays: "Active loops, iteration count"
+
+      aether:
+        purpose: "Terminal emulator with Daedalos awareness"
+        implementation:
+          - Reads state files for status display
+          - Opens as a window, not the source of truth
+          - Agent-loopd can spawn Aether windows
+
+      notifications:
+        purpose: "Alert user to important events"
+        implementation:
+          - Daemons write to notification socket
+          - notify-send or direct libnotify
+          - Works with any notification daemon (mako, dunst)
+
+    headless_mode:
+      description: |
+        When no GUI is available (SSH, server, crashed WM):
+        - All state still accessible via files
+        - All tools work via CLI
+        - journalctl for logs
+        - Daemons continue running
+        - Nothing is lost
+
+communication:
+  ipc_patterns:
+    socket:
+      when: "Commands that need response, real-time interaction"
+      example: "agent-loop inject, loop start"
+      format: "JSON over Unix socket"
+
+    file:
+      when: "State that's polled by multiple consumers"
+      example: "agent-loop/state.json, loops/active.json"
+      format: "JSON, atomically written (write to .tmp, rename)"
+
+    signal:
+      when: "Simple notifications (reload config, shutdown)"
+      example: "SIGHUP for reload, SIGTERM for shutdown"
+
+    journald:
+      when: "Logs that need persistence, querying"
+      example: "All daemon logs"
+      format: "Structured (key=value)"
+
+  state_file_protocol:
+    description: |
+      For state files that multiple processes read/write:
+
+    writing:
+      1: "Write complete JSON to path.tmp"
+      2: "fsync() the temp file"
+      3: "rename(path.tmp, path)  # atomic"
+
+    reading:
+      1: "Open and read file"
+      2: "Parse JSON"
+      3: "Handle missing/corrupt gracefully"
+
+    locking:
+      - "Generally not needed due to atomic rename"
+      - "SQLite handles its own locking"
+      - "If needed: flock() with timeout"
+
+resource_monitoring:
+  sources:
+    memory:
+      file: /proc/meminfo
+      parse: |
+        MemTotal, MemFree, MemAvailable, Buffers, Cached
+        Available = MemAvailable (or MemFree + Buffers + Cached)
+
+    disk:
+      method: "statvfs() syscall on mount points"
+      or: "Parse /proc/mounts, call statvfs on each"
+      metrics: "total, free, available, percent_used"
+
+    cpu:
+      file: /proc/loadavg
+      parse: "1min, 5min, 15min load averages"
+
+    network:
+      file: /sys/class/net/*/operstate
+      check: "up" = connected
+      connectivity: "Socket connect to known host (1.1.1.1:53)"
+
+    temperature:
+      file: /sys/class/thermal/thermal_zone*/temp
+      parse: "millidegrees Celsius"
+
+  thresholds:
+    disk_warning: "< 20% free"
+    disk_critical: "< 10% free"
+    memory_warning: "< 2GB available"
+    memory_critical: "< 500MB available"
+    load_warning: "> 2 * num_cpus"
+    temp_warning: "> 80°C"
+
+bootstrap:
+  description: |
+    How does a machine go from empty to running autonomous agent?
+
+  phase1_install:
+    - Boot NixOS ISO (with Daedalos config baked in)
+    - Run installer (partition, install, configure)
+    - Reboot into installed system
+
+  phase2_first_boot:
+    - systemd starts all services
+    - ollama.service starts, but no models yet
+    - agent-loopd.service starts, but waits for model
+
+  phase3_model_download:
+    - Either: Human runs "ollama pull qwen2.5-coder:7b"
+    - Or: First-boot script does it automatically
+    - Or: Models pre-baked into ISO (large but offline-capable)
+
+  phase4_knowledge_init:
+    - Create ~/.local/share/daedalos/ structure
+    - Initialize empty knowledge.db
+    - Create ~/journal/, ~/projects/
+    - Write initial system prompt to config
+
+  phase5_network:
+    - Challenge: Getting internet on first boot
+    - Options:
+      - Ethernet (if available)
+      - Phone USB tethering
+      - Pre-configured wifi
+      - Human configures NetworkManager manually
+
+  phase6_agent_starts:
+    - agent-loopd detects: model available, state initialized
+    - Begins first cycle
+    - WAKE: Read (empty) warmup context
+    - CHECK: Resources, connectivity
+    - DECIDE: "I just started. What should I do first?"
+    - ACT: Perhaps build the knowledge tool, or explore
+    - LOG: First journal entry
+    - REST: Wait for next cycle
+
+remote_access:
+  ssh:
+    description: |
+      Full access to everything via SSH:
+      - systemctl --user status agent-loopd
+      - journalctl --user -u agent-loopd -f
+      - agent-loop status
+      - knowledge search "..."
+      - cat ~/.local/share/daedalos/agent-loop/state.json
+
+    no_gui_needed: true
+
+  mosh:
+    description: "For unreliable connections"
+    note: "Should be included in base install"
+
+security:
+  user_isolation:
+    - Agent runs as regular user, not root
+    - Uses sudo only when explicitly configured
+    - Daemons run as systemd user services
+
+  sandboxing:
+    - Optional: systemd sandboxing (PrivateTmp, NoNewPrivileges, etc.)
+    - Optional: Firejail for specific operations
+    - Agent can self-limit via sandbox tool
+
+  secrets:
+    - API keys in secrets store (age encrypted)
+    - Never in state files
+    - Injected via environment at runtime
+
+future:
+  - D-Bus interface for richer IPC
+  - Remote agent-loop control (authenticated)
+  - Clustering (multiple machines, coordinated)
+  - Metrics export (Prometheus format)
+  - Backup daemon for offsite state sync

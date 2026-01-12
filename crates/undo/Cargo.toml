@@ -1,0 +1,29 @@
+[package]
+name = "undo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "File-level undo with timeline - every change is reversible"
+
+[[bin]]
+name = "undo"
+path = "src/main.rs"
+
+[dependencies]
+daedalos-core.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# SQLite
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Compression for file backups
+flate2 = "1.0"
+
+# Hash computation
+sha2 = "0.10"
+hex = "0.4"

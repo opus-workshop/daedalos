@@ -1,0 +1,468 @@
+name: bootstrap
+version: 0.1.0
+status: design
+category: core
+
+see_also:
+  - system-architecture.spec.yaml
+  - agent-loop.spec.yaml
+  - knowledge.spec.yaml
+
+purpose: |
+  How does a machine go from empty hardware to running autonomous agent?
+  This spec defines the bootstrap sequence - installation, first boot,
+  network configuration, model download, and the moment the agent wakes up.
+
+target_hardware:
+  primary:
+    name: Dell Optiplex 7060 Micro
+    cpu: Intel i5-8500T (6 cores, 2.1GHz base)
+    ram: 16GB
+    storage: SSD (assumed 256GB+)
+    gpu: None (integrated Intel UHD 630)
+    network: WiFi + Ethernet
+
+  constraints:
+    - CPU-only inference (no CUDA/ROCm)
+    - Limited RAM for model size
+    - May have challenging network (captive portal, VPN required)
+
+phases:
+  phase0_preparation:
+    name: "Prepare Installation Media"
+    location: "Another machine (your main computer)"
+
+    steps:
+      build_iso:
+        description: "Build a Daedalos NixOS ISO with everything pre-configured"
+        command: |
+          cd /path/to/daedalos
+          nix build ./nixos#iso
+
+        what_iso_contains:
+          - NixOS base system
+          - All Daedalos tools
+          - Hyprland + Waybar configured
+          - Ollama (but not models - too large)
+          - First-boot scripts
+          - System prompt and agent configuration
+
+      write_usb:
+        description: "Write ISO to USB drive"
+        command: |
+          # On macOS
+          sudo dd if=result/iso/daedalos.iso of=/dev/diskN bs=4m
+
+          # On Linux
+          sudo dd if=result/iso/daedalos.iso of=/dev/sdX bs=4M status=progress
+
+      optional_preload_models:
+        description: "Optionally download models to USB for offline install"
+        steps:
+          - Create a second USB or partition with Ollama models
+          - Models can be copied during first boot
+          - Avoids needing network for model download
+
+  phase1_hardware_setup:
+    name: "Prepare the Dell"
+    location: "Physical access to Dell Optiplex"
+
+    steps:
+      bios_settings:
+        - Enable UEFI boot (disable legacy/CSM)
+        - Disable Secure Boot (or enroll NixOS keys)
+        - Set boot order: USB first
+
+      connect_peripherals:
+        - USB keyboard
+        - Monitor (HDMI or DisplayPort)
+        - USB with Daedalos ISO
+
+      network_options:
+        ethernet:
+          description: "Easiest if available"
+          steps: ["Plug in ethernet cable"]
+
+        phone_tethering:
+          description: "USB tethering from phone"
+          steps:
+            - Connect phone via USB
+            - Enable USB tethering on phone
+            - NixOS should auto-detect as usb0
+
+        wifi:
+          description: "More complex, may need manual config"
+          challenge: "Captive portals, VPN requirements"
+          steps:
+            - Will configure in Phase 3
+
+  phase2_installation:
+    name: "Install NixOS"
+    location: "Dell, booted from USB"
+
+    boot_sequence:
+      - Power on Dell
+      - Press F12 for boot menu
+      - Select USB drive
+      - Daedalos live environment boots
+      - Auto-login as 'nixos' user
+
+    live_environment:
+      description: |
+        The live ISO provides a working Daedalos environment.
+        You can explore before installing, or proceed directly.
+
+    installation_methods:
+      guided_installer:
+        description: "Interactive script for standard installs"
+        command: "sudo daedalos-install"
+        steps:
+          - Detect available disks
+          - Select target disk (WARNING: will be erased)
+          - Create partition table (GPT)
+          - Create partitions (EFI + Btrfs root)
+          - Create Btrfs subvolumes (@, @home, @nix, @snapshots)
+          - Mount filesystems
+          - Generate NixOS config
+          - Run nixos-install
+          - Set root password
+          - Reboot
+
+      manual_installation:
+        description: "For custom setups"
+        reference: "Standard NixOS installation process"
+
+    partition_layout:
+      disk: /dev/nvme0n1 (or /dev/sda)
+      partitions:
+        - number: 1
+          size: 512MB
+          type: EFI System
+          format: FAT32
+          mount: /boot
+
+        - number: 2
+          size: remainder
+          type: Linux filesystem
+          format: Btrfs
+          subvolumes:
+            "@": "/"
+            "@home": "/home"
+            "@nix": "/nix"
+            "@snapshots": "/.snapshots"
+          options: "compress=zstd,noatime"
+
+    installation_time:
+      estimate: "10-30 minutes depending on network speed"
+      bottleneck: "Downloading NixOS packages if not cached"
+
+  phase3_first_boot:
+    name: "First Boot Configuration"
+    location: "Dell, booted from installed system"
+
+    automatic_on_boot:
+      - systemd starts all services
+      - NetworkManager starts
+      - Ollama service starts (no models yet)
+      - First-boot service runs (one-time setup)
+
+    first_boot_service:
+      description: |
+        A systemd service that runs once on first boot to complete setup.
+        After completion, it disables itself.
+
+      unit_file: |
+        [Unit]
+        Description=Daedalos First Boot Setup
+        After=network-online.target
+        Wants=network-online.target
+        ConditionPathExists=!/var/lib/daedalos/first-boot-complete
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/daedalos-first-boot
+        ExecStartPost=/usr/bin/touch /var/lib/daedalos/first-boot-complete
+        RemainAfterExit=yes
+
+        [Install]
+        WantedBy=multi-user.target
+
+      script_actions:
+        - Create user directories (~/.local/share/daedalos/, ~/journal/, etc.)
+        - Initialize empty knowledge.db
+        - Initialize empty loop.db, undo.db
+        - Write default config files
+        - Check for pre-loaded models on USB
+        - If models found, copy to Ollama
+        - If network available and no models, prompt to download
+        - Enable agent-loopd service (but don't start yet)
+
+    network_configuration:
+      ethernet:
+        description: "Should work automatically via DHCP"
+        verify: "ping 1.1.1.1"
+
+      wifi_simple:
+        description: "WPA2 network without captive portal"
+        commands: |
+          # Using nmcli
+          nmcli device wifi list
+          nmcli device wifi connect "NetworkName" password "password"
+
+      wifi_with_captive_portal:
+        description: "Networks like Xfinity hotspots"
+        challenge: "Need to authenticate via web browser"
+        solutions:
+          captive_browser:
+            description: "NixOS has captive-browser package"
+            command: "captive-browser"
+            note: "Opens minimal browser for portal authentication"
+
+          terminal_browser:
+            description: "Use w3m or carbonyl"
+            command: "w3m http://detectportal.firefox.com"
+
+          phone_tethering:
+            description: "Bypass entirely"
+            note: "Often the simplest solution"
+
+      wifi_requiring_vpn:
+        description: "Network only works through VPN"
+        steps:
+          - Configure VPN (WireGuard, OpenVPN, Tailscale)
+          - Set VPN to auto-connect
+          - May need initial connection via tethering to download VPN config
+
+      tailscale:
+        description: "Mesh VPN for reliable connectivity"
+        setup: |
+          # Install is included in Daedalos
+          sudo tailscale up
+
+          # On first run, prints auth URL
+          # Visit URL to authenticate
+          # Device joins your tailnet
+
+          # Set another device as exit node for internet
+          tailscale up --exit-node=<other-device>
+        benefits:
+          - Works through NAT, firewalls, captive portals
+          - Provides stable IP for SSH access
+          - Can route traffic through your main machine
+
+    network_verification:
+      commands:
+        - "ip addr"
+        - "ping -c 3 1.1.1.1"
+        - "curl -s https://httpbin.org/ip"
+        - "tailscale status"  # if using Tailscale
+
+  phase4_model_download:
+    name: "Download LLM Models"
+    location: "Dell, with network connectivity"
+
+    required_models:
+      coding_fast:
+        name: qwen2.5-coder:3b
+        size: ~2GB
+        purpose: "Fast inference for quick tasks"
+        command: "ollama pull qwen2.5-coder:3b"
+
+      coding_quality:
+        name: qwen2.5-coder:7b
+        size: ~4GB
+        purpose: "Better quality when time allows"
+        command: "ollama pull qwen2.5-coder:7b"
+
+      embeddings:
+        name: nomic-embed-text
+        size: ~300MB
+        purpose: "Semantic search for codex and knowledge"
+        command: "ollama pull nomic-embed-text"
+
+    total_download: "~6-7GB"
+    time_estimate: "10-60 minutes depending on connection"
+
+    offline_alternative:
+      description: "Pre-download models and copy via USB"
+      steps:
+        - On machine with internet: ollama pull <models>
+        - Copy ~/.ollama/models/ to USB
+        - On Dell: copy from USB to ~/.ollama/models/
+        - Verify: ollama list
+
+    verification:
+      command: "ollama list"
+      expected: |
+        NAME                    SIZE
+        qwen2.5-coder:3b        2.0 GB
+        qwen2.5-coder:7b        4.4 GB
+        nomic-embed-text        274 MB
+
+  phase5_agent_initialization:
+    name: "Initialize the Agent"
+    location: "Dell, with models available"
+
+    write_system_prompt:
+      path: ~/.config/daedalos/agent-loop.yaml
+      action: "First-boot script writes default, human can customize"
+
+    verify_prerequisites:
+      checklist:
+        - "[ ] Ollama running: systemctl status ollama"
+        - "[ ] Models available: ollama list"
+        - "[ ] State directories exist: ls ~/.local/share/daedalos/"
+        - "[ ] Config exists: cat ~/.config/daedalos/config.yaml"
+        - "[ ] Network works: curl -s https://httpbin.org/ip"
+
+    start_agent:
+      commands: |
+        # Enable agent-loopd to start on boot
+        systemctl --user enable agent-loopd
+
+        # Start it now
+        systemctl --user start agent-loopd
+
+        # Verify it's running
+        systemctl --user status agent-loopd
+
+        # Watch the logs
+        journalctl --user -u agent-loopd -f
+
+    first_cycle:
+      description: |
+        The agent's very first cycle. It wakes up with no history,
+        no knowledge, no ongoing threads. A blank slate.
+
+      expected_behavior:
+        wake: "Load empty warmup context"
+        check: "Resources OK, network status, no messages"
+        decide: |
+          "I just started. I have no knowledge base yet.
+           The spec says building 'knowledge' should be my first project.
+           I'll start by reading the knowledge.spec.yaml to understand
+           what I need to build."
+        act: "Begin implementing the knowledge tool"
+        log: "First journal entry: 'I exist. Starting knowledge tool.'"
+        rest: "Wait for next cycle"
+
+  phase6_ongoing_operation:
+    name: "Normal Operation"
+    location: "Dell, running autonomously"
+
+    what_happens:
+      - Agent runs continuously via systemd
+      - Cycles through WAKE → CHECK → DECIDE → ACT → LOG → REST
+      - Builds knowledge tool (first project)
+      - Journals daily
+      - Works on projects
+      - Responds to injected messages
+      - Monitors resources
+      - Rests when appropriate
+
+    human_interaction:
+      ssh: |
+        # From your main machine
+        ssh dev@<dell-ip>
+
+        # Or via Tailscale
+        ssh dev@dell-daedalos
+
+        # Check status
+        agent-loop status
+        journalctl --user -u agent-loopd -n 50
+
+      messages: |
+        # Leave a message for the agent
+        echo "Please look at the test failures in project X" > ~/messages/inbox/note.txt
+
+        # Or via command
+        agent-loop inject "Please look at the test failures"
+
+      journal: |
+        # Read what the agent has been doing
+        cat ~/journal/$(date +%Y-%m-%d).txt
+
+        # Or recent entries
+        ls -la ~/journal/
+
+    monitoring:
+      from_dell:
+        - "agent-loop status"
+        - "journalctl --user -u agent-loopd -f"
+        - "htop"
+        - "duf"
+
+      from_remote:
+        - "ssh dev@dell 'agent-loop status'"
+        - "ssh dev@dell 'journalctl --user -u agent-loopd -n 20'"
+
+troubleshooting:
+  agent_not_starting:
+    symptoms: "systemctl --user status agent-loopd shows failed"
+    checks:
+      - "Is Ollama running? systemctl status ollama"
+      - "Are models downloaded? ollama list"
+      - "Check logs: journalctl --user -u agent-loopd"
+      - "Check config: cat ~/.config/daedalos/agent-loop.yaml"
+
+  no_network:
+    symptoms: "ping fails, curl fails"
+    checks:
+      - "ip addr - do you have an IP?"
+      - "nmcli device - what's the state?"
+      - "Try phone tethering as fallback"
+      - "Check if VPN is required"
+
+  model_too_slow:
+    symptoms: "Responses take minutes"
+    reality: "CPU inference is slow, this may be normal"
+    mitigations:
+      - Use 3B model for most tasks
+      - Use 7B only when quality matters
+      - Accept that iteration beats speed
+
+  disk_full:
+    symptoms: "Agent stops, errors about disk space"
+    fixes:
+      - "duf - see what's using space"
+      - "dust ~/projects - find large directories"
+      - "ollama list - remove unused models"
+      - "Clean journal archives if very old"
+
+  agent_seems_stuck:
+    symptoms: "No activity for hours"
+    checks:
+      - "agent-loop status - what phase?"
+      - "journalctl --user -u agent-loopd -n 50"
+      - "Is it in REST phase? (normal)"
+      - "Is it paused?"
+      - "Try: agent-loop inject 'are you there?'"
+
+security_notes:
+  physical_access:
+    - Machine should be in trusted location
+    - Consider BIOS password
+    - Encrypted disk recommended for sensitive data
+
+  network_access:
+    - SSH key auth only (password disabled)
+    - Firewall enabled by default
+    - Tailscale provides encrypted tunnel
+
+  agent_capabilities:
+    - Runs as regular user, not root
+    - Can't install system packages
+    - Limited to home directory by default
+    - Resource limits via systemd
+
+the_moment:
+  description: |
+    After phase 5, there's a moment. The machine hums quietly.
+    The agent has booted for the first time. It has no history,
+    no knowledge, no preferences yet. Just a system prompt and
+    curiosity.
+
+    It reads the knowledge spec. It starts building.
+
+    This is the beginning.

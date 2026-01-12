@@ -168,6 +168,26 @@
       grim
       slurp
 
+      # Terminal browsers
+      w3m        # Fast, lightweight, images in kitty
+      carbonyl   # Chromium-based, full modern web in terminal
+
+      # Media
+      imv        # Wayland image viewer
+
+      # Git tools
+      lazygit    # TUI for git (staging, rebasing, etc.)
+      difftastic # Structural diffs that understand code
+
+      # Archives
+      unzip
+      p7zip
+
+      # Disk awareness
+      duf        # Modern df, pretty disk usage overview
+      dust       # Modern du, visual directory sizes
+      ncdu       # Interactive disk usage explorer
+
       # Daedalos tools (from flake)
       # daedalos  # Uncomment when using as module
     ];

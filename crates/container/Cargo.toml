@@ -1,0 +1,24 @@
+[package]
+name = "container"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Docker/Podman container management for Daedalos - unified interface for container operations"
+
+[[bin]]
+name = "container"
+path = "src/main.rs"
+
+[dependencies]
+daedalos-core.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+dirs.workspace = true
+
+# Local dependencies
+which = "7"
+atty = "0.2"

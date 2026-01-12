@@ -1,0 +1,38 @@
+[package]
+name = "journal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Narrative reconstruction for Daedalos - answer 'what happened?'"
+
+[[bin]]
+name = "journal"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+anyhow.workspace = true
+
+# Time
+chrono.workspace = true
+
+# Filesystem
+dirs.workspace = true
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Internal crates
+daedalos-core.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

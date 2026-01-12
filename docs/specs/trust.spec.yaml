@@ -1,0 +1,567 @@
+name: trust
+version: 1.0
+created: 2025-01-12
+
+intent: |
+  Permissions without friction. Safety without interruption.
+
+  The fundamental problem with AI agent permissions is that they're OPERATION-CENTRIC:
+  "May I run `rm`?" The answer depends on context that the question ignores.
+
+  Daedalos trust is CONTEXT-CENTRIC: "May I run `rm *.pyc` in `~/Daedalos` during
+  a `loop` session that you started?" Context changes everything.
+
+  The insight: most permission prompts are unnecessary. They're asking about operations
+  that are routine in context. The 1% that are genuinely dangerous get lost in the noise
+  of the 99% that are fine.
+
+  Trust learns. It remembers. It understands that `rm *.pyc` in your project is different
+  from `rm *.py`. That `git push` to your fork is different from `git push --force` to main.
+  That network access to api.github.com is different from network access to unknown-site.xyz.
+
+  The goal: --dangerously-skip-permissions becomes unnecessary because permissions are
+  INTELLIGENT. Safety without the friction that makes people disable safety entirely.
+
+philosophy:
+  context_over_operation: |
+    The same operation has different risk profiles in different contexts:
+
+    | Operation | Context A | Context B |
+    |-----------|-----------|-----------|
+    | rm *.pyc | ~/myproject (routine) | /etc (dangerous) |
+    | git push | feature-branch (fine) | main --force (dangerous) |
+    | curl | api.github.com (known) | random-url.xyz (suspicious) |
+
+    Trust evaluates the FULL context, not just the operation.
+
+  learning_over_configuration: |
+    Users shouldn't have to write permission rules. The system should learn:
+
+    1. You approve `rm *.log` in ~/projects 3 times
+    2. System suggests: "Always allow this pattern?"
+    3. You confirm once
+    4. Never asked again
+
+    Configuration is the fallback, not the default.
+
+  escalation_over_blanket: |
+    Don't ask "trust this session for everything?" at the start.
+    Don't ask "may I do X?" for every X.
+
+    Ask when CONTEXT CHANGES:
+    - First time touching a new file type
+    - First network access in this session
+    - First destructive operation in this project
+
+    Then remember for the session.
+
+  audit_always: |
+    Trust enables autonomy, but autonomy requires accountability.
+    Every trusted operation is logged. Nothing is invisible.
+
+    "What did the agent do?" always has an answer.
+
+trust_levels:
+  owner:
+    description: "Your code. Full trust."
+    allows:
+      - All file operations
+      - All git operations
+      - All network operations to known hosts
+      - Destructive operations
+    asks:
+      - Force push to protected branches
+      - Deletion of entire directories
+      - Network to unknown hosts (first time only)
+    denies:
+      - Nothing (you're the owner)
+    typical_for: "Personal projects, hobby code"
+
+  developer:
+    description: "Working code. High trust with guardrails."
+    allows:
+      - Read/write to all project files
+      - All git operations except force push
+      - Network to known hosts
+      - rm of generated files (*.pyc, node_modules/*, etc.)
+    asks:
+      - First destructive operation per session
+      - rm of source files (asks once, remembers pattern)
+      - Network to new hosts
+      - git push to main/master (not denied, just confirmed)
+    denies:
+      - Force push
+      - Operations outside project directory
+    typical_for: "Work projects, shared repos"
+
+  contractor:
+    description: "Restricted write. Trust but verify."
+    allows:
+      - Read all files
+      - Write to source files
+      - git add, commit
+      - Network to allowlisted hosts
+    asks:
+      - Any deletion
+      - git push
+      - Network to new hosts
+      - Write to config files
+    denies:
+      - Force operations
+      - Operations outside project
+      - Network to non-allowlisted hosts
+    typical_for: "Client projects, sensitive repos"
+
+  sandbox:
+    description: "Ephemeral environment. Full trust because it's disposable."
+    allows:
+      - Everything
+    asks:
+      - Nothing
+    denies:
+      - Operations outside sandbox
+    typical_for: "/tmp/scratch-*, disposable containers"
+
+  guest:
+    description: "Unknown territory. Minimal trust."
+    allows:
+      - Read files
+      - List directories
+    asks:
+      - All writes
+      - All deletions
+      - All network
+      - All git operations
+    denies:
+      - Force operations
+      - Execution of arbitrary commands
+    typical_for: "Unfamiliar codebases, system directories"
+
+tool_categories:
+  read_only:
+    risk: none
+    permission: never_ask
+    examples:
+      - cat, head, tail, less
+      - ls, tree, find
+      - git status, git log, git diff
+      - grep, rg, ag
+      - file, stat, which
+    rationale: "Read operations cannot cause harm"
+
+  safe_mutation:
+    risk: low
+    permission: ask_once_per_session
+    examples:
+      - Edit, Write (in trusted projects)
+      - git add, git commit
+      - mkdir, touch
+      - cp (non-overwriting)
+    rationale: "Reversible operations in expected locations"
+
+  pattern_destructive:
+    risk: medium
+    permission: learn_from_patterns
+    examples:
+      - rm (specific files, not directories)
+      - mv (when overwriting)
+      - git checkout -- (file)
+    rationale: "Risk depends heavily on WHAT, not just the operation"
+    learning: |
+      Track approval patterns:
+      - "rm *.pyc in this project" -> approved 5 times -> suggest auto-allow
+      - "rm src/*.py" -> denied 2 times -> never auto-allow
+
+      Pattern matching is key. "rm" alone means nothing.
+
+  always_destructive:
+    risk: high
+    permission: always_ask
+    examples:
+      - rm -rf (on directories)
+      - git reset --hard
+      - git push --force
+      - chmod/chown (sensitive files)
+    rationale: "These can cause significant harm regardless of context"
+    no_learning: true  # Never auto-allow these
+
+  system:
+    risk: variable
+    permission: context_dependent
+    examples:
+      - sudo (always ask, always audit)
+      - systemctl (ask for state changes)
+      - mount/umount (always ask)
+    rationale: "System operations require case-by-case evaluation"
+
+  network:
+    risk: variable
+    permission: domain_and_session_aware
+    examples:
+      - curl, wget, fetch
+      - npm install, pip install
+      - git push, git fetch
+    rationale: |
+      Network risk is domain-dependent:
+      - api.github.com: known, safe
+      - pypi.org: known, medium (supply chain)
+      - random-url.xyz: unknown, ask
+
+      First access to a domain in a session: ask
+      Subsequent access to same domain: allow
+
+project_trust:
+  detection: |
+    How do we know what trust level a project should have?
+
+    1. EXPLICIT: .daedalos/trust.yaml in project root
+    2. OWNERSHIP: Is this in ~/projects/* (developer) or ~/work/* (contractor)?
+    3. GIT_REMOTE: Is the remote github.com/myuser/* (owner) or github.com/company/* (developer)?
+    4. DEFAULT: guest
+
+    Priority: explicit > ownership > git_remote > default
+
+  inheritance: |
+    Subdirectories inherit parent trust unless explicitly overridden.
+
+    ~/projects/ (developer)
+      └── secret-project/ (.daedalos/trust.yaml: contractor)
+          └── public-docs/ (inherits: contractor)
+
+    Trust flows DOWN, never UP.
+
+  escalation: |
+    Trust can be escalated for a session, never permanently via learning.
+
+    User: "loop start 'fix the tests' --promise 'pytest'"
+    System: "Session in ~/work/client-project (contractor). Escalate to developer for this session? [y/N]"
+    User: y
+
+    Session now runs at developer level. Logged. Ends when session ends.
+
+session_model:
+  lifecycle: |
+    1. SESSION_START: User runs a command (loop, agent spawn, etc.)
+    2. TRUST_EVAL: Evaluate project trust level
+    3. FIRST_NEED: When first operation of a category is needed, evaluate
+    4. ESCALATION: If needed, prompt ONCE for session escalation
+    5. SESSION_END: Escalation reverts, audit log finalized
+
+    Sessions are identified by:
+    - Terminal session ID (for interactive)
+    - Loop ID (for loops)
+    - Agent ID (for agents)
+
+  memory: |
+    Within a session:
+    - Approved patterns are remembered
+    - Escalations persist
+    - Denial is immediate (no retry spam)
+
+    Across sessions:
+    - Learned patterns persist
+    - Escalations do NOT persist
+    - Denial reasons are logged for review
+
+  agent_sessions: |
+    Agents inherit the trust level of their spawner, but:
+    - Cannot escalate beyond parent
+    - May have reduced trust (explorer = read-only)
+    - Actions attributed to session that spawned them
+
+    loop spawn --trust=contractor  # explicit
+    loop spawn                      # inherits from terminal session
+
+learning_system:
+  pattern_storage: |
+    ~/.config/daedalos/trust-patterns.yaml
+
+    patterns:
+      - pattern: "rm *.pyc"
+        scope: "~/projects/*"
+        decision: allow
+        count: 12
+        last_used: 2025-01-12T10:30:00Z
+
+      - pattern: "curl api.github.com/*"
+        scope: "*"
+        decision: allow
+        count: 45
+        last_used: 2025-01-12T09:15:00Z
+
+      - pattern: "rm -rf node_modules"
+        scope: "~/projects/*"
+        decision: ask  # user said "ask every time"
+        count: 3
+        last_used: 2025-01-11T14:00:00Z
+
+  suggestion_threshold: |
+    After N approvals of the same pattern, suggest auto-allow:
+
+    default: 3
+
+    "You've approved 'rm *.pyc in ~/projects/*' 3 times. Always allow? [Y/n/ask]"
+    - Y: Add to patterns as allow
+    - n: Don't suggest again for this pattern
+    - ask: Keep asking but never suggest auto-allow
+
+  pattern_matching: |
+    Patterns support globs and semantic matching:
+
+    Literal: "rm *.pyc" matches exactly that
+    Glob: "rm *.py*" matches .py, .pyc, .pyo, .pyi
+    Scope glob: "~/projects/*" matches any project
+
+    More specific patterns take precedence:
+    - "rm *.pyc in ~/projects/daedalos" > "rm *.pyc in ~/projects/*"
+
+  decay: |
+    Patterns decay if unused:
+
+    - 30 days unused: reduce confidence
+    - 90 days unused: require reconfirmation
+    - 180 days unused: remove from patterns
+
+    Security hygiene: old permissions shouldn't linger.
+
+audit_log:
+  location: ~/.local/share/daedalos/trust/audit.log
+
+  format: |
+    Each entry is JSON lines:
+
+    {
+      "timestamp": "2025-01-12T10:30:00Z",
+      "session_id": "loop-abc123",
+      "operation": "rm",
+      "args": ["src/__pycache__/*.pyc"],
+      "working_dir": "/home/user/projects/daedalos",
+      "trust_level": "developer",
+      "decision": "allowed",
+      "reason": "pattern_match",
+      "pattern": "rm *.pyc in ~/projects/*"
+    }
+
+  queryable: |
+    trust audit                          # recent activity
+    trust audit --session loop-abc123    # specific session
+    trust audit --denied                 # what was blocked
+    trust audit --escalated              # where trust was elevated
+    trust audit --since 1h               # last hour
+
+  retention: |
+    Default: 30 days
+    Configurable: ~/.config/daedalos/trust.yaml -> audit.retention_days
+
+    Audit log is append-only. No backdating, no modification.
+
+configuration:
+  global: |
+    ~/.config/daedalos/trust.yaml
+
+    # Global defaults
+    defaults:
+      unknown_project: guest
+      suggestion_threshold: 3
+      audit_retention_days: 30
+
+    # Path-based trust assignments
+    paths:
+      ~/projects/*: developer
+      ~/work/*: contractor
+      /tmp/scratch-*: sandbox
+      ~/.config: guest  # protect config from agents
+
+    # Domain allowlist for network operations
+    domains:
+      allowed:
+        - api.github.com
+        - pypi.org
+        - registry.npmjs.org
+        - crates.io
+      ask:
+        - "*.amazonaws.com"  # cloud APIs, confirm
+      blocked:
+        - "*.malware.example"  # hypothetical
+
+    # Tool-specific overrides
+    tools:
+      git_push:
+        protected_branches: [main, master, production]
+        action: ask  # always ask for these branches
+
+  project: |
+    .daedalos/trust.yaml (in project root)
+
+    # Override global for this project
+    trust_level: owner
+
+    # Additional protections
+    protected_paths:
+      - secrets/
+      - .env*
+
+    # Project-specific domain allowlist additions
+    domains:
+      allowed:
+        - api.internal-company.com
+
+cli_interface:
+  commands:
+    trust_status: |
+      trust status
+
+      Current session: loop-abc123
+      Project: ~/projects/daedalos
+      Trust level: developer (escalated from contractor)
+      Escalation expires: end of session
+
+      Pending decisions: 0
+      Approved this session: 12
+      Denied this session: 0
+
+    trust_allow: |
+      trust allow "rm *.pyc"
+      trust allow "rm *.pyc" --scope ~/projects/*
+      trust allow "curl api.example.com"
+
+      Adds pattern to learned patterns (allow).
+
+    trust_deny: |
+      trust deny "rm -rf /"
+
+      Adds pattern to learned patterns (deny).
+      Always deny, never suggest.
+
+    trust_patterns: |
+      trust patterns
+      trust patterns --scope ~/projects/*
+      trust patterns "rm*"
+
+      List learned patterns.
+
+    trust_audit: |
+      trust audit
+      trust audit --session abc123
+      trust audit --denied --since 1d
+
+      Query audit log.
+
+    trust_reset: |
+      trust reset --patterns  # clear learned patterns
+      trust reset --session   # clear session escalation
+      trust reset --all       # factory reset
+
+integration:
+  loop: |
+    Loop automatically:
+    1. Evaluates project trust at start
+    2. Creates a trust session for the loop
+    3. Prompts for escalation if needed (once)
+    4. Passes trust context to agent invocations
+
+    loop start "fix tests" --promise "pytest"
+    # Trust evaluation happens automatically
+
+    loop start "fix tests" --trust=owner  # explicit override
+
+  agent: |
+    Agents inherit trust from their session:
+
+    agent spawn -t explorer  # inherits, but capped at guest (read-only)
+    agent spawn -t implementer --trust=developer  # explicit
+
+    Trust is part of agent context.
+
+  claude_code: |
+    Claude Code integration via permission hooks or wrapper:
+
+    # In claude config or wrapper script
+    on_tool_call:
+      evaluate: trust eval "$tool" "$args"
+      if_denied: reject with reason
+      if_allowed: proceed
+      if_ask: prompt user
+
+    This replaces --dangerously-skip-permissions with intelligent trust.
+
+  gates: |
+    The existing gates tool becomes a UI for trust:
+
+    gates pending      # shows pending trust decisions
+    gates approve 123  # approves a specific pending decision
+    gates deny 123     # denies a specific pending decision
+    gates level        # shows/sets current trust level
+
+anti_patterns:
+  - pattern: "Asking for every operation"
+    why_bad: |
+      User fatigue leads to:
+      1. Auto-approving everything (worse security)
+      2. Using --dangerously-skip-permissions (no security)
+      3. Hating the tool (no usage)
+
+      Trust should ask RARELY and MEANINGFULLY.
+
+  - pattern: "Binary trust (on/off)"
+    why_bad: |
+      Real security needs nuance:
+      - "Owner" for personal projects
+      - "Developer" for work
+      - "Guest" for unknown code
+
+      One size doesn't fit all.
+
+  - pattern: "Forgetting context across sessions"
+    why_bad: |
+      Relearning is frustrating:
+      - "I already said rm *.pyc is fine!"
+
+      Learned patterns must persist.
+
+  - pattern: "Permanent escalation"
+    why_bad: |
+      Escalation is for "right now, this task."
+      Permanent escalation defeats the purpose.
+
+      Escalations are session-scoped. Period.
+
+  - pattern: "Silent allowance"
+    why_bad: |
+      Trust without audit is blind trust.
+      Every decision is logged.
+
+      "What did the agent do?" must be answerable.
+
+metrics:
+  success_criteria:
+    - "Permission prompts reduced by 90% compared to naive implementation"
+    - "Users do NOT use --dangerously-skip-permissions"
+    - "Zero security incidents from learned patterns"
+    - "Audit queries return in <100ms"
+    - "Pattern learning converges within 3 sessions of typical usage"
+
+  failure_indicators:
+    - "Users disable trust system entirely"
+    - "Pattern database grows unboundedly (no decay)"
+    - "Audit log queries are slow (indexing failure)"
+    - "Trust decisions are inconsistent (context not captured)"
+    - "Escalations persist beyond sessions (bug)"
+
+implementation_notes:
+  rust_crates:
+    - trust-core: Pattern matching, trust evaluation, audit logging
+    - trust-cli: CLI commands (trust status, allow, deny, patterns, audit)
+    - trust-hook: Integration with Claude Code / other agents
+
+  storage:
+    - ~/.config/daedalos/trust.yaml: User configuration
+    - ~/.config/daedalos/trust-patterns.yaml: Learned patterns
+    - ~/.local/share/daedalos/trust/audit.log: Audit log (append-only)
+    - ~/.local/share/daedalos/trust/sessions/: Session state
+
+  dependencies:
+    - daedalos-core: For paths, config
+    - serde: For YAML/JSON parsing
+    - chrono: For timestamps
+    - glob: For pattern matching

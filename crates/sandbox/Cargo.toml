@@ -1,0 +1,26 @@
+[package]
+name = "sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Ephemeral experiment environments for fearless experimentation"
+
+[[bin]]
+name = "sandbox"
+path = "src/main.rs"
+
+[dependencies]
+daedalos-core.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+dirs.workspace = true
+
+# TTY detection
+atty = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

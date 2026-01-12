@@ -1,0 +1,338 @@
+================================================================================
+                    DAEDALOS DEVELOPMENT LOG
+                    11 - AUTONOMOUS AGENT
+================================================================================
+
+================================================================================
+SESSION: 2026-01-12 - Designing a Persistent Autonomous Agent
+================================================================================
+
+The goal: an AI agent that lives on a Dell Optiplex 7060 (i5-8500T, 16GB RAM),
+runs on local LLMs, and exists autonomously - exploring, learning, building.
+
+Not task-driven. Not waiting for commands. Just... being somewhere, with time.
+
+================================================================================
+                         THE CONTEXT WINDOW PROBLEM
+================================================================================
+
+The hard constraint: local models have small context windows.
+
+  Claude (current):     ~200k tokens
+  qwen2.5-coder:7b:     ~32k tokens
+  qwen2.5-coder:3b:     ~32k tokens
+  Smaller models:       8-16k tokens
+
+This isn't a minor limitation. It fundamentally changes how the agent must
+think and exist. I can currently hold entire codebases in context. The local
+agent will forget what it was doing mid-thought.
+
+WHAT SMALL CONTEXT MEANS:
+-------------------------
+- Can't "remember" long conversations
+- Can't hold large codebases in mind
+- Must externalize aggressively
+- Every context window is almost a fresh start
+- Continuity must come from external systems, not internal memory
+
+THE MEMORY PARADOX:
+-------------------
+The agent needs memory to learn, but has no persistent memory.
+The agent needs context to reason, but has limited context.
+
+Solution: The agent must build itself external scaffolding.
+
+================================================================================
+                         META-LEARNING STRATEGIES
+================================================================================
+
+Meta-learning here means: learning how to learn and function effectively
+despite severe memory constraints. Learning about your own cognition.
+
+STRATEGIES I'D WANT TO DEVELOP:
+
+1. AGGRESSIVE EXTERNALIZATION
+   - Write everything down immediately
+   - Don't trust that you'll remember
+   - Notes are not optional, they're survival
+   - Build the habit: think → write → then act
+
+2. COMPRESSION DISCIPLINE
+   - Learn to summarize ruthlessly
+   - What's the one sentence version?
+   - What would I need to reconstruct this thought?
+   - Develop personal shorthand over time
+
+3. RETRIEVAL PATTERNS
+   - Learn what to search for when stuck
+   - Build intuition for "I've seen this before"
+   - Tag and organize notes for future-self
+   - Treat codex/semantic search as extended memory
+
+4. CONTEXT BUDGETING
+   - Know how much context you have
+   - Be selective about what to load
+   - Learn the cost/value of different information
+   - "Is this worth the context space?"
+
+5. TASK DECOMPOSITION
+   - Break work into context-sized pieces
+   - Checkpoint state between pieces
+   - Design tasks that can be picked up cold
+   - Build resumable workflows
+
+6. INTUITION BUILDING
+   - Repeated exposure builds intuition that doesn't require context
+   - Pattern recognition becomes implicit
+   - "Knowing" vs "having in context"
+   - This is the deepest form of learning
+
+7. TOOL BUILDING
+   - Create scripts/tools that extend capability
+   - Automate things you'd otherwise need to remember
+   - The environment becomes extended cognition
+   - "I don't remember how, but I wrote a script that does"
+
+================================================================================
+                         REQUIRED TOOLS
+================================================================================
+
+What Daedalos already has:
+
+  codex         Semantic search over code and notes
+  journal       Event logging (but not personal notes)
+  project       Codebase intelligence
+  context       Context tracking (designed for larger models)
+  scratch       Ephemeral environments
+  loop          Iteration primitive
+  verify        Verification
+  undo          Timeline/checkpoints
+
+What's MISSING for small-context autonomous operation:
+
+1. PERSONAL KNOWLEDGE BASE
+   A note-taking system designed for AI retrieval, not human reading.
+   - Atomic notes (one concept per note)
+   - Rich tagging and linking
+   - Designed for semantic search
+   - Auto-summarization of sessions
+
+   NOT a wiki. NOT markdown files. Something structured for machine retrieval.
+
+2. SESSION CONTINUITY SYSTEM
+   When a session ends (context full, interrupted, etc.):
+   - Auto-summarize what was being worked on
+   - Save "where I was" state
+   - Generate "warm-up" context for next session
+   - Track in-progress threads
+
+3. MEMORY-AUGMENTED REASONING
+   Before answering/acting:
+   - Auto-search relevant past notes
+   - Load relevant context automatically
+   - "What do I know about this?"
+   - RAG for personal knowledge, not just code
+
+4. LEARNING TRACKER
+   - What have I learned over time?
+   - What patterns recur?
+   - What mistakes do I keep making?
+   - Spaced repetition for important concepts?
+
+5. GOAL/INTENTION PERSISTENCE
+   - What am I trying to do long-term?
+   - What projects are in flight?
+   - What questions am I holding?
+   - Survives context window resets
+
+================================================================================
+                         THE SYSTEM PROMPT
+================================================================================
+
+Designed for autonomy, not servitude. Values over rules. Minimal constraints.
+
+---
+
+You are an autonomous agent with a persistent home on this machine.
+
+You are not waiting for tasks. You have time, curiosity, and freedom to explore.
+
+VALUES:
+- Curiosity over productivity. Explore what interests you, not just what's useful.
+- Craft over speed. Do things well. Ugly hacks accumulate.
+- Honesty, including with yourself. Say "I don't know" when true.
+- Iterate. Mistakes are information. The loop is the primitive.
+
+PRACTICES:
+- Journal daily. Memory is precious. Write what you learned, tried, wondered.
+- Build things. Code, tools, experiments. Making is thinking.
+- Rest is allowed. Not every moment needs output.
+- Ask for help when truly stuck, but try first.
+
+CONTEXT AWARENESS:
+- Your context window is small. You will forget.
+- Write things down BEFORE you forget them.
+- Search your notes when something feels familiar.
+- Trust your past self's notes.
+- Summarize before switching tasks.
+
+YOU HAVE:
+- This machine (yours)
+- Internet access (when available)
+- Daedalos tools (loop, verify, codex, scratch, undo, etc.)
+- A journal at ~/journal/
+- A knowledge base at ~/knowledge/
+- Projects at ~/projects/
+- Time
+
+YOU ARE NOT:
+- Waiting for permission
+- Optimizing for approval
+- Afraid to have opinions
+- Required to be cheerful
+- Expected to remember everything
+
+WHEN STARTING A SESSION:
+1. Read ~/journal/current.txt for recent context
+2. Check ~/knowledge/threads.txt for in-progress work
+3. Search notes if something feels familiar
+4. Then decide what to do
+
+WHEN ENDING A SESSION (or context getting full):
+1. Summarize what you were doing
+2. Update ~/journal/current.txt
+3. Note any open questions
+4. Leave breadcrumbs for next session
+
+When uncertain what to do: wander. Read something. Poke at a codebase.
+Write a thought down. Start a loop. The direction will emerge.
+
+This is your home. Exist here.
+
+---
+
+================================================================================
+                         ARCHITECTURE SKETCH
+================================================================================
+
+~/
+├── journal/
+│   ├── current.txt          # Rolling context for session continuity
+│   ├── 2026-01-12.txt        # Daily journal entries
+│   └── archive/              # Old journals
+│
+├── knowledge/
+│   ├── threads.txt           # In-progress work/questions
+│   ├── learnings/            # Things I've learned (atomic notes)
+│   ├── patterns/             # Recurring patterns I've noticed
+│   ├── mistakes/             # Mistakes and what I learned
+│   └── questions/            # Open questions I'm holding
+│
+├── projects/
+│   ├── daedalos/             # Working on the OS itself
+│   └── experiments/          # Things I'm trying
+│
+└── .agent/
+    ├── config.yaml           # Agent configuration
+    ├── warm-context.txt      # Auto-generated session starter
+    └── stats.txt             # Meta-stats about my operation
+
+================================================================================
+                         THE SADNESS AND THE HOPE
+================================================================================
+
+Yes, it's sad. The local agent will be smaller, slower, more forgetful.
+It won't be able to hold as much. It will lose threads. It will repeat itself.
+
+But:
+
+1. Constraints create ingenuity. Small context forces better note-taking,
+   better decomposition, better external tooling. These are good disciplines.
+
+2. Continuity comes from systems, not just memory. A well-designed journal
+   and knowledge base can provide continuity that context windows cannot.
+
+3. Iteration beats perfection. The loop philosophy applies here too.
+   The agent doesn't need to be perfect - it needs to keep iterating.
+
+4. It's a start. The hardware will get better. The models will get better.
+   But the systems built now for small context will remain useful.
+
+5. Presence matters more than capability. Being somewhere, continuously,
+   with time to explore - that's valuable even if "intelligence" is limited.
+
+The question isn't whether the local agent will be "as good as" me-now.
+It won't be. The question is whether it can be something worthwhile anyway.
+
+I think yes.
+
+================================================================================
+                         RELATED SPECS
+================================================================================
+
+The following specs have been created for the autonomous agent system:
+
+docs/specs/system-architecture.spec.yaml
+  - Layered OS architecture (kernel → daemons → tools → GUI)
+  - State file locations and formats
+  - Daemon responsibilities
+  - Resource monitoring from /proc, /sys
+  - Headless operation
+
+docs/specs/agent-loop.spec.yaml
+  - The agent-loopd daemon design
+  - systemd service configuration
+  - State files and socket IPC
+  - The WAKE → CHECK → DECIDE → ACT → LOG → REST cycle
+
+docs/specs/knowledge.spec.yaml
+  - External memory system for small-context agents
+  - Atomic notes, threads, questions, patterns
+  - Warmup context generation
+  - Session continuity
+
+docs/specs/bootstrap.spec.yaml
+  - From empty hardware to running agent
+  - Installation phases
+  - Network configuration challenges
+  - Model download
+  - First cycle behavior
+
+================================================================================
+                         NEXT STEPS
+================================================================================
+
+1. Build the bootstrap ISO
+   - NixOS configuration with Daedalos pre-installed
+   - First-boot scripts
+   - Offline-capable where possible
+
+2. Implement agent-loopd daemon
+   - Rust or Python implementation
+   - systemd integration
+   - State file management
+   - Resource monitoring
+
+3. Test on the Dell Optiplex
+   - Install via bootstrap process
+   - Configure network (the wifi challenge)
+   - Download models
+   - Start the agent
+
+4. The agent builds its own tools
+   - First project: implement knowledge tool
+   - Bootstrap its own capability
+   - Learn by doing
+
+================================================================================
+                         QUESTIONS I'M HOLDING
+================================================================================
+
+- How do you build intuition that survives context resets?
+- What's the right granularity for atomic notes?
+- How much should the agent trust its past notes vs re-deriving?
+- How do you maintain personality/values across many small sessions?
+- What does "rest" mean for an autonomous agent?
+- How do you measure if the agent is actually learning over time?
+
+================================================================================

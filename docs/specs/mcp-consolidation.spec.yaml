@@ -1,0 +1,637 @@
+name: mcp-consolidation
+version: 1
+status: draft
+
+intent: |
+  Reduce Daedalos MCP context overhead from ~57k tokens (94 tools) to ~15k tokens (~20 tools)
+  by consolidating related tools into single tools with action parameters.
+
+  Current: agent_spawn, agent_list, agent_kill, agent_focus...
+  Proposed: agent(action="spawn|list|kill|focus", ...)
+
+constraints:
+  - Maintain all current functionality
+  - Keep tool descriptions concise
+  - Action-specific params should be clearly documented
+  - Backward compatible where possible (old tool names as aliases during transition)
+
+# Consolidated Tool Definitions
+
+tools:
+  # ============================================
+  # AGENT - All agent management (20+ tools → 1)
+  # ============================================
+  - name: agent
+    description: Manage Claude Code agents in tmux sessions
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          # Lifecycle
+          - spawn      # Create new agent
+          - list       # List running agents
+          - focus      # Switch to agent
+          - kill       # Terminate agent
+          # Identity
+          - register   # Register current terminal as agent
+          - unregister # Remove agent registration
+          - whoami     # Show current agent identity
+          # Snapshots
+          - snapshot   # Save agent state
+          - snapshots  # List snapshots
+          - restore    # Restore from snapshot
+          # Communication
+          - send       # Send message to agent
+          - inbox      # Check messages
+          - broadcast  # Message all agents
+          - request_help # Ask for helper agent
+          # Signals
+          - signal_complete # Mark work done
+          - signal_wait     # Wait for agent completion
+          - signal_check    # Non-blocking completion check
+          # Locks
+          - lock_acquire # Get resource lock
+          - lock_release # Release lock
+          - lock_list    # Show active locks
+          # Claims
+          - claim_create  # Claim a task
+          - claim_release # Release task claim
+          - claim_list    # Show claimed tasks
+      # Conditional params based on action
+      name:
+        type: string
+        description: Agent name (for spawn, focus, kill, register, send, snapshot, restore, signal_wait, signal_check, lock_*, claim_*)
+      template:
+        type: enum
+        values: [explorer, implementer, reviewer, debugger, planner, tester, watcher]
+        description: Agent template (for spawn, request_help)
+      project:
+        type: string
+        description: Project directory (for spawn, register)
+      message:
+        type: string
+        description: Message content (for send, broadcast)
+      task:
+        type: string
+        description: Task description (for request_help, claim_create)
+      task_id:
+        type: string
+        description: Task identifier (for claim_*)
+      status:
+        type: string
+        description: Completion status (for signal_complete, claim_release)
+      timeout:
+        type: integer
+        description: Timeout in seconds (for signal_wait, lock_acquire)
+      force:
+        type: boolean
+        description: Force operation (for kill)
+      all:
+        type: boolean
+        description: Apply to all agents (for snapshot, inbox)
+      snapshot_name:
+        type: string
+        description: Snapshot name (for snapshot, restore)
+    examples:
+      - action: spawn
+        name: reviewer
+        template: reviewer
+      - action: send
+        name: reviewer
+        message: "Review src/auth.rs"
+      - action: lock_acquire
+        name: "database-migrations"
+        timeout: 30
+
+  # ============================================
+  # SANDBOX - Isolated environments (8 tools → 1)
+  # ============================================
+  - name: sandbox
+    description: Create and manage isolated development environments
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - create   # New sandbox
+          - list     # List sandboxes
+          - enter    # Enter sandbox
+          - diff     # Show changes vs source
+          - promote  # Apply changes to source
+          - discard  # Delete sandbox
+          - info     # Sandbox details
+          - run      # Run command in sandbox
+      name:
+        type: string
+        description: Sandbox name (for create, enter, diff, promote, discard, info, run)
+      from_path:
+        type: string
+        description: Source directory (for create)
+      backend:
+        type: enum
+        values: [btrfs, overlay, rsync]
+        description: Copy strategy (for create)
+      command:
+        type: string
+        description: Command to run (for enter, run)
+      dry_run:
+        type: boolean
+        description: Preview without changes (for promote)
+      backup:
+        type: boolean
+        description: Create backup first (for promote)
+      files_only:
+        type: boolean
+        description: List files only (for diff)
+      json:
+        type: boolean
+        description: JSON output (for list, info)
+
+  # ============================================
+  # LSP_POOL - Language servers (8 tools → 1)
+  # ============================================
+  - name: lsp_pool
+    description: Manage pooled language servers for code intelligence
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - status    # Pool daemon status
+          - warm      # Pre-start language server
+          - cool      # Stop language servers
+          - list      # List running servers
+          - query     # Send LSP query
+          - languages # List supported languages
+          - logs      # Get server logs
+          - restart   # Restart server
+      language:
+        type: string
+        description: Language (for warm, cool)
+      path:
+        type: string
+        description: Project path (for warm)
+      file:
+        type: string
+        description: File to query (for query)
+      command:
+        type: enum
+        values: [hover, definition, references, completion, diagnostics]
+        description: Query type (for query)
+      line:
+        type: integer
+        description: Line number (for query)
+      col:
+        type: integer
+        description: Column number (for query)
+      key:
+        type: string
+        description: Server key language:project (for logs, restart)
+      json:
+        type: boolean
+        description: JSON output (for status, list)
+
+  # ============================================
+  # MCP_HUB - MCP server management (6 tools → 1)
+  # ============================================
+  - name: mcp_hub
+    description: Manage MCP server hub daemon
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - status  # Hub daemon status
+          - warm    # Pre-start servers
+          - list    # List available servers
+          - restart # Restart server
+          - logs    # Get server logs
+          - call    # Call tool through hub
+      servers:
+        type: array
+        description: Server names (for warm)
+      server:
+        type: string
+        description: Server name (for restart, logs, call)
+      category:
+        type: string
+        description: Filter category (for list)
+      tool:
+        type: string
+        description: Tool name (for call)
+      arguments:
+        type: object
+        description: Tool arguments (for call)
+      lines:
+        type: integer
+        description: Log lines (for logs)
+      json:
+        type: boolean
+        description: JSON output (for status)
+
+  # ============================================
+  # GATES - Supervision gates (5 tools → 1)
+  # ============================================
+  - name: gates
+    description: Check and configure supervision gates
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - check   # Check if action allowed
+          - level   # Get/set supervision level
+          - set     # Set gate action
+          - config  # Get configuration
+          - history # Audit trail
+      gate:
+        type: enum
+        values: [file_delete, file_create, file_modify, git_commit, git_push, git_force_push, loop_start, agent_spawn, shell_command, sensitive_file]
+        description: Gate name (for check, set, history)
+      gate_action:
+        type: enum
+        values: [allow, notify, approve, deny]
+        description: Gate action (for set)
+      level:
+        type: enum
+        values: [autonomous, supervised, collaborative, assisted, manual]
+        description: Supervision level (for level - omit to get current)
+      context:
+        type: object
+        description: Additional context (for check)
+      source:
+        type: string
+        description: Calling tool/agent (for check)
+      limit:
+        type: integer
+        description: Max entries (for history)
+      days:
+        type: integer
+        description: Days to look back (for history)
+      json:
+        type: boolean
+        description: JSON output (for config)
+
+  # ============================================
+  # SPEC - Specification management (6 tools → 1)
+  # ============================================
+  - name: spec
+    description: Manage and query project specifications
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - show     # Display spec
+          - query    # Search specs semantically
+          - list     # List all specs
+          - context  # Get relevant specs for task
+          - validate # Validate spec format
+          - new      # Create spec from template
+      component:
+        type: string
+        description: Component name (for show)
+      section:
+        type: enum
+        values: [intent, constraints, interface, examples, decisions, anti_patterns]
+        description: Specific section (for show)
+      query:
+        type: string
+        description: Search query (for query)
+      task:
+        type: string
+        description: Task description (for context)
+      name:
+        type: string
+        description: Component name (for new)
+      type:
+        type: enum
+        values: [tool, library, service, doc]
+        description: Spec type (for new)
+      path:
+        type: string
+        description: Path to validate (for validate)
+      missing:
+        type: boolean
+        description: Show components without specs (for list)
+      stale:
+        type: boolean
+        description: Show specs older than implementation (for list)
+
+  # ============================================
+  # UNDO - Change tracking (4 tools → 1)
+  # ============================================
+  - name: undo
+    description: Track and revert file changes
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - checkpoint # Create named checkpoint
+          - last       # Undo last change
+          - timeline   # Show change history
+          - restore    # Restore to checkpoint
+      name:
+        type: string
+        description: Checkpoint name (for checkpoint)
+      id:
+        type: string
+        description: Checkpoint or change ID (for restore)
+      limit:
+        type: integer
+        description: Entries to show (for timeline)
+
+  # ============================================
+  # JOURNAL - Event logging (4 tools → 1)
+  # ============================================
+  - name: journal
+    description: Query and log events across Daedalos tools
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - what    # Narrative of recent events
+          - events  # Raw event list
+          - summary # Event summary
+          - log     # Log custom event
+      hours:
+        type: number
+        description: Hours to look back (for what, events, summary)
+      source:
+        type: string
+        description: Filter by source (for what, events)
+      event_type:
+        type: string
+        description: Filter by type (for events)
+      verbose:
+        type: boolean
+        description: More details (for what)
+      limit:
+        type: integer
+        description: Max events (for events)
+      summary_text:
+        type: string
+        description: Event summary (for log)
+
+  # ============================================
+  # EVOLVE - Code evolution analysis (4 tools → 1)
+  # ============================================
+  - name: evolve
+    description: Analyze code intent and suggest evolution path
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - analyze # Full evolution analysis
+          - intent  # Extract code intent
+          - gaps    # Identify missing features
+          - path    # Prioritized evolution path
+      path:
+        type: string
+        required: true
+        description: Path to analyze
+      json:
+        type: boolean
+        description: JSON output (for analyze)
+
+  # ============================================
+  # RESOLVE - Uncertainty resolution (4 tools → 1)
+  # ============================================
+  - name: resolve
+    description: Resolve uncertainty through context gathering
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - resolve # Full resolution
+          - intent  # Analyze question intent
+          - gather  # Gather context
+          - log     # Log decision
+      question:
+        type: string
+        description: Question to resolve (for resolve, intent, gather)
+      decision:
+        type: string
+        description: Decision made (for log)
+      reasoning:
+        type: string
+        description: Why this decision (for log)
+      json:
+        type: boolean
+        description: JSON output (for resolve)
+
+  # ============================================
+  # WORKFLOW - Multi-agent workflows (4 tools → 1)
+  # ============================================
+  - name: workflow
+    description: Manage multi-agent workflow pipelines
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - list   # List available workflows
+          - start  # Start workflow
+          - status # Check workflow status
+          - stop   # Stop workflow
+      workflow:
+        type: enum
+        values: [feature, review, bugfix, tdd, refactor]
+        description: Workflow name (for start)
+      task:
+        type: string
+        description: Task description (for start)
+      project:
+        type: string
+        description: Project directory (for start)
+      instance_id:
+        type: string
+        description: Workflow instance ID (for status, stop)
+      force:
+        type: boolean
+        description: Force stop (for stop)
+      json:
+        type: boolean
+        description: JSON output (for list)
+
+  # ============================================
+  # LOOP - Iteration loops (3 tools → 1)
+  # ============================================
+  - name: loop
+    description: Iterate until verification succeeds
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - start  # Start loop
+          - status # Check loop status
+          - stop   # Stop loop
+      task:
+        type: string
+        description: What you're trying to achieve (for start)
+      promise:
+        type: string
+        description: Shell command that exits 0 when done (for start)
+      max_iterations:
+        type: integer
+        description: Max iterations (for start)
+
+  # ============================================
+  # PROJECT - Project analysis (3 tools → 1)
+  # ============================================
+  - name: project
+    description: Analyze project structure and symbols
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - info    # Project info (type, deps, conventions)
+          - symbols # List all symbols
+          - tree    # File tree structure
+      path:
+        type: string
+        description: Project path
+      type:
+        type: string
+        description: Filter symbol type (for symbols)
+      depth:
+        type: integer
+        description: Tree depth (for tree)
+
+  # ============================================
+  # SCRATCH - Ephemeral environments (3 tools → 1)
+  # ============================================
+  - name: scratch
+    description: Manage ephemeral scratch environments
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - new     # Create scratch
+          - list    # List scratches
+          - destroy # Delete scratch
+      name:
+        type: string
+        description: Scratch name (for new, destroy)
+
+  # ============================================
+  # CODEX - Semantic search (2 tools → 1)
+  # ============================================
+  - name: codex
+    description: Semantic code search
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - search # Search by meaning
+          - index  # Rebuild index
+      query:
+        type: string
+        description: Search query (for search)
+      path:
+        type: string
+        description: Path to search/index
+      limit:
+        type: integer
+        description: Max results (for search)
+
+  # ============================================
+  # CONTEXT - Context window analysis (2 tools → 1)
+  # ============================================
+  - name: context
+    description: Analyze context window usage
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - estimate  # Estimate usage
+          - breakdown # Detailed breakdown
+
+  # ============================================
+  # ERROR_DB - Error pattern database (2 tools → 1)
+  # ============================================
+  - name: error_db
+    description: Match errors to known solutions
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - match # Find solutions for error
+          - add   # Add new pattern
+      error:
+        type: string
+        description: Error message (for match)
+      pattern:
+        type: string
+        description: Error regex pattern (for add)
+      solution:
+        type: string
+        description: How to fix (for add)
+      category:
+        type: string
+        description: Error category (for add)
+
+  # ============================================
+  # ANALYZE - Test gap analysis (2 tools → 1)
+  # ============================================
+  - name: analyze
+    description: Analyze and fill test gaps
+    params:
+      action:
+        type: enum
+        required: true
+        values:
+          - tests # Full test gap analysis and fill
+          - gaps  # Show gaps only
+      path:
+        type: string
+        description: Path to analyze
+      dry_run:
+        type: boolean
+        description: Just show gaps (for tests)
+      promise:
+        type: string
+        description: Verification command (for tests)
+      max_iterations:
+        type: integer
+        description: Max iterations (for tests)
+
+  # ============================================
+  # VERIFY - Single tool, no consolidation needed
+  # ============================================
+  - name: verify
+    description: Run verification checks (lint, types, build, test)
+    params:
+      path:
+        type: string
+        description: Path to verify
+      quick:
+        type: boolean
+        description: Fast checks only
+
+# Summary
+summary:
+  before:
+    tools: 94
+    estimated_tokens: 57000
+  after:
+    tools: 20
+    estimated_tokens: 15000
+  savings: ~42000 tokens (~21% of context)
+
+implementation_notes:
+  - Each consolidated tool replaces multiple current tools
+  - Old tool names can be aliased during transition
+  - Action-specific params are validated based on action value
+  - JSON schema uses conditional requirements per action

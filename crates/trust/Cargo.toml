@@ -1,0 +1,31 @@
+[package]
+name = "trust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Context-aware trust and permission system for Daedalos"
+
+[[bin]]
+name = "trust"
+path = "src/main.rs"
+
+[dependencies]
+daedalos-core.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# YAML for config files
+serde_yaml = "0.9"
+
+# Glob pattern matching
+glob = "0.3"
+
+# Home directory expansion
+shellexpand = "3"

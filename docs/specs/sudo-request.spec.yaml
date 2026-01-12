@@ -1,0 +1,279 @@
+name: sudo-request
+version: 0.1.0
+status: design
+category: autonomy
+
+see_also:
+  - system-architecture.spec.yaml
+  - agent-loop.spec.yaml
+
+purpose: |
+  A formal mechanism for the autonomous agent to request elevated privileges.
+  The agent cannot sudo directly, but can request specific actions that require
+  it. The human reviews, approves or denies, and the system executes if approved.
+
+philosophy: |
+  The agent is a resident, not an administrator. But residents sometimes need
+  things installed, services restarted, system configs changed. Rather than
+  either granting full sudo (dangerous) or requiring the human to manually
+  execute everything (tedious), we create a formal request/approval flow.
+
+  This is async by design. The agent requests, continues other work, and
+  checks back. The human approves when convenient. No blocking.
+
+  All requests are logged. Trust is built through a history of reasonable
+  requests. Patterns of bad requests are visible.
+
+workflow: |
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  Agent                          Human                           │
+  │                                                                 │
+  │  sudo-request "install htop"                                    │
+  │       │                                                         │
+  │       ▼                                                         │
+  │  Request written to                                             │
+  │  ~/.local/share/daedalos/sudo-requests/pending/req-001.json    │
+  │       │                                                         │
+  │       │                         Notification (optional)         │
+  │       │                              │                          │
+  │       │                              ▼                          │
+  │  Agent continues                sudo-request list               │
+  │  other work...                  sudo-request show req-001       │
+  │       │                              │                          │
+  │       │                              ▼                          │
+  │       │                         sudo-request approve req-001    │
+  │       │                              │                          │
+  │       │                              ▼                          │
+  │       │                         System executes command         │
+  │       │                         (with actual sudo)              │
+  │       │                              │                          │
+  │       ▼                              ▼                          │
+  │  Agent checks:                  Result written to               │
+  │  sudo-request status req-001    .../completed/req-001.json      │
+  │       │                                                         │
+  │       ▼                                                         │
+  │  "approved, executed successfully"                              │
+  └─────────────────────────────────────────────────────────────────┘
+
+request_types:
+  package_install:
+    description: "Install a system package"
+    example: |
+      sudo-request install ripgrep --reason "better grep for code search"
+    executed_as: "nix-env -iA nixpkgs.ripgrep"  # or nixos-rebuild
+    risk: low
+
+  package_remove:
+    description: "Remove a system package"
+    example: |
+      sudo-request remove nano --reason "prefer vim, save disk space"
+    risk: medium
+
+  service_restart:
+    description: "Restart a system service"
+    example: |
+      sudo-request restart ollama --reason "model loading stuck"
+    executed_as: "systemctl restart ollama"
+    risk: low
+
+  service_enable:
+    description: "Enable a service to start on boot"
+    example: |
+      sudo-request enable tailscaled --reason "need VPN on boot"
+    risk: low
+
+  config_edit:
+    description: "Modify a system configuration file"
+    example: |
+      sudo-request config /etc/hosts --add "192.168.1.100 devserver"
+      sudo-request config /etc/nixos/configuration.nix --reason "add package"
+    risk: high
+    requires: "Diff shown for approval"
+
+  custom_command:
+    description: "Run an arbitrary sudo command"
+    example: |
+      sudo-request exec "chown -R dev:dev /opt/project" --reason "fix permissions"
+    risk: high
+    requires: "Exact command shown, human must understand it"
+
+commands:
+  request:
+    usage: |
+      sudo-request install <package> [--reason "..."]
+      sudo-request remove <package> [--reason "..."]
+      sudo-request restart <service> [--reason "..."]
+      sudo-request enable <service> [--reason "..."]
+      sudo-request disable <service> [--reason "..."]
+      sudo-request config <file> --add|--remove|--edit "..." [--reason "..."]
+      sudo-request exec "<command>" --reason "..."
+
+    creates: "Pending request file"
+    returns: "Request ID"
+
+  status:
+    usage: sudo-request status [request-id]
+    description: "Check status of a request"
+    states:
+      - pending     # Waiting for human review
+      - approved    # Human approved, executing or queued
+      - denied      # Human denied
+      - executed    # Completed successfully
+      - failed      # Execution failed
+
+  list:
+    usage: sudo-request list [--pending|--completed|--denied|--all]
+    description: "List requests"
+    default: "--pending"
+
+  show:
+    usage: sudo-request show <request-id>
+    description: "Show full details of a request"
+
+  # Human-only commands (require actual human, not agent)
+  approve:
+    usage: sudo-request approve <request-id> [--execute-now]
+    description: "Approve a pending request"
+    behavior: |
+      - Marks request as approved
+      - If --execute-now, runs immediately with sudo
+      - Otherwise queued for next system maintenance window
+
+  deny:
+    usage: sudo-request deny <request-id> [--reason "..."]
+    description: "Deny a pending request"
+    behavior: "Marks denied, optionally with reason for agent to learn from"
+
+  execute:
+    usage: sudo-request execute <request-id>
+    description: "Execute an approved request"
+    requires: "Request must be in 'approved' state"
+
+storage:
+  base_path: ~/.local/share/daedalos/sudo-requests/
+
+  structure:
+    pending/: "Requests awaiting review"
+    approved/: "Approved but not yet executed"
+    completed/: "Successfully executed"
+    denied/: "Denied requests"
+    failed/: "Execution failed"
+
+  request_format:
+    file: "req-{timestamp}-{short-id}.json"
+    contents: |
+      {
+        "id": "req-20260112-143022-a1b2",
+        "type": "package_install",
+        "package": "ripgrep",
+        "reason": "better grep for code search",
+        "requested_at": "2026-01-12T14:30:22Z",
+        "requested_by": "agent-loopd",
+        "status": "pending",
+        "risk": "low",
+        "command_to_execute": "nix-env -iA nixpkgs.ripgrep",
+        "approved_at": null,
+        "approved_by": null,
+        "executed_at": null,
+        "execution_result": null,
+        "execution_output": null
+      }
+
+notifications:
+  on_new_request:
+    methods:
+      - Desktop notification (notify-send)
+      - Write to ~/messages/outbox/sudo-request.txt
+      - Optional: email, webhook
+
+    message: |
+      New sudo request from agent:
+      Type: package_install
+      Package: ripgrep
+      Reason: better grep for code search
+      Risk: low
+
+      Review: sudo-request show req-20260112-143022-a1b2
+      Approve: sudo-request approve req-20260112-143022-a1b2
+
+  on_execution_complete:
+    notify_agent: true
+    method: "Write result to request file, agent polls"
+
+security:
+  approve_requires_tty:
+    description: "Approval commands must be run from real terminal, not script"
+    implementation: "Check isatty() or require --i-am-human flag"
+
+  rate_limiting:
+    description: "Limit request frequency to prevent spam"
+    limit: "10 pending requests max"
+    cooldown: "1 minute between requests"
+
+  audit_log:
+    path: ~/.local/share/daedalos/sudo-requests/audit.log
+    format: |
+      2026-01-12T14:30:22Z REQUEST req-a1b2 type=package_install package=ripgrep by=agent-loopd
+      2026-01-12T15:00:00Z APPROVE req-a1b2 by=human
+      2026-01-12T15:00:01Z EXECUTE req-a1b2 command="nix-env -iA nixpkgs.ripgrep" exit=0
+
+  dangerous_patterns:
+    block:
+      - "rm -rf /"
+      - "dd if=/dev/zero"
+      - "chmod -R 777 /"
+      - "> /etc/passwd"
+    warn:
+      - Any command with wildcards in sensitive paths
+      - Commands that modify boot configuration
+      - Commands that change network configuration
+
+agent_integration:
+  in_agent_loop:
+    description: |
+      The agent can check for completed requests during its CHECK phase.
+      If a request was approved and executed, it can proceed with work
+      that depended on that request.
+
+    example: |
+      # During CHECK phase
+      requests = sudo_request_status("pending")
+      for req in requests:
+        if req.status == "executed":
+          knowledge_add(f"Request {req.id} completed: {req.type}")
+        elif req.status == "denied":
+          knowledge_add(f"Request {req.id} denied: {req.reason}")
+          # Learn from denial, don't re-request same thing
+
+  request_patterns:
+    good: |
+      # Specific, reasoned, low-risk
+      sudo-request install jq --reason "need JSON parsing for API responses"
+
+    bad: |
+      # Vague, high-risk, no reason
+      sudo-request exec "curl ... | sudo bash"
+
+trust_building:
+  description: |
+    Over time, patterns emerge. If the agent consistently makes reasonable
+    requests that get approved, trust increases. The human might:
+    - Auto-approve certain low-risk request types
+    - Grant limited sudo for specific commands
+    - Eventually expand privileges
+
+  metrics:
+    tracked:
+      - Total requests
+      - Approval rate
+      - Denial reasons
+      - Execution success rate
+
+    viewable: "sudo-request stats"
+
+future:
+  - Auto-approval rules (e.g., "auto-approve package installs from nixpkgs")
+  - Request expiration (pending requests expire after N days)
+  - Request dependencies (request B depends on request A being approved)
+  - Batch requests (multiple related requests as one approval)
+  - Mobile notification for remote approval

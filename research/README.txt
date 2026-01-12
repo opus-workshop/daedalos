@@ -65,6 +65,13 @@ CONTENTS:
                               - Intent vs implementation uncertainty
                               - Context-based resolution
 
+11-autonomous-agent.txt       Persistent autonomous agent design
+                              - Small context window challenges
+                              - Meta-learning strategies
+                              - System prompt for autonomy
+                              - Knowledge base architecture
+                              - Session continuity systems
+
 ================================================================================
 TIMELINE
 ================================================================================
@@ -89,5 +96,15 @@ TIMELINE
   - Complete spec migration (30+ specs)
   - Kitty terminal integration
   - Resolve tool design
+
+2026-01-12:
+  - Autonomous agent design
+  - Small context meta-learning strategies
+  - Knowledge base architecture
+  - NixOS package additions (terminal browsers, tools)
+  - System architecture spec (low-level OS integration)
+  - Agent-loop daemon design (systemd, state files, sockets)
+  - Bootstrap spec (empty hardware → running agent)
+  - Sudo-request spec (formal privilege escalation requests)
 
 ================================================================================

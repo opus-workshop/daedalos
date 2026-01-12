@@ -1,3 +1,6 @@
+# Rust
+/target/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -6,21 +9,14 @@ __pycache__/
 dist/
 build/
 *.egg
-
-# Virtual environments
 .venv/
 venv/
-ENV/
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-
-# Local configuration
-.claude/settings.local.json
-*.local.json
 
 # OS files
 .DS_Store
@@ -30,9 +26,6 @@ Thumbs.db
 *.log
 *.pid
 *.sock
-
-# Daedalos runtime
-/run/daedalos/
 
 # Local configuration
 .claude/settings.local.json
