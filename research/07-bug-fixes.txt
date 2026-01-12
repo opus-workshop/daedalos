@@ -1,0 +1,139 @@
+================================================================================
+                    DAEDALOS DEVELOPMENT LOG
+                    07 - BUG FIXES & COMPATIBILITY
+================================================================================
+
+================================================================================
+SESSION: 2026-01-10 - Symlink Resolution Bug Fixes
+================================================================================
+
+Fixed a systemic bug where CLI tools failed when run via symlinks from ~/.local/bin.
+
+THE BUG:
+--------
+
+When a tool is symlinked from ~/.local/bin to daedalos-tools/, the script's
+BASH_SOURCE[0] returns the symlink path, not the target. This caused PYTHONPATH
+and LIB_DIR to point to wrong locations:
+
+  ~/.local/bin/error-db  ->  SCRIPT_DIR = ~/.local/bin/  (WRONG!)
+  Should be:              ->  SCRIPT_DIR = .../error-db/bin/  (CORRECT)
+
+THE FIX:
+--------
+
+Added symlink resolution loop to affected scripts:
+
+  SCRIPT_PATH="${BASH_SOURCE[0]}"
+  while [[ -L "$SCRIPT_PATH" ]]; do
+      SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+      SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+      [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+  done
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+TOOLS FIXED:
+------------
+
+1. error-db  - Was completely broken via MCP/symlink
+2. verify    - Would fail to find lib/pipelines
+3. sandbox   - Would fail to find lib/
+4. scratch   - Would fail to find lib/common.sh
+5. codex     - Would fail to find src/ module
+
+MCP SERVER FIX:
+---------------
+
+Also fixed daedalos-mcp error_match tool - was calling "match" subcommand
+but the actual CLI uses "search":
+
+  Before: run_tool("error-db", ["match", arguments["error"]])
+  After:  run_tool("error-db", ["search", arguments["error"]])
+
+VERIFICATION:
+-------------
+
+All tools now work correctly when called via symlink:
+  ~/.local/bin/error-db search "ModuleNotFoundError"
+  ~/.local/bin/verify --help
+  ~/.local/bin/sandbox --help
+  ~/.local/bin/scratch --help
+  ~/.local/bin/codex --help
+
+NOTE: The loop tool was already fixed (mentioned in research.txt SESSION: 2026-01-09).
+Other tools using similar patterns (observe, context, project, etc.) already had
+proper symlink resolution from initial implementation.
+
+================================================================================
+ERROR-DB EXPANSION
+================================================================================
+
+Populated error-db with 15 new patterns (18 -> 33 total):
+
+JavaScript/Node.js:
+  - TypeError: Cannot read properties of undefined/null
+  - ReferenceError: X is not defined
+  - Uncaught SyntaxError: Unexpected token
+  - npm ERR! code ERESOLVE
+  - Error: listen EADDRINUSE
+
+Python:
+  - AttributeError: X object has no attribute
+  - KeyError
+  - TypeError: takes X positional arguments but Y were given
+  - ImportError: cannot import name
+
+Docker:
+  - Cannot connect to the Docker daemon
+  - Error response from daemon: Conflict. Container name
+
+Git:
+  - error: failed to push some refs
+  - error: Your local changes would be overwritten
+
+Each pattern has a helpful solution explaining the cause and fix.
+
+================================================================================
+SESSION: 2026-01-11 - Spec Tool Bug Fixes
+================================================================================
+
+Installed the spec tool and fixed several bugs discovered during testing.
+
+BUGS FIXED:
+-----------
+
+1. PARSE_YAML EXIT ON ERROR
+   Problem: `spec list` only showed first spec, then exited
+   Cause: Template file has `{{NAME}}` which is invalid YAML (curly braces = objects)
+          parse_yaml called python3 which failed, and with `set -e`, script exited
+   Fix: Wrapped parse_yaml in try/except, added `|| true` to always return 0
+
+2. TEMPLATE PLACEHOLDER SYNTAX
+   Problem: `{{NAME}}` and `{{DATE}}` break YAML parsing
+   Fix: Changed to `__NAME__` and `__DATE__` which are valid YAML strings
+        Updated sed replacement in create_spec function
+
+3. BASH 4+ SYNTAX INCOMPATIBILITY
+   Problem: macOS uses bash 3.x, query.sh used `${var,,}` for lowercase
+   Cause: `${task,,}` is bash 4+ only
+   Fix: Created `to_lower()` helper using `tr '[:upper:]' '[:lower:]'`
+        Created `contains_ci()` for case-insensitive string matching
+        Replaced all `${var,,}` patterns with helper calls
+
+4. SUBSHELL VARIABLE SCOPE
+   Problem: `spec query` always showed "No matches found" even when finding matches
+   Cause: `while read | pipe` runs in subshell, `found=true` doesn't affect parent
+   Fix: Changed `find ... | while read` to `while read < <(find ...)`
+        Process substitution keeps while loop in parent shell
+
+TESTING RESULTS:
+----------------
+
+All spec commands now work correctly:
+
+  spec list                          # Shows all 3 specs
+  spec show undo --section intent    # Shows undo intent
+  spec query "sqlite"                # Finds matches in spec, undo, loop
+  spec context "fix undo restore"    # Returns focused context for task
+
+================================================================================

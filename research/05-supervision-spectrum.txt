@@ -1,0 +1,153 @@
+================================================================================
+                    DAEDALOS DEVELOPMENT LOG
+                    05 - SUPERVISION SPECTRUM
+================================================================================
+
+================================================================================
+SESSION: 2026-01-10 - Observe TUI Dashboard
+================================================================================
+
+Built the `observe` tool - real-time TUI dashboard for human visibility.
+
+DESIGN PRINCIPLE:
+-----------------
+
+"Daedalos should support any level of human-AI supervision."
+
+From fully autonomous to fully manual, humans need visibility into:
+- What is the AI doing?
+- What loops are running?
+- What agents are active?
+- What files are changing?
+
+WHAT WAS BUILT:
+---------------
+
+daedalos-tools/observe/
+├── bin/observe          # CLI entry point
+└── lib/app.py           # Textual TUI application
+
+Features:
+- Real-time daemon status (loop, mcp-hub, lsp-pool, undo)
+- Active loops table with task, status, iteration, duration
+- Active agents table with slot, name, template, status
+- Event log showing recent activity
+- 2-second auto-refresh (pausable)
+- Keyboard navigation
+
+Keyboard shortcuts:
+  q - Quit
+  r - Refresh now
+  p - Pause/resume updates
+  l - Focus loops panel
+  a - Focus agents panel
+  d - Focus daemons panel
+  e - Focus event log
+
+ARCHITECTURE:
+-------------
+
+Built with Textual (Python TUI framework):
+- Reactive widgets that auto-update
+- CSS-like styling for layout
+- Async data fetching from tools
+- Low resource usage
+
+The observe tool queries other tools for data:
+- `loop list --json` for active loops
+- `agent list --json` for active agents
+- Process checks for daemon status
+- Socket existence checks for services
+
+SUPERVISION SPECTRUM:
+---------------------
+
+This is the first step toward supporting the full spectrum:
+
+  AUTONOMOUS -------------------------------------------------- MANUAL
+       |                                                            |
+       +--- observe provides visibility at ALL levels --------------+
+
+================================================================================
+SESSION: 2026-01-10 - Supervision Spectrum - Complete
+================================================================================
+
+Daedalos now supports any level of human-AI supervision:
+
+TOOLS BUILT:
+------------
+
+1. **observe** - Real-time TUI dashboard (Textual-based)
+   - Daemon status monitoring (loop, mcp-hub, lsp-pool, undo)
+   - Active loops table with iteration tracking
+   - Active agents table with uptime
+   - Event log with keyboard shortcuts
+   - Pause/resume updates
+
+2. **gates** - Configurable approval checkpoints
+   - Five supervision levels: autonomous -> supervised -> collaborative -> assisted -> manual
+   - Per-action gates: allow, notify, approve, deny
+   - Sensitive path detection (*.env, secrets/*, etc.)
+   - Autonomy limits (max iterations, file changes, lines changed)
+   - Project-level overrides (.daedalos/supervision.yaml)
+   - Audit logging
+
+3. **journal** - Narrative reconstruction
+   - Aggregates events from all Daedalos tools
+   - "What happened?" command for coherent timelines
+   - Event filtering by source, type, time range
+   - Summary statistics with highlights
+   - Custom event logging
+
+SUPERVISION LEVELS:
+-------------------
+
+- **autonomous**: AI runs freely, only catastrophic actions gated
+- **supervised**: AI runs, human gets notifications, can intervene
+- **collaborative**: AI proposes, human approves major actions
+- **assisted**: Human drives, AI suggests and helps
+- **manual**: AI only responds to direct commands
+
+GATES CONFIGURATION:
+--------------------
+
+# ~/.config/daedalos/supervision.yaml
+level: supervised
+
+gates:
+  file_delete: approve
+  git_push: approve
+  git_force_push: deny
+  loop_start: notify
+  agent_spawn: notify
+
+autonomy:
+  max_iterations: 50
+  max_file_changes: 100
+  sensitive_paths:
+    - "*.env"
+    - "**/secrets/**"
+
+USAGE:
+------
+
+  # Observe
+  daedalos observe              # Launch TUI dashboard
+
+  # Gates
+  daedalos gates level          # Show supervision level
+  daedalos gates level assisted # Set to assisted mode
+  daedalos gates check git_push # Check if git push allowed
+  daedalos gates config         # Show full configuration
+
+  # Journal
+  daedalos journal              # What happened in the last hour?
+  daedalos journal -h 8         # Last 8 hours
+  daedalos journal summary      # Quick stats
+
+TOTAL TOOLS: 15
+
+loop, verify, undo, sandbox, project, codex, context, error-db,
+agent, mcp-hub, lsp-pool, scratch, observe, gates, journal
+
+================================================================================

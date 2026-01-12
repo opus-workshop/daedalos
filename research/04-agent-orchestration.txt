@@ -1,0 +1,418 @@
+================================================================================
+                    DAEDALOS DEVELOPMENT LOG
+                    04 - AGENT ORCHESTRATION
+================================================================================
+
+================================================================================
+SESSION: 2026-01-10 - Agent Orchestration & Folder Rename
+================================================================================
+
+Renamed tools/ to daedalos-tools/ and implemented comprehensive agent orchestration.
+
+FOLDER RENAME:
+--------------
+
+Renamed tools/ -> daedalos-tools/ for clearer naming convention.
+Updated flake.nix and CLAUDE.md references accordingly.
+
+AGENT ORCHESTRATION IMPROVEMENTS:
+---------------------------------
+
+Implemented four major features for multi-agent coordination:
+
+1. SNAPSHOT/RESTORE (daedalos-tools/agent/lib/snapshot.sh)
+
+   Captures and restores complete agent state:
+   - Agent metadata (name, project, template, status)
+   - tmux scrollback history (conversation context)
+   - Git state (branch, staged changes, stash)
+   - Message queue state
+
+   Commands:
+     agent snapshot <name> [description]     # Create snapshot
+     agent snapshot list                     # List all snapshots
+     agent snapshot show <id>                # Show snapshot details
+     agent restore <id> [--new-name <name>]  # Restore from snapshot
+
+2. INTER-AGENT COMMUNICATION (daedalos-tools/agent/lib/comms.sh)
+
+   File-based message queue system with JSONL storage:
+
+   Message Queue:
+     agent send <to> <message>               # Send message to agent
+     agent inbox [--all]                     # Check inbox
+
+   Help Requests:
+     agent help <task> [--template <t>]      # Request help (spawns helper if needed)
+
+   Shared Workspace:
+     agent share <file> [--to <agent>]       # Share file/artifact
+     agent artifacts                         # List shared artifacts
+
+   Broadcast:
+     agent broadcast <message>               # Message all agents
+
+3. WORKFLOW PIPELINES (daedalos-tools/agent/lib/workflow.sh)
+
+   YAML-defined multi-agent workflows with stage sequencing:
+
+   Built-in Workflows:
+     feature   - explore -> plan -> implement -> review (sequential)
+     review    - correctness + security + style (parallel)
+     bugfix    - investigate -> fix -> verify (sequential)
+
+   Commands:
+     agent workflow list                     # Show available workflows
+     agent workflow show <name>              # Show workflow details
+     agent workflow start <name> <task>      # Start workflow
+     agent workflow status [id]              # Check progress
+     agent workflow stop <id>                # Stop running workflow
+
+   Features:
+     - Sequential or parallel stage execution
+     - Context passing between stages (exploration_summary, implementation_plan)
+     - Per-stage template selection
+     - Timeout handling per stage
+
+4. AGENT GROUPS (daedalos-tools/agent/lib/groups.sh)
+
+   Named collections of agents for batch operations:
+
+   CRUD:
+     agent group create <name> [desc]        # Create group
+     agent group delete <name>               # Delete group
+     agent group list                        # List all groups
+     agent group show <name>                 # Show group details
+
+   Membership:
+     agent group add <group> <agent>...      # Add agents to group
+     agent group remove <group> <agent>...   # Remove agents from group
+
+   Batch Operations:
+     agent group kill <group>                # Kill all agents in group
+     agent group pause <group>               # Pause all agents
+     agent group resume <group>              # Resume all agents
+     agent group send <group> <message>      # Message all agents
+     agent group spawn <group> <project>     # Spawn team from templates
+
+ARCHITECTURAL NOTES:
+--------------------
+
+All features follow Daedalos conventions:
+- State stored as JSON/JSONL in ~/.local/share/daedalos/agent/
+- Workflows defined in YAML at ~/.config/daedalos/agent/workflows/
+- Unix philosophy: small composable commands
+- Designed for scripting and automation
+
+The workflow system enables patterns like:
+  agent workflow start feature "Add user authentication"
+
+Which automatically:
+  1. Spawns explorer to understand codebase
+  2. Passes findings to implementer for planning
+  3. Implementer executes the plan
+  4. Reviewer checks the result
+
+Each stage is a real Claude agent in a tmux session.
+
+================================================================================
+SESSION: 2026-01-10 - Agent Polishing & Coordination Primitives
+================================================================================
+
+Comprehensive polish pass on the agent orchestration system. Added coordination
+primitives, improved status detection, and enhanced templates.
+
+AGENT SELF-AWARENESS:
+---------------------
+
+Agents now know who they are via environment variables:
+  DAEDALOS_AGENT_NAME      - Agent's name
+  DAEDALOS_AGENT_SESSION   - tmux session name
+  DAEDALOS_DATA_DIR        - Agent's data directory
+  DAEDALOS_MESSAGES_DIR    - Message queue location
+  DAEDALOS_SIGNALS_DIR     - Signal/lock directory
+  DAEDALOS_SHARED_DIR      - Shared artifacts location
+  DAEDALOS_SLOT            - Agent's slot number
+
+COORDINATION PRIMITIVES (daedalos-tools/agent/lib/signals.sh):
+--------------------------------------------------------------
+
+1. COMPLETION SIGNALS
+   agent signal complete [data]    # Signal work complete
+   agent signal wait <name>        # Wait for agent to complete
+   agent signal check <name>       # Check completion status (non-blocking)
+
+2. RESOURCE LOCKS
+   agent lock acquire <resource>   # Acquire exclusive lock
+   agent lock release <resource>   # Release lock
+   agent lock list                 # List all locks
+
+3. TASK CLAIMS
+   agent claim create <task>       # Claim ownership of task
+   agent claim release <task>      # Release claim
+   agent claim list                # List all claims
+
+These primitives enable:
+  - Sequential workflows that wait for predecessors
+  - Parallel workflows that aggregate results
+  - Preventing duplicate work on same task
+  - Exclusive access to shared resources
+
+LIFECYCLE HOOKS (daedalos-tools/agent/lib/hooks.sh):
+----------------------------------------------------
+
+Event-driven automation for agent lifecycle:
+
+Events:
+  on_spawn               - Agent created
+  on_complete            - Agent signaled completion
+  on_error               - Agent encountered error
+  on_kill                - Agent was killed
+  on_workflow_complete   - Workflow finished
+
+Commands:
+  agent hooks list [event]           # List hooks
+  agent hooks create <event> <name>  # Create hook from template
+  agent hooks add <event> <script>   # Add existing script as hook
+  agent hooks remove <event> <name>  # Remove hook
+  agent hooks enable <event> <name>  # Enable disabled hook
+  agent hooks disable <event> <name> # Disable hook
+
+Hook Environment:
+  DAEDALOS_EVENT           - Event name
+  DAEDALOS_AGENT_NAME      - Agent name
+  DAEDALOS_HOOK_DATA       - Additional event data
+  DAEDALOS_AGENT_PROJECT   - Agent's project
+  DAEDALOS_AGENT_TEMPLATE  - Agent's template
+  DAEDALOS_AGENT_STATUS    - Agent's status
+
+WORKFLOW IMPROVEMENTS:
+----------------------
+
+1. OUTPUT CAPTURE
+   - Uses signal_wait for proper synchronization
+   - Captures agent output on completion
+   - Aggregates parallel results to aggregated.txt
+
+2. ERROR RECOVERY
+   - Per-stage retry logic (default 2 retries)
+   - Failure strategies: retry, skip, abort, fallback
+   - Configurable timeouts (default 600s per stage)
+
+3. CONTEXT PASSING
+   - Predecessors pass context to successors
+   - exploration_summary, implementation_plan, etc.
+   - Stored in workflow run directory
+
+STATUS DETECTION IMPROVEMENTS:
+------------------------------
+
+Enhanced Claude Code output analysis:
+  - ANSI escape code stripping for clean pattern matching
+  - Spinner detection (braille spinners)
+  - Tool call detection [Read], [Write], [Edit], etc.
+  - Cost/token display detection
+  - Question/prompt detection
+  - Error message patterns
+  - Processing indicators
+
+TEMPLATE ENHANCEMENTS:
+----------------------
+
+All templates now include:
+  - system_prompt: Role guidance for the agent
+  - allowed_tools: Tools the agent should use
+  - denied_tools: Tools to avoid
+  - on_complete: Next action after completion
+
+New Templates:
+  - planner: Designs implementation plans (no editing tools)
+  - tester: Test-focused work (verification emphasis)
+
+Updated Templates:
+  - explorer: Codebase exploration (read-only)
+  - implementer: Code changes (full tools)
+  - reviewer: Code review (read-only, detailed feedback)
+  - debugger: Bug investigation (systematic approach)
+  - watcher: File monitoring (passive observation)
+
+ARCHITECTURAL NOTES:
+--------------------
+
+The agent system now has three coordination layers:
+
+1. SIGNALS - Synchronization (wait for completion)
+2. LOCKS   - Exclusivity (prevent concurrent access)
+3. CLAIMS  - Ownership (prevent duplicate work)
+
+All use file-based state in ~/.local/share/daedalos/agent/signals/
+with atomic operations via flock for safety.
+
+================================================================================
+SESSION: 2026-01-10 - TDD & Refactor Workflows
+================================================================================
+
+Added new workflow definitions for test-driven development and safe refactoring.
+
+NEW WORKFLOWS:
+--------------
+
+1. TDD WORKFLOW (tdd.yaml)
+
+   Test-driven development - write tests FIRST, then implement:
+
+   Stages:
+     plan       -> Planner designs test cases (read-only)
+     test_first -> Tester writes failing tests
+     implement  -> Implementer makes tests pass
+     verify     -> Tester confirms all tests pass + coverage
+
+   Context passing:
+     plan -> test_plan -> test_first
+     test_first -> tests_written -> implement
+     implement -> implementation_summary -> verify
+
+   Philosophy:
+     Tests are the specification. Write them before code.
+     Implementation is "just" making the tests pass.
+
+2. REFACTOR WORKFLOW (refactor.yaml)
+
+   Safe code transformation with regression protection:
+
+   Stages:
+     analyze       -> Explorer examines code to refactor
+     test_baseline -> Tester ensures coverage BEFORE changes
+     refactor      -> Implementer makes incremental changes
+     verify        -> Tester confirms no regressions
+
+   Context passing:
+     analyze -> analysis -> test_baseline
+     test_baseline -> test_baseline -> refactor
+     refactor -> refactor_summary -> verify
+
+   Philosophy:
+     Never refactor without tests. Baseline first.
+     Small incremental changes with verification.
+
+USAGE EXAMPLE:
+--------------
+
+  # TDD workflow for adding user authentication
+  agent workflow start tdd "Add user login with email/password"
+
+  # Workflow spawns:
+  #   1. planner to design test cases
+  #   2. tester to write failing tests
+  #   3. implementer to make tests pass
+  #   4. tester to verify + coverage
+
+  # Monitor progress
+  agent workflow status wf-abc12345
+
+  # Refactor workflow for cleaning up legacy code
+  agent workflow start refactor "Extract database access into repository pattern"
+
+  # Workflow ensures test coverage before ANY changes
+
+ARCHITECTURAL NOTE:
+-------------------
+
+These workflows leverage the new planner and tester templates:
+  - planner: CLAUDE_READONLY=1, no Edit/Write tools
+  - tester: Full access, verification-focused system prompt
+
+The TDD workflow embodies the Daedalos philosophy:
+  "A loop is how intelligent work gets done"
+
+TDD is literally:
+  1. Write test (RED)
+  2. Implement (GREEN)
+  3. Refactor (REFACTOR)
+
+Each stage is a "loop iteration" - the workflow IS the loop.
+
+================================================================================
+SESSION: 2026-01-10 - Inter-Agent Communication for Claude Code
+================================================================================
+
+Built a bridge so Claude Code terminals can register as agents and communicate
+with each other across projects.
+
+THE PROBLEM:
+------------
+
+User has 6 terminals running:
+  - 4 in ShipCrew project
+  - 2 in Daedalos project
+
+The agent tool had messaging, but only for tmux-spawned agents. Claude Code
+terminals couldn't talk to each other.
+
+THE SOLUTION:
+-------------
+
+Added external agent registration:
+
+  agent register <name>      # Register current terminal as an agent
+  agent unregister [name]    # Unregister
+  agent whoami               # Show current identity
+
+Now Claude Code terminals can:
+
+  # Terminal 1 (in Daedalos)
+  export DAEDALOS_AGENT_NAME=daedalos-main
+  agent send shipcrew-1 "Found auth bug - check line 42"
+
+  # Terminal 2 (in ShipCrew)
+  export DAEDALOS_AGENT_NAME=shipcrew-1
+  agent inbox                # See the message!
+  agent broadcast "Starting DB migration"
+
+IMPLEMENTATION:
+---------------
+
+1. agents.sh additions:
+   - agents_create_external(): Create non-tmux agent entries
+   - agents_is_external(): Check if agent is external
+   - agents_whoami(): Get current agent from env or PID
+   - agents_heartbeat(): Update activity timestamp
+
+2. agent bin additions:
+   - cmd_register: Register with name, project, type
+   - cmd_unregister: Remove registration
+   - cmd_whoami: Show identity
+
+3. Fixed agents_next_slot() array bug (empty array with set -u)
+
+4. MCP tools added:
+   - agent_register
+   - agent_unregister
+   - agent_whoami
+
+USAGE:
+------
+
+In each Claude Code terminal:
+
+  # One-time registration
+  agent register shipcrew-frontend -p /path/to/project
+  export DAEDALOS_AGENT_NAME=shipcrew-frontend
+
+  # Messaging
+  agent send other-agent "message"
+  agent inbox
+  agent broadcast "announcement"
+
+  # Shared files
+  agent share ./report.txt
+  agent artifacts
+
+  # Coordination
+  agent signal complete
+  agent lock acquire database
+  agent claim create "implement auth"
+
+All existing messaging features work with registered terminals!
+
+================================================================================

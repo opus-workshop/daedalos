@@ -1,0 +1,437 @@
+name: kitty
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  The terminal is home. Make it aware.
+
+  AI development happens in terminals. Hours of iteration, exploration,
+  debugging - all flowing through that rectangular window. Yet terminals
+  are blind to what's happening. You switch tabs manually. You hunt for
+  the right window. You lose track of which agent is where.
+
+  Kitty integration makes the terminal conscious of Daedalos. Keybindings
+  invoke tools instantly. The tab bar shows agent status at a glance.
+  Kittens provide quick launchers. The terminal becomes an extension of
+  the workflow, not a dumb pipe.
+
+  The deeper insight: friction kills flow. Every time you type a command
+  you could have pressed a key, you lose momentum. Every time you wonder
+  "which tab has the agent?" you break concentration. The terminal should
+  anticipate, not obstruct.
+
+  Tokyo Night isn't just aesthetics - it's reduced eye strain during
+  long sessions. The colors are functional: green for success, red for
+  error, blue for information. Visual grammar that your brain learns
+  to parse without conscious effort.
+
+constraints:
+  - Must not conflict with standard Kitty keybindings
+  - All Daedalos bindings use ctrl+shift modifier prefix
+  - Must work without Daedalos daemons (graceful fallback)
+  - Tab bar updates must not degrade performance
+  - Kittens must start instantly (< 500ms)
+  - Configuration is additive (include in existing kitty.conf)
+  - Remote control enabled for programmatic terminal management
+
+interface:
+  keybindings:
+    philosophy: |
+      Ctrl+Shift is the Daedalos modifier. This leaves standard Kitty
+      bindings (ctrl+shift+t for new tab, etc.) intact while carving out
+      a predictable namespace for Daedalos tools.
+
+      Keys are mnemonic: L for Loop, A for Agent, V for Verify.
+      This reduces cognitive load - you learn patterns, not arbitrary mappings.
+
+    core_bindings:
+      ctrl+shift+l: "Loop status - see active iteration loops"
+      ctrl+shift+alt+l: "Observe TUI - full dashboard view"
+      ctrl+shift+a: "Agent list - see all running agents"
+      ctrl+shift+n: "New agent - spawn implementer in new tab"
+      ctrl+shift+v: "Verify quick - fast project verification"
+      ctrl+shift+u: "Undo timeline - recent file changes"
+      ctrl+shift+p: "Project info - codebase summary"
+      ctrl+shift+s: "Semantic search - find code by meaning"
+      ctrl+shift+j: "Journal - activity history"
+      ctrl+shift+g: "Gates level - supervision status"
+      ctrl+shift+c: "Context estimate - token usage"
+      ctrl+shift+x: "Scratch list - ephemeral environments"
+      ctrl+shift+e: "Error lookup - search error database"
+      ctrl+shift+d: "Daedalos status - system health"
+      ctrl+shift+?: "Daedalos help - command reference"
+      ctrl+shift+space: "Daedalos launcher kitten - quick tool menu"
+
+  tab_bar:
+    purpose: |
+      Agent status visible without switching context. The tab bar becomes
+      a passive status display - you see running/thinking/idle counts
+      without invoking any command.
+
+    display_format: "[running/thinking/idle]"
+    colors:
+      running: "green - agent actively executing"
+      thinking: "blue - agent processing/waiting for API"
+      idle: "yellow - agent spawned but not active"
+
+    implementation: |
+      Custom tab bar (tab_bar.py) queries 'agent list --json' every
+      draw cycle. Results cached for 2 seconds to prevent performance
+      impact. Fallback to empty display if agent command fails.
+
+  kittens:
+    daedalos_kitten:
+      purpose: "Quick launcher for all Daedalos tools"
+      invocation: "kitten daedalos [tool]"
+      features:
+        - Interactive menu when invoked without arguments
+        - Direct tool access: "kitten daedalos loop" runs loop status
+        - Single-key shortcuts in menu (l for loop, a for agents, etc.)
+        - Color-coded output with error handling
+      tools_exposed:
+        l: "loop status"
+        a: "agent list"
+        o: "observe (TUI)"
+        v: "verify --quick"
+        u: "undo timeline"
+        p: "project info"
+        s: "codex search"
+        j: "journal"
+        g: "gates level"
+        c: "context estimate"
+        x: "scratch list"
+        e: "error-db search"
+        d: "daedalos status"
+        h: "daedalos help"
+
+  remote_control:
+    socket: "unix:/tmp/kitty-daedalos"
+    purpose: |
+      Enables programmatic terminal control. Agents can spawn new windows,
+      switch tabs, inject commands. Essential for multi-agent orchestration
+      where the orchestrator needs to manage terminal sessions.
+
+    capabilities:
+      - Launch new tabs/windows with specific commands
+      - Switch focus between tabs
+      - Send commands to running sessions
+      - Query window/tab state
+
+  color_scheme:
+    tokyo_night:
+      background: "#1a1b26"
+      foreground: "#c0caf5"
+      cursor: "#c0caf5"
+      selection_bg: "#33467c"
+      selection_fg: "#c0caf5"
+      url_color: "#73daca"
+      active_tab_bg: "#7aa2f7"
+      active_tab_fg: "#1a1b26"
+      inactive_tab_bg: "#292e42"
+      inactive_tab_fg: "#545c7e"
+      normal_black: "#15161e"
+      normal_red: "#f7768e"
+      normal_green: "#9ece6a"
+      normal_yellow: "#e0af68"
+      normal_blue: "#7aa2f7"
+      normal_magenta: "#bb9af7"
+      normal_cyan: "#7dcfff"
+      normal_white: "#a9b1d6"
+      bright_black: "#414868"
+      bright_white: "#c0caf5"
+      mark1_bg: "#9ece6a"
+      mark2_bg: "#7aa2f7"
+      mark3_bg: "#f7768e"
+
+    alternatives:
+      - name: "Catppuccin Mocha"
+        note: "Warmer tones, popular alternative"
+      - name: "Gruvbox Dark"
+        note: "High contrast, retro aesthetic"
+      - name: "Nord"
+        note: "Cool blue tones, lower contrast"
+      - name: "Solarized Dark"
+        note: "Classic, well-researched palette"
+
+    why_tokyo_night: |
+      Dark enough for extended sessions without eye strain. Blue
+      accent color distinguishes from other dark themes. High
+      enough contrast for readability without harshness. Green/red
+      for success/error follows universal conventions.
+
+examples:
+  - scenario: "Quick loop check during development"
+    context: "User is coding, wants to see if loop is still running"
+    action: "Press ctrl+shift+l"
+    result: "Overlay shows loop status, press any key to dismiss"
+    why_it_matters: |
+      No context switch. No typing. One keystroke, instant information,
+      back to work. The overlay pattern keeps you in flow.
+
+  - scenario: "Spawn agent for parallel exploration"
+    context: "User wants a second agent to explore while main one implements"
+    action: "Press ctrl+shift+n"
+    result: "New tab opens with fresh agent, named 'Agent', ready to work"
+    why_it_matters: |
+      Multi-agent is accessible, not arcane. Single keystroke to expand
+      your workforce. The tab bar shows the new agent status.
+
+  - scenario: "Launch tool from menu"
+    context: "User forgets the specific keybinding for error lookup"
+    action: "Press ctrl+shift+space, then 'e'"
+    result: "Daedalos kitten shows menu, 'e' runs error lookup"
+    why_it_matters: |
+      Discoverability. The menu teaches the keybindings. Users learn
+      progressively - menu first, then direct keys once muscle memory forms.
+
+  - scenario: "Check agent status at a glance"
+    context: "Three agents running, user wonders about their state"
+    action: "Look at tab bar"
+    result: "See [2/1/0] - two running, one thinking, zero idle"
+    why_it_matters: |
+      Passive awareness. No action required to get status. The information
+      is always visible, reducing the need to actively check.
+
+  - scenario: "Full system overview"
+    context: "Something seems slow, user wants the big picture"
+    action: "Press ctrl+shift+alt+l to launch observe TUI"
+    result: "Full dashboard with daemons, loops, agents, events"
+    why_it_matters: |
+      Observe is one keystroke away. From terminal to dashboard instantly.
+      When you need depth, it's there.
+
+decisions:
+  - choice: "ctrl+shift modifier for all Daedalos bindings"
+    why: |
+      Ctrl+shift is used by Kitty for some defaults, but has room.
+      More importantly, it's consistent and memorable. Learning
+      "ctrl+shift + something" is easier than random modifiers.
+
+      Alt could work but conflicts with terminal applications.
+      Super (cmd/win) is window manager territory.
+    alternatives:
+      - option: "Alt modifier"
+        rejected_because: "Conflicts with readline, vim, emacs bindings in terminal apps"
+      - option: "Super modifier"
+        rejected_because: "Window manager typically owns Super, would require WM config changes"
+      - option: "Custom leader key sequence"
+        rejected_because: "Slower, less discoverable, breaks muscle memory"
+
+  - choice: "Overlay for quick lookups, tabs for persistent agents"
+    why: |
+      Quick commands (loop status, verify) should overlay and dismiss.
+      They're glances, not destinations. You look, you return.
+
+      Agents are long-running. They deserve tabs. They need scrollback.
+      They might run for hours. Different lifetime, different presentation.
+    alternatives:
+      - option: "All in overlays"
+        rejected_because: "Agents need persistence, scrollback, tab identity"
+      - option: "All in new tabs"
+        rejected_because: "Tab explosion for quick checks, cognitive overhead"
+
+  - choice: "Single kitten with subcommands over multiple kittens"
+    why: |
+      One entry point (kitten daedalos) is easier to remember.
+      Subcommands match CLI patterns (daedalos loop, daedalos agent).
+
+      Multiple kittens (kitten daedalos-loop, kitten daedalos-agent)
+      would require more installation and documentation.
+    alternatives:
+      - option: "Separate kitten per tool"
+        rejected_because: "More files to install, harder to discover, fragmented"
+      - option: "No kittens, just keybindings"
+        rejected_because: "Loses menu discoverability, no command-line invocation"
+
+  - choice: "Tab bar shows counts, not individual agents"
+    why: |
+      Tab bar space is limited. Showing "[agent1: running, agent2: thinking]"
+      would overflow quickly. Counts compress the information:
+      "[2/1/0]" means 2 running, 1 thinking, 0 idle.
+
+      If you need details, press ctrl+shift+a for full list.
+    alternatives:
+      - option: "Show agent names"
+        rejected_because: "Overflows with 3+ agents, requires truncation"
+      - option: "No agent info in tab bar"
+        rejected_because: "Loses passive awareness benefit"
+      - option: "Separate status line"
+        rejected_because: "Takes vertical space, most terminals already tight"
+
+  - choice: "Tokyo Night as default, not configurable in daedalos.conf"
+    why: |
+      Color scheme is a personal preference. Daedalos provides Tokyo Night
+      as a well-tested default, but users can override in their own kitty.conf
+      by loading their preferred scheme after the include.
+
+      Not adding color scheme configuration keeps daedalos.conf focused
+      on functionality, not aesthetics.
+    alternatives:
+      - option: "Multiple bundled themes with selector"
+        rejected_because: "Scope creep, Kitty already has theming"
+      - option: "No color scheme at all"
+        rejected_because: "Misses opportunity for cohesive visual design"
+
+  - choice: "Remote control via Unix socket"
+    why: |
+      Unix socket is:
+      - Local only (security)
+      - Fast (no network overhead)
+      - Standard Kitty feature
+
+      Named socket (/tmp/kitty-daedalos) distinguishes Daedalos-controlled
+      instances from other Kitty windows.
+    alternatives:
+      - option: "TCP socket"
+        rejected_because: "Security risk, network exposure unnecessary"
+      - option: "No remote control"
+        rejected_because: "Loses programmatic orchestration capability"
+
+anti_patterns:
+  - pattern: "Overloading keybindings that conflict with Kitty defaults"
+    why_bad: |
+      Users have muscle memory for ctrl+shift+t (new tab), ctrl+shift+q (close).
+      Overwriting these breaks expectations and frustrates users.
+
+      Daedalos bindings must complement, not replace, Kitty defaults.
+
+  - pattern: "Tab bar queries blocking on slow commands"
+    why_bad: |
+      If 'agent list --json' is slow, the entire terminal hangs.
+      Tab bar must use async queries with timeouts. If data is stale,
+      show stale data rather than block.
+
+  - pattern: "Kittens that require daemons to be running"
+    why_bad: |
+      "Command failed: loopd not running" is a bad first experience.
+      Kittens should show "no loops running" or "daemon not active",
+      not crash or show stack traces.
+
+  - pattern: "Complex multi-step keybinding sequences"
+    why_bad: |
+      Leader key + wait + another key breaks flow. Single chord
+      (ctrl+shift+l) is instant. Sequences add latency and cognitive load.
+
+  - pattern: "Color scheme that reduces readability for information density"
+    why_bad: |
+      Low contrast "aesthetic" themes look good in screenshots but
+      strain eyes during 8-hour sessions. Daedalos prioritizes
+      function over form - colors must be readable.
+
+  - pattern: "Spawning agents in overlays instead of tabs"
+    why_bad: |
+      Agents need persistence. Overlays disappear. An agent in an
+      overlay loses its scrollback when dismissed. Use tabs for
+      anything that runs longer than a quick lookup.
+
+connects_to:
+  - component: observe
+    relationship: |
+      ctrl+shift+alt+l launches observe TUI directly.
+      Observe is the "deep dive" when tab bar status isn't enough.
+
+      The tab bar agent counts are a preview; observe is the full picture.
+
+  - component: agent
+    relationship: |
+      ctrl+shift+a shows agent list (quick lookup).
+      ctrl+shift+n spawns new agent in dedicated tab.
+
+      Tab bar passively displays agent status counts.
+      The daedalos kitten provides menu access to agent commands.
+
+      Remote control socket enables agents to spawn new terminal windows
+      for sub-agents or parallel work.
+
+  - component: loop
+    relationship: |
+      ctrl+shift+l shows loop status (quick lookup).
+      The daedalos kitten 'l' key runs loop status.
+
+      When loops run in background (loopd), keybinding provides
+      instant visibility without switching to the loop terminal.
+
+  - component: verify
+    relationship: |
+      ctrl+shift+v runs 'verify --quick' in overlay.
+      Quick verification without leaving current context.
+
+      The overlay pattern is perfect for verify - see results,
+      press key, back to work.
+
+  - component: undo
+    relationship: |
+      ctrl+shift+u shows undo timeline.
+      Quick access to recent changes for review or rollback.
+
+  - component: project
+    relationship: |
+      ctrl+shift+p shows project info.
+      Orientation without opening docs or running commands.
+
+  - component: codex
+    relationship: |
+      ctrl+shift+s prompts for semantic search query.
+      Interactive search through the kitten interface.
+
+  - component: journal
+    relationship: |
+      ctrl+shift+j shows journal (activity history).
+      What happened while you were away.
+
+  - component: gates
+    relationship: |
+      ctrl+shift+g shows current supervision level.
+      Quick check on what permissions are active.
+
+  - component: context
+    relationship: |
+      ctrl+shift+c shows context estimate.
+      Token usage awareness without switching windows.
+
+  - component: scratch
+    relationship: |
+      ctrl+shift+x shows scratch environments.
+      Quick list of ephemeral workspaces.
+
+  - component: error-db
+    relationship: |
+      ctrl+shift+e prompts for error lookup.
+      Interactive error database search.
+
+metrics:
+  success_criteria:
+    - "Users learn keybindings within first session"
+    - "Tab bar updates with < 100ms latency"
+    - "Kitten launches in < 500ms"
+    - "No conflicts with standard Kitty operations"
+    - "Zero performance degradation during normal use"
+    - "Users use keybindings instead of typing commands"
+
+  failure_indicators:
+    - "Users disable daedalos.conf due to conflicts"
+    - "Tab bar causes visible lag or flicker"
+    - "Users forget keybindings and fall back to CLI"
+    - "Kittens crash or show errors frequently"
+    - "Color scheme complaints about readability"
+
+installation:
+  steps:
+    - "Copy daedalos.conf to ~/.config/kitty/"
+    - "Copy tab_bar.py to ~/.config/kitty/"
+    - "Copy kittens/daedalos.py to ~/.config/kitty/kittens/"
+    - "Add 'include daedalos.conf' to kitty.conf"
+    - "Restart Kitty"
+
+  verification: |
+    Press ctrl+shift+space to launch Daedalos kitten.
+    If menu appears, installation succeeded.
+
+  nixos_integration: |
+    On NixOS, files are managed declaratively:
+    programs.kitty = {
+      enable = true;
+      extraConfig = builtins.readFile ./daedalos.conf;
+    };
+
+    Tab bar and kittens are placed via home-manager xdg.configFile.

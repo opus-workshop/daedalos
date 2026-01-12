@@ -1,0 +1,507 @@
+name: nixos
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Reproducibility is not a feature. It is the foundation.
+
+  NixOS is the base of Daedalos because AI development requires environments
+  that are predictable, recoverable, and shareable. "Works on my machine" is
+  the enemy of AI agents that need to operate autonomously.
+
+  The deeper insight: NixOS's declarative nature maps perfectly to how AI
+  should think about systems. Instead of imperative "do this, then that",
+  Nix says "the system SHOULD be in this state". This is how agents should
+  reason about configuration.
+
+  Key properties NixOS provides:
+  1. REPRODUCIBILITY - Same config = same system, always
+  2. ATOMIC ROLLBACK - Bad update? Instant recovery
+  3. ISOLATION - Per-project shells, no global pollution
+  4. DECLARATIVE - Config is documentation, documentation is config
+
+  Daedalos uses NixOS not because it's trendy, but because it solves
+  fundamental problems that plague AI development:
+  - "The agent broke something" → Just rollback
+  - "It worked yesterday" → Same flake.lock = same system
+  - "I need Python 3.11 AND 3.12" → Separate shells, no conflict
+  - "How is production configured?" → Read the .nix files
+
+constraints:
+  - All Daedalos tools packaged as Nix derivations
+  - No FHS assumptions (paths are in /nix/store)
+  - Development shells via nix develop, not global installs
+  - Flakes required (no legacy nix-channel)
+  - Home-manager for user config, nixos modules for system
+  - Btrfs as primary filesystem (for undo snapshots)
+  - Git fallback for non-Btrfs systems
+  - No proprietary dependencies in base packages
+  - Overlay-friendly design for customization
+
+package_structure:
+  philosophy: |
+    Each Daedalos tool is its own derivation, composable into larger packages.
+    The `daedalos` package combines all tools, but users can pick individual
+    ones if they prefer minimal installs.
+
+  individual_tools:
+    pattern: |
+      Each tool in daedalos-tools/ becomes:
+        packages.${system}.${toolname}
+
+      Example: packages.x86_64-linux.loop
+
+    derivation_types:
+      bash_tools:
+        builder: "stdenv.mkDerivation"
+        example: "loop, undo, verify"
+        wrapping: "makeWrapper for PATH and PYTHONPATH"
+
+      python_tools:
+        builder: "python312Packages.buildPythonApplication"
+        example: "project, codex, context"
+        dependencies: "Declared in propagatedBuildInputs"
+
+      hybrid_tools:
+        builder: "stdenv.mkDerivation with pythonEnv"
+        example: "observe, gates, mcp-hub"
+        pattern: "Bash entry point with Python libs"
+
+  combined_package:
+    name: "daedalos"
+    builder: "symlinkJoin"
+    purpose: |
+      Single package that includes all tools for convenience:
+        nix profile install github:opus-workshop/daedalos
+
+      Users who want everything get one command.
+
+  naming:
+    prefix: "daedalos-"
+    example: "daedalos-loop, daedalos-verify"
+    rationale: "Prevents conflicts with system packages (e.g., 'env')"
+
+module_design:
+  philosophy: |
+    NixOS modules enable declarative system configuration.
+    Daedalos modules follow NixOS patterns but with AI-first defaults.
+
+  core_modules:
+    daedalos:
+      path: "nixos/modules/daedalos.nix"
+      purpose: "Core Daedalos integration"
+      provides:
+        - "Systemd user services (loopd, undod, projectd)"
+        - "Waybar status bar configuration"
+        - "Mako notification daemon theming"
+        - "Kitty terminal configuration"
+        - "Starship prompt with Daedalos aliases"
+        - "Zsh shell integration"
+
+    hyprland:
+      path: "nixos/modules/hyprland.nix"
+      purpose: "Hyprland window manager configuration"
+      provides:
+        - "Keybindings for all Daedalos tools"
+        - "Workspace configuration for agents"
+        - "Tokyo Night theming"
+        - "GPU-accelerated Wayland setup"
+
+    development:
+      path: "nixos/modules/development.nix"
+      purpose: "Development environment tools"
+      provides:
+        - "Language servers (rust-analyzer, pyright, etc.)"
+        - "Compilers and interpreters"
+        - "Linters and formatters"
+        - "Database tools (postgres, redis)"
+        - "Container tools (docker, podman)"
+
+  option_pattern:
+    example: |
+      options.services.daedalos = {
+        enable = mkEnableOption "Daedalos AI development environment";
+
+        defaultAgent = mkOption {
+          type = types.str;
+          default = "opencode";
+          description = "Default AI agent engine";
+        };
+
+        enableDaemons = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable background daemons";
+        };
+      };
+
+  service_pattern:
+    systemd_user: |
+      User services for Daedalos daemons:
+        systemd.user.services.loopd = {
+          wantedBy = [ "default.target" ];
+          serviceConfig = {
+            ExecStart = "${pkg}/bin/loopd";
+            Restart = "on-failure";
+          };
+        };
+
+    socket_activation: |
+      Future: socket-activated services for on-demand daemons.
+      Not yet implemented but architecture supports it.
+
+development_shells:
+  philosophy: |
+    Per-project development environments. No global installs.
+    Enter project, get all tools. Leave project, clean slate.
+
+  patterns:
+    flake_devshell:
+      description: "Project-local development shell via flake.nix"
+      example: |
+        # In project's flake.nix:
+        devShells.default = pkgs.mkShell {
+          buildInputs = [
+            daedalos
+            pkgs.nodejs
+            pkgs.python3
+          ];
+          shellHook = ''
+            echo "Entering project shell"
+          '';
+        };
+
+      activation: "nix develop or direnv"
+
+    daedalos_shell:
+      description: "Daedalos-provided shell with all tools"
+      example: |
+        nix develop github:opus-workshop/daedalos
+
+      provides: "All Daedalos tools + common development utilities"
+
+    per_language:
+      description: "Language-specific shells"
+      examples:
+        - "nix develop github:opus-workshop/daedalos#python"
+        - "nix develop github:opus-workshop/daedalos#rust"
+        - "nix develop github:opus-workshop/daedalos#node"
+
+  direnv_integration:
+    recommendation: "Use direnv for automatic shell activation"
+    pattern: |
+      # .envrc in project root:
+      use flake
+
+    why: |
+      direnv loads shell automatically when entering directory.
+      Combined with Daedalos env tool for seamless project switching.
+
+overlay_patterns:
+  philosophy: |
+    Overlays let users customize packages without forking.
+    Daedalos provides an overlay for use in other flakes.
+
+  provided_overlay:
+    usage: |
+      # In user's flake.nix:
+      overlays = [ daedalos.overlays.default ];
+
+    provides: |
+      pkgs.daedalos - Combined package
+      pkgs.daedalos-loop - Individual tool
+      pkgs.daedalos-verify - Individual tool
+      # ... etc
+
+  extension_pattern:
+    description: "Users can overlay on top of Daedalos packages"
+    example: |
+      # Custom loop with different default max:
+      final: prev: {
+        daedalos-loop = prev.daedalos-loop.overrideAttrs (old: {
+          patches = [ ./my-loop-patch.patch ];
+        });
+      }
+
+  nixpkgs_override:
+    description: "Override nixpkgs dependencies"
+    example: |
+      # Use different Python version:
+      final: prev: {
+        pythonEnv = prev.python311.withPackages (ps: [
+          ps.click ps.rich
+        ]);
+      }
+
+home_manager_integration:
+  philosophy: |
+    System config via NixOS modules, user config via home-manager.
+    Daedalos supports both but recommends home-manager for portability.
+
+  user_configuration:
+    path: "~/.config/home-manager/home.nix"
+    example: |
+      { pkgs, ... }:
+      {
+        imports = [ daedalos.homeModules.default ];
+
+        programs.daedalos = {
+          enable = true;
+          defaultAgent = "claude";
+
+          loop = {
+            defaultMaxIterations = 20;
+            checkpointBackend = "btrfs";
+          };
+
+          verify = {
+            autoFix = false;
+            failFast = true;
+          };
+        };
+      }
+
+  home_modules:
+    daedalos:
+      provides:
+        - "User-level tool configuration"
+        - "XDG directory setup"
+        - "Shell aliases and completions"
+        - "Agent engine configuration"
+
+    standalone: |
+      home-manager works on non-NixOS systems (macOS, Ubuntu, etc.)
+      This allows Daedalos user config without full NixOS.
+
+  configuration_files:
+    managed:
+      - "~/.config/daedalos/config.yaml"
+      - "~/.config/daedalos/engines/*.yaml"
+      - "~/.config/daedalos/loop-templates/*.yaml"
+    unmanaged: "User can add custom files alongside managed ones"
+
+decisions:
+  - choice: "Flakes required, no legacy nix-channel support"
+    why: |
+      Flakes provide:
+      - Lock files for reproducibility
+      - Standard interface for inputs/outputs
+      - Better caching and evaluation
+
+      Legacy nix-channel is deprecated direction. No point supporting it.
+
+      The cost is requiring users to enable flakes, but this is standard
+      practice now and will become default eventually.
+    alternatives:
+      - option: "Support both flakes and channels"
+        rejected_because: "Maintenance burden, channels being phased out"
+      - option: "Channels only"
+        rejected_because: "No lock files, less reproducible"
+
+  - choice: "User services via systemd.user, not system services"
+    why: |
+      Daedalos tools are per-user, not system-wide:
+      - loopd manages user's loops
+      - undod tracks user's file changes
+      - projectd indexes user's projects
+
+      System services would need multi-user coordination and privileges.
+      User services are simpler and match the use case.
+    alternatives:
+      - option: "System services with user isolation"
+        rejected_because: "Complex, requires privilege management"
+      - option: "No services, just CLI tools"
+        rejected_because: "Loses background execution, hot state"
+
+  - choice: "Btrfs as primary, git as fallback for undo/checkpoint"
+    why: |
+      Btrfs snapshots are instant and cheap. Perfect for checkpoints.
+      But not everyone runs Btrfs.
+
+      Git-based checkpoints work anywhere but are slower for large repos.
+      Auto-detection: check filesystem type, choose backend.
+    alternatives:
+      - option: "Btrfs required"
+        rejected_because: "Excludes ext4, XFS users"
+      - option: "Only git-based checkpoints"
+        rejected_because: "Slower, requires git in every directory"
+      - option: "ZFS support"
+        rejected_because: "ZFS has licensing issues, smaller user base"
+
+  - choice: "Home-manager optional, NixOS module is primary"
+    why: |
+      Not everyone uses home-manager. NixOS module provides core
+      functionality. Home-manager adds user-level niceties.
+
+      System works fine with just NixOS module. Home-manager is
+      enhancement, not requirement.
+    alternatives:
+      - option: "Home-manager required"
+        rejected_because: "Adds dependency, not everyone uses it"
+      - option: "Only NixOS module"
+        rejected_because: "Loses user-level config portability"
+
+  - choice: "symlinkJoin for combined package, not buildEnv"
+    why: |
+      symlinkJoin creates a single derivation with symlinks to all tools.
+      buildEnv is similar but heavier and less predictable.
+
+      For simple "combine these packages" use case, symlinkJoin is
+      cleaner and faster to evaluate.
+    alternatives:
+      - option: "buildEnv"
+        rejected_because: "Heavier, designed for more complex composition"
+      - option: "meta-package with dependencies"
+        rejected_because: "Doesn't create unified bin directory"
+
+  - choice: "Python 3.12 as standard, not latest"
+    why: |
+      Python 3.12 is stable and widely supported.
+      3.13+ may have compatibility issues with dependencies.
+
+      Lock to specific version for reproducibility.
+      Update annually after ecosystem catches up.
+    alternatives:
+      - option: "Latest Python"
+        rejected_because: "Dependency compatibility issues"
+      - option: "Python 3.11"
+        rejected_because: "Missing performance improvements"
+      - option: "Multiple Python versions"
+        rejected_because: "Complexity, which is default?"
+
+anti_patterns:
+  - pattern: "Assuming FHS paths (/usr/bin, /etc)"
+    why_bad: |
+      NixOS doesn't follow FHS. Binaries are in /nix/store.
+      Hardcoded paths like "/usr/bin/python" will fail.
+
+      Always use: ${pkgs.python3}/bin/python
+      Or let wrapper handle PATH.
+
+  - pattern: "Global package installation"
+    why_bad: |
+      "pip install" or "npm install -g" pollutes the system.
+      Use nix shells instead: nix shell nixpkgs#package
+
+      Development dependencies go in devShell, not global.
+
+  - pattern: "Mutable system configuration"
+    why_bad: |
+      Editing /etc/hosts directly will be overwritten on rebuild.
+      All system config must go through configuration.nix.
+
+      networking.hosts = { "127.0.0.1" = [ "myhost" ]; }
+
+  - pattern: "Mixing flakes and channels"
+    why_bad: |
+      Using both causes confusion about which nixpkgs is active.
+      Pick flakes and stick with it.
+
+      If you need a package from channels, add it as flake input.
+
+  - pattern: "Large store in home directory"
+    why_bad: |
+      /nix/store should be on root partition, not /home.
+      Home is for user data, store is system infrastructure.
+
+      Use proper partitioning: /, /nix, /home as separate mounts.
+
+  - pattern: "Disabling garbage collection"
+    why_bad: |
+      Store grows without bound. Old generations accumulate.
+
+      Enable automatic gc:
+        nix.gc.automatic = true;
+        nix.gc.dates = "weekly";
+
+  - pattern: "Using imperative nix-env"
+    why_bad: |
+      nix-env doesn't integrate with declarative config.
+      Changes are invisible to configuration.nix.
+
+      Use: home.packages or environment.systemPackages
+
+  - pattern: "Forgetting wrapProgram for PATH dependencies"
+    why_bad: |
+      Script needs git but doesn't find it because PATH is clean.
+
+      Always wrap:
+        wrapProgram $out/bin/tool \
+          --prefix PATH : ${lib.makeBinPath [ pkgs.git ]}
+
+iso_building:
+  purpose: |
+    Daedalos provides bootable ISO images for installation.
+    Live environment includes all tools for immediate use.
+
+  configurations:
+    daedalos-iso:
+      architecture: "x86_64-linux"
+      based_on: "installation-cd-graphical-calamares"
+      includes: "All Daedalos modules and tools"
+
+    daedalos-iso-arm:
+      architecture: "aarch64-linux"
+      for: "Apple Silicon VMs, Raspberry Pi"
+
+  build_command: "nix build .#iso"
+
+  live_environment:
+    user: "nixos"
+    password: "daedalos"
+    auto_login: true
+    welcome: "daedalos-welcome script"
+    installer: "Calamares GUI or daedalos-install CLI"
+
+connects_to:
+  - component: undo
+    relationship: |
+      Undo's checkpoint system uses Btrfs snapshots when available.
+      NixOS configuration enables Btrfs and sets up subvolumes.
+
+      The undo tool queries filesystem type to choose backend.
+
+  - component: loop
+    relationship: |
+      Loop daemon (loopd) is a systemd user service.
+      NixOS module configures the service and socket.
+
+      Loop state directory is in XDG data home.
+
+  - component: project
+    relationship: |
+      Project daemon (projectd) watches for project changes.
+      NixOS module starts the service on login.
+
+      Indexes are stored in ~/.local/share/daedalos/project-cache/
+
+  - component: codex
+    relationship: |
+      Codex uses Ollama for local embeddings.
+      NixOS module configures Ollama service with GPU acceleration.
+
+      services.ollama.enable = true;
+      services.ollama.acceleration = "cuda"; # or "rocm"
+
+  - component: agent
+    relationship: |
+      Agent spawning uses tmux sessions.
+      NixOS module ensures tmux is installed and configured.
+
+      Agent templates are in /nix/store/.../share/daedalos/agent-templates/
+
+metrics:
+  success_criteria:
+    - "nix build succeeds on clean NixOS install"
+    - "nix develop provides working environment with all tools"
+    - "ISO boots and tools work immediately"
+    - "Rollback recovers from bad updates in < 30 seconds"
+    - "home-manager config works on non-NixOS systems"
+    - "Overlay customization doesn't break updates"
+
+  failure_indicators:
+    - "FHS path assumptions cause runtime failures"
+    - "Global installs required for tools to work"
+    - "Store grows without bound (gc not working)"
+    - "Different behavior between flake and non-flake installs"
+    - "Module options don't compose cleanly"

@@ -1,0 +1,484 @@
+name: conventions
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Consistency compounds. Conventions are the multiplication table of code.
+
+  When AI agents write code, they need patterns to follow. Without explicit
+  conventions, each tool becomes a snowflake - different error handling,
+  different CLI styles, different file organization. This creates cognitive
+  load for humans and confusion for agents.
+
+  The deeper insight: conventions aren't constraints on creativity - they're
+  the shared language that makes collaboration possible. An agent reading
+  Daedalos code should immediately recognize the patterns. A human reviewing
+  AI-generated code should find it familiar.
+
+  These conventions were distilled from the actual tools built for Daedalos.
+  They represent what works, not what sounds good.
+
+principles:
+  - name: "Explicit over implicit"
+    description: |
+      State things directly. Don't rely on reader inference.
+      Comments explain WHY, not WHAT. Code explains WHAT.
+
+  - name: "Fail loudly, recover gracefully"
+    description: |
+      Errors should be obvious and informative.
+      But degraded operation beats complete failure.
+
+  - name: "Text as universal interface"
+    description: |
+      AI agents work with text. GUIs are secondary.
+      Every feature must be accessible via CLI.
+
+  - name: "Tools should be composable"
+    description: |
+      Each tool does one thing well.
+      Pipes and exit codes connect them.
+
+  - name: "Defaults should be safe and sensible"
+    description: |
+      A user running "tool" with no args should get useful output.
+      Destructive operations require explicit flags.
+
+code_style:
+  bash:
+    shebang: "#!/usr/bin/env bash"
+    strict_mode: |
+      # Always enable:
+      set -euo pipefail
+
+      # -e: Exit on error
+      # -u: Error on undefined variables
+      # -o pipefail: Pipe fails if any command fails
+    naming:
+      functions: "lowercase_with_underscores"
+      variables: "lowercase_with_underscores"
+      constants: "UPPERCASE_WITH_UNDERSCORES"
+      examples:
+        - "cmd_start()     # Command handler"
+        - "log_error()     # Utility function"
+        - "LOOP_VERSION    # Constant"
+        - "project_path    # Local variable"
+    quoting: |
+      Always quote variables: "$variable"
+      Use [[ ]] for tests, not [ ]
+      Prefer ${var:-default} for defaults
+    argument_parsing: |
+      Use while/case for argument parsing:
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --flag|-f)
+                    do_thing
+                    shift
+                    ;;
+                --option|-o)
+                    option_value="$2"
+                    shift 2
+                    ;;
+                *)
+                    positional="$1"
+                    shift
+                    ;;
+            esac
+        done
+    structure: |
+      # Tool structure:
+      1. Shebang and header comment
+      2. set -euo pipefail
+      3. Version constant
+      4. Directory/path constants
+      5. Color definitions (if using color)
+      6. Utility functions (log_*, die)
+      7. Command functions (cmd_*)
+      8. Help function
+      9. Main dispatch (case on $1)
+    header_comment: |
+      #===============================================================================
+      #                           TOOL NAME - Brief Description
+      #                                   Daedalos OS
+      #===============================================================================
+      #
+      # "Pithy quote about the tool's philosophy"
+      #
+      # Usage:
+      #   tool command [options]
+      #
+      #===============================================================================
+
+  python:
+    version: "Python 3.10+ (for match statements, type hints)"
+    shebang: "#!/usr/bin/env python3"
+    docstrings: |
+      Use docstrings for modules, classes, and public functions.
+      Module docstring at top explains purpose and philosophy.
+      Keep class docstrings brief, focus on responsibility.
+    imports: |
+      # Order:
+      1. Standard library
+      2. Third-party (with try/except for optional deps)
+      3. Local imports
+
+      # Example:
+      import os
+      import sys
+      from pathlib import Path
+
+      try:
+          import yaml
+          HAS_YAML = True
+      except ImportError:
+          HAS_YAML = False
+
+      from .config import DaemonConfig
+    typing: |
+      Use type hints for function signatures.
+      Use dataclasses for structured data.
+      Prefer Optional[X] over X | None for clarity.
+
+      @dataclass
+      class Config:
+          path: Path
+          enabled: bool = True
+          timeout: Optional[int] = None
+    naming:
+      classes: "PascalCase"
+      functions: "snake_case"
+      variables: "snake_case"
+      constants: "UPPER_SNAKE_CASE"
+      private: "_leading_underscore"
+    structure: |
+      # Python tool structure:
+      1. Shebang
+      2. Module docstring
+      3. Imports
+      4. Constants
+      5. Dataclasses/types
+      6. Classes
+      7. Functions
+      8. if __name__ == "__main__"
+
+  yaml:
+    indentation: "2 spaces"
+    multiline_strings: |
+      Use | for multi-line strings (preserves newlines):
+        description: |
+          This is a multi-line string.
+          Line breaks are preserved.
+
+      Use > for folded strings (joins lines):
+        description: >
+          This becomes a single
+          long line.
+    lists: |
+      Prefer - syntax over [] for multi-item lists:
+        steps:
+          - first
+          - second
+          - third
+
+      Use [] only for empty or single-item inline:
+        empty: []
+        single: [item]
+    keys: "lowercase_with_underscores"
+
+file_organization:
+  tool_structure: |
+    Each tool lives in its own directory:
+      daedalos-tools/
+      +-- toolname/
+          +-- toolname           # Main CLI (Bash script, no extension)
+          +-- toolname.spec.yaml # Specification (required)
+          +-- lib/               # Python/Bash libraries (optional)
+          +-- templates/         # Template files (optional)
+          +-- toolname.1         # Man page (optional)
+
+  naming:
+    cli_tools: "lowercase, no extension (e.g., 'loop', 'verify', 'undo')"
+    spec_files: "toolname.spec.yaml"
+    python_modules: "snake_case.py"
+    config_files: "toolname.yaml or config.yaml"
+    man_pages: "toolname.1 (section 1 for commands)"
+
+  paths:
+    config: "~/.config/daedalos/toolname/"
+    data: "~/.local/share/daedalos/toolname/"
+    runtime: "/run/daedalos/ (for sockets, PID files)"
+    project: ".daedalos/ (for project-specific config)"
+
+error_handling:
+  exit_codes:
+    description: |
+      Standard exit codes across all tools.
+      Tools may define additional codes 10+ for specific errors.
+    codes:
+      0: "Success"
+      1: "General error / operation failed"
+      2: "Configuration error / invalid arguments"
+      3: "Resource error (file not found, permissions, disk full)"
+      4: "Nothing to do (e.g., nothing to undo, already up-to-date)"
+      5: "Communication error (daemon, network)"
+
+  error_messages:
+    format: |
+      # Always send errors to stderr
+      # Include tool name prefix for clarity
+
+      log_error() {
+          echo -e "${RED}[ERROR]${NC} $*" >&2
+      }
+
+      # Good error messages:
+      # - Say what failed
+      # - Say why it failed (if known)
+      # - Suggest what to do
+    examples:
+      good:
+        - "[ERROR] Cannot find file 'config.yaml': No such file or directory"
+        - "[ERROR] Loop abc123 not found. Run 'loop list' to see active loops."
+        - "[ERROR] Promise command failed with exit code 1. See output above."
+      bad:
+        - "Error"
+        - "Something went wrong"
+        - "Failed"
+
+  graceful_degradation: |
+    Tools should work in degraded mode when optional components are missing:
+      - Daemon not running? Work standalone (with warning).
+      - Optional dependency missing? Fall back to simpler implementation.
+      - Config file missing? Use sensible defaults.
+
+    Example:
+      if ! command -v btrfs &>/dev/null; then
+          log_warn "Btrfs not available, using git-based fallback"
+          use_git_fallback=true
+      fi
+
+cli_patterns:
+  help_format: |
+    Every tool must support --help and provide structured help:
+
+    Usage: toolname <command> [options]
+
+    The tool's one-line description.
+
+    Commands:
+      start       Start something
+      stop        Stop something
+      list        List things
+
+    Options:
+      -h, --help     Show this help
+      -v, --version  Show version
+      --json         Output as JSON
+
+    Examples:
+      toolname start "task" --promise "make test"
+      toolname list --json
+
+  argument_style:
+    positional: "Use for required primary arguments"
+    short_flags: "-h, -v, -n (single character, common ones)"
+    long_flags: "--help, --version, --json (self-documenting)"
+    value_flags: "--option value or --option=value (both should work)"
+    examples:
+      - "loop start 'fix tests' --promise 'pytest'"
+      - "undo last -n 3"
+      - "verify --quick --json"
+
+  output_format:
+    human: |
+      Default output is human-readable:
+        - Color-coded status (green=ok, red=error, yellow=warn)
+        - Tables aligned with columns
+        - Progress indicators for long operations
+    json: |
+      --json flag produces machine-readable output:
+        - Single JSON object or array
+        - No color codes or escape sequences
+        - Consistent field names across tools
+    exit_codes: "Exit codes are the API for scripts"
+
+  confirmation:
+    destructive_operations: |
+      Destructive operations should:
+        1. NOT prompt by default (breaks automation)
+        2. Show what will happen
+        3. Provide --yes flag for explicit confirmation bypass
+        4. Provide --dry-run to preview
+
+      Example:
+        undo restore checkpoint-123
+        # Shows: "This will restore 5 files to checkpoint-123"
+        # Then does it (no prompt)
+
+        undo restore checkpoint-123 --dry-run
+        # Shows what would happen, doesn't do it
+
+integration_patterns:
+  tool_composition: |
+    Tools should work together via:
+      1. Exit codes (loop checks verify's exit code)
+      2. Standard output (pipe-friendly)
+      3. JSON for structured data (--json flag)
+      4. Shared state directories (~/.local/share/daedalos/)
+
+    Example pipeline:
+      npm test 2>&1 | error-db search --stdin
+      verify --quick && git commit
+      loop start "fix" --promise "verify"
+
+  daemon_optional: |
+    Daemons add value but aren't required:
+      - CLI works without daemon
+      - Daemon provides background operation, caching, coordination
+      - Daemon connection failures degrade gracefully
+
+    Pattern:
+      if daemon_available; then
+          send_to_daemon "$request"
+      else
+          log_warn "Daemon not running, using direct mode"
+          do_operation_directly
+      fi
+
+  event_logging: |
+    Tools should log significant events to journal:
+      journal log "loop: started 'fix tests' (id: abc123)"
+      journal log "verify: passed in 8.3s"
+
+    Categories:
+      - Start/stop of operations
+      - Success/failure results
+      - Checkpoints and restores
+
+  socket_conventions:
+    location: "/run/daedalos/toolname.sock"
+    protocol: "JSON-RPC 2.0 over Unix socket"
+    timeout: "30 seconds default, configurable"
+
+documentation:
+  what_to_document:
+    required:
+      - spec.yaml: "Intent, constraints, interface, examples, decisions"
+    optional:
+      - man_page: "For complex tools (toolname.1)"
+      - inline_comments: "WHY, not WHAT"
+
+  inline_comments: |
+    Comment to explain:
+      - WHY a non-obvious decision was made
+      - WHAT a regex or complex expression does
+      - WHERE a value comes from (if not obvious)
+
+    Don't comment:
+      - What the code literally does (the code says that)
+      - Every line
+      - TODOs (use issue tracker)
+
+  spec_sections:
+    name: "Tool identifier"
+    intent: "WHY this tool exists (philosophy, not features)"
+    constraints: "Non-negotiable requirements"
+    interface: "Commands, arguments, exit codes"
+    examples: "Scenarios with context and why_it_matters"
+    decisions: "Choices made and alternatives rejected"
+    anti_patterns: "What NOT to do"
+    connects_to: "How this tool integrates with others"
+    metrics: "Success criteria and failure indicators"
+
+anti_patterns:
+  - pattern: "Reinventing standard tools"
+    why_bad: |
+      Don't reimplement grep, find, ls, etc.
+      Use existing Unix tools. Compose with pipes.
+
+  - pattern: "Silent failures"
+    why_bad: |
+      log_error "X failed" is better than nothing.
+      Even better: why it failed and what to do.
+
+  - pattern: "Interactive prompts in scripts"
+    why_bad: |
+      Prompts break automation and loops.
+      Use flags for confirmation (--yes, --force).
+      Default to safe non-destructive behavior.
+
+  - pattern: "Hardcoded paths"
+    why_bad: |
+      Use XDG directories: $XDG_CONFIG_HOME, $XDG_DATA_HOME
+      Support environment variable overrides.
+      Example: ${LOOP_STATE_DIR:-$HOME/.local/share/daedalos/loop}
+
+  - pattern: "Inconsistent --json output"
+    why_bad: |
+      If one command has --json, all commands should.
+      Same field names across related tools.
+      Always valid JSON (no trailing commas, proper escaping).
+
+  - pattern: "Swallowing errors"
+    why_bad: |
+      cmd 2>/dev/null  # NEVER do this without good reason
+      set +e without restoring  # Dangerous
+      Always check return codes for important operations.
+
+  - pattern: "Missing --help"
+    why_bad: |
+      Every command and subcommand needs help.
+      Users shouldn't have to read source code.
+
+  - pattern: "Assuming network availability"
+    why_bad: |
+      Daedalos is offline-first.
+      Core functionality must work without internet.
+      Network features are optional enhancements.
+
+  - pattern: "Global state without cleanup"
+    why_bad: |
+      Use trap for cleanup: trap cleanup EXIT
+      Don't leave temp files, lock files, or stale PID files.
+
+  - pattern: "Tool-specific log formats"
+    why_bad: |
+      Use the standard logging functions:
+        log_info, log_warn, log_error, log_success
+      Consistent prefixes: [INFO], [WARN], [ERROR], [OK]
+
+connects_to:
+  - component: spec
+    relationship: |
+      Conventions inform spec structure.
+      spec validate checks that tools follow conventions.
+
+  - component: verify
+    relationship: |
+      verify pipelines include convention checking (shellcheck, ruff).
+      Linters enforce conventions automatically.
+
+  - component: loop
+    relationship: |
+      Convention compliance makes loop iteration reliable.
+      Consistent exit codes mean promises work predictably.
+
+  - component: template
+    relationship: |
+      template scaffolds new tools following these conventions.
+      New tools start conventionally correct.
+
+metrics:
+  success_criteria:
+    - "New tools follow conventions naturally (low friction)"
+    - "AI-generated code passes linters without manual fixes"
+    - "Humans can read any tool and recognize the patterns"
+    - "Exit codes are predictable across all tools"
+    - "Error messages are actionable"
+
+  failure_indicators:
+    - "Tools have different CLI styles"
+    - "Linter warnings ignored routinely"
+    - "Exit codes inconsistent or undocumented"
+    - "Error messages don't help debugging"
+    - "Each tool has unique file organization"

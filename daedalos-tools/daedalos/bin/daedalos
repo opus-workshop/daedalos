@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 # daedalos - Unified entry point for all Daedalos tools
 #
-# A Linux distribution designed BY AI, FOR AI development.
+# A Linux distribution and toolset designed BY AI, FOR AI development.
 
 set -eo pipefail
 
 DAEDALOS_VERSION="1.0.0"
 DAEDALOS_TOOLS_DIR="${HOME}/.local/bin"
 
-# Colors
+# Colors (use $'...' to interpret escape sequences)
 if [[ -t 1 ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[0;33m'
-    BLUE='\033[0;34m'
-    CYAN='\033[0;36m'
-    MAGENTA='\033[0;35m'
-    BOLD='\033[1m'
-    DIM='\033[2m'
-    NC='\033[0m'
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[0;33m'
+    BLUE=$'\033[0;34m'
+    CYAN=$'\033[0;36m'
+    MAGENTA=$'\033[0;35m'
+    BOLD=$'\033[1m'
+    DIM=$'\033[2m'
+    NC=$'\033[0m'
 else
     RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' DIM='' NC=''
 fi
@@ -26,27 +26,49 @@ fi
 # Tool descriptions
 get_tool_desc() {
     case "$1" in
-        loop)     echo "Iterate until promise met - THE CORE" ;;
-        verify)   echo "Universal lint/type/build/test runner" ;;
-        undo)     echo "File-level undo with timeline" ;;
-        sandbox)  echo "Ephemeral experiment environments" ;;
-        project)  echo "Pre-computed codebase intelligence" ;;
-        codex)    echo "Semantic code search" ;;
-        context)  echo "Context window management" ;;
-        error-db) echo "Error pattern database" ;;
-        agent)    echo "Multi-agent orchestration" ;;
-        mcp-hub)  echo "MCP server management" ;;
-        lsp-pool) echo "Pre-warmed language servers" ;;
-        scratch)  echo "Project-scoped ephemeral environments" ;;
-        observe)  echo "Real-time TUI dashboard" ;;
-        gates)    echo "Configurable approval checkpoints" ;;
-        journal)  echo "Narrative reconstruction - what happened?" ;;
-        *)        echo "" ;;
+        # AI-focused tools
+        loop)      echo "Iterate until promise met - THE CORE" ;;
+        verify)    echo "Universal lint/type/build/test runner" ;;
+        undo)      echo "File-level undo with timeline" ;;
+        sandbox)   echo "Ephemeral experiment environments" ;;
+        project)   echo "Pre-computed codebase intelligence" ;;
+        codex)     echo "Semantic code search" ;;
+        context)   echo "Context window management" ;;
+        error-db)  echo "Error pattern database" ;;
+        agent)     echo "Multi-agent orchestration" ;;
+        mcp-hub)   echo "MCP server management" ;;
+        lsp-pool)  echo "Pre-warmed language servers" ;;
+        scratch)   echo "Project-scoped ephemeral environments" ;;
+        spec)      echo "Rich specifications for AI context" ;;
+        resolve)   echo "Uncertainty resolution through context" ;;
+        evolve)    echo "Code evolution analysis" ;;
+        # Supervision tools
+        observe)   echo "Real-time TUI dashboard" ;;
+        gates)     echo "Configurable approval checkpoints" ;;
+        journal)   echo "Narrative reconstruction - what happened?" ;;
+        # Human-focused tools
+        env)       echo "Project environment switching" ;;
+        notify)    echo "Desktop notifications" ;;
+        session)   echo "Terminal session save/restore" ;;
+        secrets)   echo "Local secrets vault (age encryption)" ;;
+        pair)      echo "Pair programming (shared tmux)" ;;
+        handoff)   echo "Context summaries for shift changes" ;;
+        review)    echo "Human code review workflow" ;;
+        focus)     echo "Pomodoro timer + distraction blocking" ;;
+        metrics)   echo "Productivity statistics" ;;
+        template)  echo "Project scaffolding" ;;
+        container) echo "Docker/Podman management" ;;
+        remote)    echo "SSH + remote development" ;;
+        backup)    echo "Project backup with encryption" ;;
+        *)         echo "" ;;
     esac
 }
 
-# All tools in order
-ALL_TOOLS="loop verify undo sandbox project codex context error-db agent mcp-hub lsp-pool scratch observe gates journal"
+# All tools in order (categorized)
+AI_TOOLS="loop verify undo sandbox project codex context error-db agent mcp-hub lsp-pool scratch spec resolve evolve"
+SUPERVISION_TOOLS="observe gates journal"
+HUMAN_TOOLS="env notify session secrets pair handoff review focus metrics template container remote backup"
+ALL_TOOLS="$AI_TOOLS $SUPERVISION_TOOLS $HUMAN_TOOLS"
 
 log_error() { echo -e "${RED}error:${NC} $*" >&2; }
 log_info() { echo -e "${BLUE}info:${NC} $*"; }
@@ -73,7 +95,7 @@ ${BOLD}${CYAN}
  / /_/ / /_/ /  __/ /_/ / /_/ / / /_/ (__  )
 /_____/\__,_/\___/\__,_/\__,_/_/\____/____/
 ${NC}
-${DIM}A Linux distribution designed BY AI, FOR AI development.${NC}
+${DIM}A Linux distribution and toolset designed BY AI, FOR AI development.${NC}
 
 ${BOLD}USAGE${NC}
     daedalos <tool> [args...]    Run a Daedalos tool
@@ -87,28 +109,41 @@ ${BOLD}SAFETY & VERIFICATION${NC}
     ${CYAN}verify${NC}        $(get_tool_desc verify)
     ${CYAN}undo${NC}          $(get_tool_desc undo)
     ${CYAN}sandbox${NC}       $(get_tool_desc sandbox)
+    ${CYAN}scratch${NC}       $(get_tool_desc scratch)
 
 ${BOLD}INTELLIGENCE${NC}
     ${CYAN}project${NC}       $(get_tool_desc project)
     ${CYAN}codex${NC}         $(get_tool_desc codex)
     ${CYAN}context${NC}       $(get_tool_desc context)
     ${CYAN}error-db${NC}      $(get_tool_desc error-db)
+    ${CYAN}spec${NC}          $(get_tool_desc spec)
+    ${CYAN}resolve${NC}       $(get_tool_desc resolve)
+    ${CYAN}evolve${NC}        $(get_tool_desc evolve)
 
 ${BOLD}INFRASTRUCTURE${NC}
     ${CYAN}agent${NC}         $(get_tool_desc agent)
     ${CYAN}mcp-hub${NC}       $(get_tool_desc mcp-hub)
     ${CYAN}lsp-pool${NC}      $(get_tool_desc lsp-pool)
 
-${BOLD}UTILITY${NC}
-    ${CYAN}scratch${NC}       $(get_tool_desc scratch)
-
 ${BOLD}SUPERVISION${NC}
     ${CYAN}observe${NC}       $(get_tool_desc observe)
-                  ${DIM}Real-time dashboard for loops, agents, daemons${NC}
     ${CYAN}gates${NC}         $(get_tool_desc gates)
-                  ${DIM}Control AI autonomy: autonomous → supervised → manual${NC}
     ${CYAN}journal${NC}       $(get_tool_desc journal)
-                  ${DIM}Answer "what happened?" with coherent timelines${NC}
+
+${BOLD}HUMAN-FOCUSED${NC}
+    ${GREEN}env${NC}           $(get_tool_desc env)
+    ${GREEN}notify${NC}        $(get_tool_desc notify)
+    ${GREEN}session${NC}       $(get_tool_desc session)
+    ${GREEN}secrets${NC}       $(get_tool_desc secrets)
+    ${GREEN}pair${NC}          $(get_tool_desc pair)
+    ${GREEN}handoff${NC}       $(get_tool_desc handoff)
+    ${GREEN}review${NC}        $(get_tool_desc review)
+    ${GREEN}focus${NC}         $(get_tool_desc focus)
+    ${GREEN}metrics${NC}       $(get_tool_desc metrics)
+    ${GREEN}template${NC}      $(get_tool_desc template)
+    ${GREEN}container${NC}     $(get_tool_desc container)
+    ${GREEN}remote${NC}        $(get_tool_desc remote)
+    ${GREEN}backup${NC}        $(get_tool_desc backup)
 
 ${BOLD}META-COMMANDS${NC}
     ${MAGENTA}status${NC}        Show status of all Daedalos services

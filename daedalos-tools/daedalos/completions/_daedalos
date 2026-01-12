@@ -23,6 +23,9 @@ _daedalos() {
         'mcp-hub:MCP server management'
         'lsp-pool:Pre-warmed language servers'
         'scratch:Project-scoped ephemeral environments'
+        'spec:Rich specifications for AI context'
+        'resolve:Uncertainty resolution through context'
+        'evolve:Code evolution analysis'
     )
 
     human_tools=(
@@ -250,6 +253,39 @@ _daedalos() {
                         'help:Show help'
                     )
                     _describe 'journal command' journal_cmds
+                    ;;
+                spec)
+                    local -a spec_cmds
+                    spec_cmds=(
+                        'show:Display a component spec'
+                        'query:Search across all specs'
+                        'list:List all specs'
+                        'context:Get relevant specs for a task'
+                        'validate:Validate spec format'
+                        'new:Create new spec from template'
+                        'help:Show help'
+                    )
+                    _describe 'spec command' spec_cmds
+                    ;;
+                resolve)
+                    local -a resolve_cmds
+                    resolve_cmds=(
+                        'intent:Analyze question intent'
+                        'gather:Gather context for question'
+                        'log:Log a decision'
+                        'help:Show help'
+                    )
+                    _describe 'resolve command' resolve_cmds
+                    ;;
+                evolve)
+                    local -a evolve_cmds
+                    evolve_cmds=(
+                        'intent:Extract code intent'
+                        'gaps:Identify missing features'
+                        'path:Get evolution path'
+                        'help:Show help'
+                    )
+                    _describe 'evolve command' evolve_cmds
                     ;;
                 env)
                     local -a env_cmds

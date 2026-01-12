@@ -1,0 +1,598 @@
+name: claude-code
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Claude Code is a first-class citizen in Daedalos, not an afterthought.
+
+  This spec documents how Claude Code integrates with Daedalos through
+  CLAUDE.md files, hooks, skills, settings, and the daedalos-mcp server.
+  Every piece works together to make Claude Code understand and use
+  Daedalos tools natively.
+
+  The key insight: Claude Code has extension points (CLAUDE.md, hooks,
+  skills, MCP) that we leverage to enforce Daedalos patterns automatically.
+  A developer using Claude Code in Daedalos doesn't need to remember to
+  use `undo checkpoint` - the system does it for them.
+
+  Three integration layers:
+  1. CLAUDE.md - Project instructions Claude reads on startup
+  2. Hooks - Code that runs before/after Claude actions
+  3. MCP - Native tool access without shell wrapping
+
+  Together, these make Daedalos tools feel built-in to Claude Code.
+
+constraints:
+  - Works without MCP (hooks and CLAUDE.md still function)
+  - Non-blocking hooks (never slow down Claude's response)
+  - Graceful degradation (missing tools don't crash hooks)
+  - No hardcoded paths (works on NixOS, macOS, any system)
+  - Respects user autonomy (hooks inform, don't override decisions)
+  - Zero configuration (works out of the box after installation)
+
+components:
+  claude_md:
+    location: ".claude/CLAUDE.md"
+    purpose: "Project instructions Claude reads at session start"
+    structure:
+      - section: "Project Overview"
+        content: "What the project is, key philosophy"
+      - section: "Hard Constraints"
+        content: "Non-negotiable rules (FOSS only, agent agnostic, loops as primitive)"
+      - section: "Architecture"
+        content: "Tool directory structure with brief descriptions"
+      - section: "Tool Philosophy"
+        content: "Table of WHY each core tool exists"
+      - section: "Locked Decisions"
+        content: "Choices that won't change (NixOS, Btrfs, paths)"
+      - section: "Autonomy"
+        content: "How much freedom Claude has to act without asking"
+
+    patterns:
+      behavioral_rules: |
+        # Daedalos Tools - Behavioral Rules
+
+        These tell Claude WHEN to use each tool:
+        - "Always use loop for iterative work"
+        - "Always use undo checkpoint before risky changes"
+        - "Always use verify before declaring work complete"
+        - "Use codex search to find relevant code"
+        - "Use error-db match when you hit an error"
+        - "Use project info to understand a codebase"
+
+        Each rule has:
+        - Trigger: What prompts tool use
+        - Anti-pattern: What NOT to do instead
+        - Quick reference: Command cheat sheet
+
+      autonomy_spectrum: |
+        CLAUDE.md can grant different autonomy levels:
+        - Selection: "Just pick something and start"
+        - Chaining: "After completing work, pick the next thing"
+        - Proactive fixes: "Fix broken things without asking"
+        - Scope expansion: "Do the bigger refactor if needed"
+        - Opinions: "Have preferences, push back"
+        - Judgment calls: "Make reversible decisions"
+        - Default: Act - "When in doubt, do something"
+
+  hooks:
+    location: ".claude/hooks/"
+    purpose: "Scripts that run before/after Claude tool calls"
+
+    types:
+      PreToolUse:
+        description: "Runs BEFORE Claude executes a tool"
+        use_cases:
+          - "Check gates for sensitive operations"
+          - "Block dangerous commands"
+          - "Validate file paths"
+        matcher: "Edit|Write|NotebookEdit|Bash"
+
+      PostToolUse:
+        description: "Runs AFTER Claude executes a tool"
+        use_cases:
+          - "Log actions to journal"
+          - "Track file changes for undo"
+          - "Notify on completion"
+        matcher: "Edit|Write|NotebookEdit|Bash|Task"
+
+      SessionStart:
+        description: "Runs when Claude Code session begins"
+        use_cases:
+          - "Create automatic checkpoint"
+          - "Log session start"
+          - "Initialize agent registration"
+
+    implemented_hooks:
+      daedalos-gates.sh:
+        trigger: "PreToolUse on Edit|Write|NotebookEdit|Bash"
+        purpose: "Check Daedalos gates before sensitive actions"
+        checks:
+          - gate: "sensitive_file"
+            condition: "File matches *.env*, *secret*, *credential*, *.key"
+          - gate: "file_modify"
+            condition: "Any file modification"
+          - gate: "git_push"
+            condition: "Command contains 'git push'"
+          - gate: "git_force_push"
+            condition: "Command contains '--force' or '-f'"
+          - gate: "file_delete"
+            condition: "Command contains 'rm -rf' or 'rm -r'"
+        behavior: |
+          Exit 0 = Allow action
+          Exit 1 = Block action with message
+
+      daedalos-journal.sh:
+        trigger: "PostToolUse on Edit|Write|NotebookEdit|Bash|Task"
+        purpose: "Log Claude actions to journal for visibility"
+        logs:
+          - type: "file_change"
+            when: "Edit|Write|NotebookEdit"
+            content: "Claude edited: <file path>"
+          - type: "shell"
+            when: "Bash"
+            content: "Claude ran: <command (first 100 chars)>"
+          - type: "agent"
+            when: "Task"
+            content: "Claude spawned agent: <description>"
+
+      daedalos-session-start.sh:
+        trigger: "SessionStart"
+        purpose: "Create checkpoint and log session"
+        actions:
+          - "undo checkpoint 'claude-session-TIMESTAMP'"
+          - "journal log 'Claude Code session started'"
+
+      daedalos-undo.sh:
+        trigger: "PostToolUse on Edit|Write|NotebookEdit"
+        purpose: "Record file changes for undo timeline"
+        behavior: |
+          Only tracks successful file operations.
+          The undo daemon handles actual tracking via inotify.
+          This hook provides attribution (changed by Claude).
+
+    hook_design_principles:
+      - principle: "Fail open"
+        explanation: "If tool not found (gates, journal), exit 0 and continue"
+      - principle: "Non-blocking"
+        explanation: "Quick operations only, no network calls"
+      - principle: "Quiet on success"
+        explanation: "Only output on failure/block"
+      - principle: "JSON input"
+        explanation: "Hooks receive structured data via stdin"
+
+  skills:
+    location: ".claude/skills/"
+    purpose: "Claude skills for common Daedalos workflows"
+    format: "Markdown with YAML frontmatter"
+
+    implemented_skills:
+      daedalos-loop:
+        description: "Use when implementing features, fixing bugs, or any iterative task"
+        teaches:
+          - "When to use loop primitive"
+          - "Checkpoint before loop"
+          - "Loop templates (tdd, bugfix, refactor, feature)"
+          - "Promise command patterns"
+          - "Loop control (pause, resume, inject, cancel)"
+        red_flags:
+          - "'I'll just fix this manually' - Use the loop"
+          - "'Tests are passing, I'm done' - Run verify"
+          - "'I don't need a checkpoint' - Always checkpoint"
+
+      daedalos-verify:
+        description: "Use BEFORE claiming work is done"
+        teaches:
+          - "Evidence before assertions"
+          - "verify vs verify --quick"
+          - "Correct response pattern (include output)"
+          - "Pre-commit verification"
+        red_flags:
+          - "'It should work' - Verify, don't guess"
+          - "'I just ran it' - Run again"
+          - "'Only changed one line' - Still verify"
+
+      daedalos-tdd:
+        description: "Use when implementing ANY feature"
+        teaches:
+          - "RED-GREEN-REFACTOR cycle"
+          - "Write test FIRST"
+          - "TDD template workflow"
+          - "Test quality checklist"
+        red_flags:
+          - "'I'll write tests after' - Tests first are stronger"
+          - "'This is too simple to test' - Test it now"
+
+      daedalos-debug:
+        description: "Use when encountering bugs, errors, unexpected behavior"
+        teaches:
+          - "Check error-db first"
+          - "Reproduce reliably"
+          - "Isolate to smallest case"
+          - "Form and test hypotheses"
+          - "Fix with loop"
+          - "Add to error-db"
+        red_flags:
+          - "'I think I know what's wrong' - Reproduce first"
+          - "'Let me try this quick fix' - Understand first"
+
+      daedalos-agents:
+        description: "Use when task benefits from multiple specialized agents"
+        teaches:
+          - "Agent templates (explorer, implementer, reviewer, etc.)"
+          - "Workflow commands (feature, tdd, review, bugfix)"
+          - "Coordination primitives (signals, locks, claims)"
+        red_flags:
+          - "'I'll do everything myself' - Specialized agents catch more"
+          - "'I'll coordinate manually' - Use workflows"
+
+      daedalos-supervision:
+        description: "Use when working with varying oversight levels"
+        teaches:
+          - "Five supervision levels"
+          - "Gate checking before actions"
+          - "Sensitive path handling"
+          - "Observability tools"
+        red_flags:
+          - "'It's fine, I know what I'm doing' - Check gates anyway"
+          - "'This is just a small change' - Sensitive files still need approval"
+
+    skill_structure:
+      frontmatter:
+        name: "skill-name"
+        description: "When to invoke this skill"
+      content:
+        - overview: "What the skill is about"
+        - workflow: "Graphviz diagram of the flow"
+        - step_by_step: "Detailed instructions"
+        - commands: "Command reference"
+        - red_flags: "Patterns that indicate wrong approach"
+        - examples: "Concrete usage scenarios"
+        - philosophy: "Why this matters"
+
+  settings:
+    location: ".claude/settings.json"
+    purpose: "Claude Code configuration including hook registration"
+
+    structure:
+      hooks:
+        PreToolUse:
+          - matcher: "Tool name pattern (regex)"
+            hooks:
+              - type: "command"
+                command: "Path to hook script"
+        PostToolUse:
+          - matcher: "Tool name pattern (regex)"
+            hooks:
+              - type: "command"
+                command: "Path to hook script"
+        SessionStart:
+          - hooks:
+              - type: "command"
+                command: "Path to hook script"
+
+    key_settings:
+      - setting: "hooks.PreToolUse"
+        value: "daedalos-gates.sh on Edit|Write|NotebookEdit|Bash"
+        why: "Check supervision gates before modifications"
+      - setting: "hooks.PostToolUse"
+        value: "daedalos-journal.sh on Edit|Write|NotebookEdit|Bash|Task"
+        why: "Log all significant actions for visibility"
+      - setting: "hooks.PostToolUse"
+        value: "daedalos-undo.sh on Edit|Write|NotebookEdit"
+        why: "Track file changes for undo system"
+      - setting: "hooks.SessionStart"
+        value: "daedalos-session-start.sh"
+        why: "Checkpoint and log on session start"
+
+  mcp_integration:
+    server: "daedalos-mcp"
+    purpose: "Native tool access without shell wrapping"
+
+    advantages_over_bash:
+      - "Structured input/output (JSON, not text parsing)"
+      - "Proper error types (not exit codes)"
+      - "Schema validation"
+      - "Resource subscriptions for real-time updates"
+      - "Tool discovery with documentation"
+
+    exposed_tools:
+      loop: ["loop_start", "loop_status", "loop_stop"]
+      verify: ["verify"]
+      undo: ["undo_checkpoint", "undo_last", "undo_timeline", "undo_restore"]
+      project: ["project_info", "project_symbols", "project_tree"]
+      codex: ["codex_search", "codex_index"]
+      context: ["context_estimate", "context_breakdown"]
+      error-db: ["error_match", "error_add"]
+      scratch: ["scratch_new", "scratch_list", "scratch_destroy"]
+      agent: ["agent_spawn", "agent_list", "agent_focus", "agent_kill",
+              "agent_send", "agent_inbox", "agent_broadcast",
+              "agent_signal_*", "agent_lock_*", "agent_claim_*"]
+      workflow: ["workflow_list", "workflow_start", "workflow_status", "workflow_stop"]
+      mcp-hub: ["mcp_hub_status", "mcp_hub_warm", "mcp_hub_list",
+                "mcp_hub_restart", "mcp_hub_logs", "mcp_hub_call"]
+      lsp-pool: ["lsp_pool_status", "lsp_pool_warm", "lsp_pool_cool",
+                 "lsp_pool_list", "lsp_pool_query", "lsp_pool_languages"]
+      sandbox: ["sandbox_create", "sandbox_list", "sandbox_enter",
+                "sandbox_diff", "sandbox_promote", "sandbox_discard"]
+      gates: ["gates_check", "gates_level", "gates_set", "gates_config"]
+      spec: ["spec_show", "spec_query", "spec_list", "spec_context"]
+      journal: ["journal_what", "journal_events", "journal_summary", "journal_log"]
+
+    resources:
+      inbox:
+        uri: "daedalos://inbox"
+        purpose: "Agent messages with real-time subscriptions"
+        subscribable: true
+      agents:
+        uri: "daedalos://agents"
+        purpose: "Active agents list"
+
+    configuration:
+      file: "~/.claude/claude_desktop_config.json"
+      entry: |
+        {
+          "mcpServers": {
+            "daedalos": {
+              "command": "daedalos-mcp",
+              "args": []
+            }
+          }
+        }
+
+examples:
+  - scenario: "Claude starts working on a bug fix"
+    flow:
+      - step: "Session starts"
+        hook: "daedalos-session-start.sh creates checkpoint"
+        result: "Safety net in place before any work"
+      - step: "Claude reads CLAUDE.md"
+        content: "Behavioral rules loaded into context"
+        result: "Claude knows to use loop, verify, error-db"
+      - step: "Claude searches for bug"
+        tool: "codex_search via MCP"
+        result: "Structured search results, not grep output"
+      - step: "Claude starts fixing"
+        hook: "daedalos-gates.sh checks file_modify"
+        result: "Allowed (or blocked if supervision denies)"
+      - step: "Claude modifies files"
+        hook: "daedalos-journal.sh logs changes"
+        result: "Full audit trail of what was touched"
+      - step: "Claude runs verify"
+        tool: "verify via MCP"
+        result: "Structured pass/fail, not text parsing"
+    why_it_matters: |
+      Every step is instrumented. Session checkpointed, actions logged,
+      gates checked, tools accessed natively. This happens automatically
+      without Claude needing to remember any of it.
+
+  - scenario: "Claude spawns helper agent"
+    flow:
+      - step: "Claude needs parallel exploration"
+        invokes: "daedalos-agents skill"
+        result: "Skill teaches agent templates and coordination"
+      - step: "Claude spawns explorer"
+        tool: "agent_spawn via MCP"
+        result: "Structured agent ID, not parsed output"
+      - step: "Agents communicate"
+        tool: "agent_send, agent_inbox via MCP"
+        resource: "Subscribe to daedalos://inbox for real-time updates"
+      - step: "Claude waits for completion"
+        tool: "agent_signal_wait via MCP"
+        result: "Proper blocking wait, not polling"
+    why_it_matters: |
+      Multi-agent coordination through native API. Claude can spawn,
+      communicate, and coordinate without shell command parsing.
+
+  - scenario: "Claude encounters unknown error"
+    flow:
+      - step: "Test fails with error"
+        invokes: "daedalos-debug skill"
+        result: "Skill guides systematic debugging"
+      - step: "Check error database"
+        tool: "error_match via MCP"
+        result: "Known solution or null"
+      - step: "If unknown, diagnose and fix"
+        tools: ["undo checkpoint", "loop start", "verify"]
+        result: "Systematic fix with iteration"
+      - step: "Add to error database"
+        tool: "error_add via MCP"
+        result: "Future sessions benefit"
+    why_it_matters: |
+      Error knowledge accumulates. Each debug session adds to the
+      database, making future debugging faster.
+
+decisions:
+  - choice: "Hooks for enforcement, skills for education"
+    why: |
+      Hooks run automatically - gates check, journal log, undo track.
+      Claude doesn't choose to run them; they just happen.
+
+      Skills are knowledge that Claude applies. They teach patterns
+      like TDD, debugging workflow, multi-agent coordination.
+
+      This separation is intentional:
+      - Enforcement shouldn't depend on Claude remembering
+      - Education gives Claude context to make good choices
+    alternatives:
+      - option: "All logic in CLAUDE.md instructions"
+        rejected_because: "Claude might forget or ignore instructions"
+      - option: "All logic in hooks"
+        rejected_because: "Hooks can't teach, only block or log"
+
+  - choice: "MCP as native interface, Bash as fallback"
+    why: |
+      When daedalos-mcp is configured, Claude should use MCP tools.
+      Structured data, proper errors, subscriptions - all better than Bash.
+
+      But Bash remains available. Some operations need shell.
+      MCP tools call CLI tools under the hood anyway.
+
+      The goal is seamless, not exclusive.
+    alternatives:
+      - option: "MCP only, no Bash allowed"
+        rejected_because: "Too restrictive, some operations need shell"
+      - option: "Bash only, no MCP"
+        rejected_because: "Loses structured data, subscriptions, proper errors"
+
+  - choice: "Per-project hooks and skills in .claude/"
+    why: |
+      Different projects have different needs:
+      - Library project: Stricter gates on public API changes
+      - Personal project: Full autonomy
+      - Production: Approval required for deployments
+
+      Project-level configuration enables project-appropriate behavior.
+      Global ~/.claude/ provides defaults, .claude/ overrides.
+    alternatives:
+      - option: "Global hooks only"
+        rejected_because: "One size doesn't fit all projects"
+      - option: "No project-level configuration"
+        rejected_because: "Can't adapt behavior to project needs"
+
+  - choice: "Skills as markdown with YAML frontmatter"
+    why: |
+      Markdown is readable by humans AND Claude.
+      YAML frontmatter provides machine-parseable metadata.
+
+      Skills aren't code - they're knowledge transfer.
+      Markdown is the right format for knowledge.
+    alternatives:
+      - option: "Skills as JSON schemas"
+        rejected_because: "Hard to read, poor for narrative knowledge"
+      - option: "Skills as code"
+        rejected_because: "Skills teach, they don't execute"
+
+  - choice: "Hook input as JSON via stdin"
+    why: |
+      Claude Code provides hook input as JSON:
+      - hook_type, tool_name, tool_input, tool_output, session_id
+
+      Hooks parse this with jq to extract needed fields.
+      Structured input enables precise decision-making.
+    alternatives:
+      - option: "Command-line arguments"
+        rejected_because: "Complex data (file content) doesn't fit in args"
+      - option: "Environment variables"
+        rejected_because: "Too fragile, shell escaping issues"
+
+anti_patterns:
+  - pattern: "Blocking hooks with network calls"
+    why_bad: |
+      Hooks run on every tool call. Slow hooks = slow Claude.
+      Never make network requests, external API calls, or complex
+      computations in hooks.
+
+      If you need remote checks, use a local daemon with cached state.
+
+  - pattern: "Hooks that override Claude's decisions"
+    why_bad: |
+      Hooks should check and log, not control.
+
+      gates can BLOCK dangerous actions, but shouldn't change
+      Claude's intended behavior. Claude decided to edit file X;
+      hooks shouldn't silently redirect to file Y.
+
+  - pattern: "Duplicating MCP tool logic in hooks"
+    why_bad: |
+      MCP tools have the business logic. Hooks are thin wrappers.
+
+      Don't implement verification logic in a hook - call the
+      verify tool. Don't implement checkpoint logic - call undo.
+
+      Hooks orchestrate, tools execute.
+
+  - pattern: "Skills that give commands without explaining why"
+    why_bad: |
+      "Run `verify`" is less useful than "Run `verify` because
+      evidence before assertions prevents false confidence."
+
+      Skills educate. Claude should understand WHY, not just WHAT.
+
+  - pattern: "CLAUDE.md with every possible instruction"
+    why_bad: |
+      Context window is limited. CLAUDE.md should be focused.
+
+      Put behavioral rules (always use loop), not encyclopedic
+      documentation. Link to specs for detailed knowledge.
+
+  - pattern: "Ignoring hook failures"
+    why_bad: |
+      If daedalos-gates.sh returns exit 1, the action should be
+      blocked. Ignoring hook exit codes defeats the purpose.
+
+      Claude Code respects hook exit codes - ensure hooks use
+      them correctly.
+
+  - pattern: "MCP tools that don't expose CLI equivalents"
+    why_bad: |
+      Every MCP tool calls a CLI tool. This enables:
+      - Bash fallback when MCP not available
+      - Human usage of the same tools
+      - Debugging by running CLI directly
+
+      MCP is an interface, not a silo.
+
+connects_to:
+  - component: daedalos-mcp
+    relationship: |
+      daedalos-mcp is the MCP server that exposes all Daedalos tools.
+      This spec documents the CLIENT side (Claude Code configuration).
+      daedalos-mcp.spec.yaml documents the SERVER side.
+
+  - component: gates
+    relationship: |
+      The daedalos-gates.sh hook calls gates check for supervision.
+      Supervision levels and gate actions are configured in gates.
+      This spec documents how hooks invoke gates.
+
+  - component: journal
+    relationship: |
+      The daedalos-journal.sh hook calls journal log for activity logging.
+      Journal stores the events; this spec documents how hooks emit them.
+
+  - component: undo
+    relationship: |
+      - daedalos-session-start.sh creates checkpoints
+      - daedalos-undo.sh tracks file changes
+      - Skills teach checkpoint discipline
+
+      Undo is deeply integrated into the Claude Code experience.
+
+  - component: loop
+    relationship: |
+      Skills teach when and how to use loops.
+      CLAUDE.md behavioral rules say "always use loop for iterative work."
+      MCP provides loop_start, loop_status, loop_stop tools.
+
+  - component: verify
+    relationship: |
+      Skills teach "evidence before assertions."
+      CLAUDE.md says "always use verify before declaring work complete."
+      Hooks don't auto-verify (that would slow things down), but
+      skills strongly encourage the pattern.
+
+  - component: spec
+    relationship: |
+      Skills can reference specs for detailed knowledge.
+      MCP exposes spec_show, spec_query for Claude to read specs.
+      This enables spec-aware development.
+
+metrics:
+  success_criteria:
+    - "Claude uses Daedalos tools without explicit prompting"
+    - "Hooks never add >100ms latency to tool calls"
+    - "Skills are invoked appropriately for relevant tasks"
+    - "MCP tools preferred over Bash equivalents"
+    - "Session checkpoints exist for all Claude sessions"
+    - "Journal contains complete audit trail of Claude actions"
+    - "Gates block sensitive operations when supervision requires"
+
+  failure_indicators:
+    - "Claude forgets to checkpoint before risky changes"
+    - "Hooks slow down Claude's workflow noticeably"
+    - "Claude uses Bash for tools available via MCP"
+    - "Journal is incomplete or missing entries"
+    - "Skills not invoked when they should be"
+    - "CLAUDE.md so large it consumes too much context"
+    - "Hooks crash and break Claude's tool usage"

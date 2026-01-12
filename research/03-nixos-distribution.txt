@@ -1,0 +1,275 @@
+================================================================================
+                    DAEDALOS DEVELOPMENT LOG
+                    03 - NIXOS DISTRIBUTION
+================================================================================
+
+================================================================================
+SESSION: 2026-01-09 - NixOS Flake & Packaging
+================================================================================
+
+Created NixOS flake for reproducible builds.
+
+NIXOS FLAKE:
+------------
+
+Created flake.nix with:
+
+1. Individual package derivations for all 12 tools
+2. Combined `daedalos` package (symlinkJoin)
+3. Development shell with all tools
+4. NixOS module for system integration
+
+Usage:
+  nix develop            # Dev shell with all tools
+  nix build .#loop       # Build individual tool
+  nix build              # Build all tools
+
+NixOS module options:
+  services.daedalos.enable = true
+  services.daedalos.defaultAgent = "opencode"
+  services.daedalos.enableDaemons = true
+
+FILES CREATED:
+  flake.nix              # Main flake definition
+  nix/README.txt         # NixOS integration docs
+
+================================================================================
+SESSION: 2026-01-09 - Phase 3: Full NixOS Distribution
+================================================================================
+
+Built a complete NixOS distribution with Hyprland, custom tooling integration,
+and installation infrastructure. This is now a bootable OS!
+
+NIXOS DISTRIBUTION STRUCTURE:
+-----------------------------
+
+nixos/
+├── configuration.nix           # Base system config
+├── flake.nix                   # NixOS-specific flake
+├── modules/
+│   ├── daedalos.nix           # Core Daedalos integration
+│   ├── hyprland.nix           # Hyprland WM config
+│   └── development.nix        # Development environment
+├── iso/
+│   └── default.nix            # Live ISO builder
+└── configs/
+    └── installer.sh           # Interactive installation wizard
+
+SYSTEM CONFIGURATIONS:
+----------------------
+
+1. daedalos (x86_64-linux)
+   - Full desktop with Hyprland
+   - All Daedalos tools
+   - Development environment
+
+2. daedalos-arm (aarch64-linux)
+   - ARM64 variant (Apple Silicon VMs, Pi, etc.)
+
+3. daedalos-iso (bootable live)
+   - Calamares graphical installer
+   - Try-before-install experience
+   - Auto-login for live session
+
+4. daedalos-server (headless)
+   - No GUI
+   - Development tools only
+   - SSH enabled
+
+HYPRLAND INTEGRATION:
+---------------------
+
+Custom keybindings for Daedalos workflow:
+  Super + Enter       -> Terminal (kitty)
+  Super + L           -> Loop dashboard (kitty loop watch)
+  Super + A           -> Agent switcher (kitty agent list)
+  Super + S           -> Semantic search (kitty codex search)
+  Super + U           -> Undo timeline (kitty undo timeline)
+  Super + 1-9         -> Focus agent by slot number
+  Super + Shift + S   -> Take screenshot to ~/Screenshots/
+
+Window rules:
+  - float: loop-dashboard, agent-switcher, codex-search
+  - center: daedalos-* windows
+  - workspace 10: scratchpad terminal
+
+WAYBAR STATUS BAR:
+------------------
+
+Left:   [Workspaces] [Loop Status]
+Center: [Active Agents with status indicators]
+Right:  [Context %] [Verify Status] [Audio] [Network] [Clock]
+
+Agent status indicators:
+  Green Active    Blue Thinking    Yellow Waiting    Red Attention
+
+SYSTEMD USER SERVICES:
+----------------------
+
+  loopd      - Loop daemon (manages active loops)
+  undod      - Undo daemon (tracks file changes)
+  projectd   - Project intelligence daemon
+
+DEVELOPMENT ENVIRONMENT:
+------------------------
+
+Language Servers (LSP Pool):
+  - typescript-language-server (JS/TS)
+  - rust-analyzer (Rust)
+  - gopls (Go)
+  - pyright (Python)
+  - lua-language-server
+  - nil (Nix)
+  - clang-tools (C/C++)
+
+Compilers & Interpreters:
+  - GCC, Clang
+  - Python 3.12 + pip + virtualenv
+  - Node.js 22 + yarn + pnpm
+  - Rust (rustc, cargo)
+  - Go
+
+Linters & Formatters:
+  - ESLint, Prettier (JS/TS)
+  - Ruff (Python - replaces flake8, isort, etc.)
+  - Rustfmt, Clippy (Rust)
+  - golangci-lint (Go)
+  - ShellCheck, shfmt (Bash)
+  - nixpkgs-fmt (Nix)
+
+Services:
+  - PostgreSQL 16 (local trust auth)
+  - Redis (port 6379)
+  - Docker + Podman
+
+SHELL CONFIGURATION:
+--------------------
+
+Starship prompt with:
+  - Git branch/status
+  - Language indicators (Python, Node, Rust, Go)
+  - Command duration
+
+Zsh aliases for all Daedalos tools:
+  l   -> loop          ls  -> loop status
+  v   -> verify        vq  -> verify --quick
+  u   -> undo          ut  -> undo timeline
+  p   -> project       ps  -> project summary
+  c   -> codex         cs  -> codex search
+  a   -> agent         al  -> agent list
+
+INSTALLATION WIZARD:
+--------------------
+
+Interactive bash installer (installer.sh):
+1. Detects available disks
+2. Creates GPT partition table
+   - 512MB EFI partition (FAT32)
+   - Rest as root (Btrfs)
+3. Creates Btrfs subvolumes:
+   - @           (root)
+   - @home       (/home)
+   - @nix        (/nix store)
+   - @snapshots  (/.snapshots)
+4. Mounts with compress=zstd,noatime
+5. Generates NixOS configuration
+6. Downloads Daedalos modules
+7. Runs nixos-install
+
+THEME:
+------
+
+Tokyo Night color scheme throughout:
+  - Terminal (Kitty)
+  - Status bar (Waybar)
+  - Notifications (Mako)
+  - Window decorations
+
+BUILDING:
+---------
+
+  # Build live ISO
+  nix build ./nixos#iso
+
+  # Build VM for testing
+  nix build ./nixos#vm
+  ./result/bin/run-daedalos-vm
+
+  # Build for specific config
+  nix build .#nixosConfigurations.daedalos.config.system.build.toplevel
+
+WHAT THIS MEANS:
+----------------
+
+Daedalos is now a complete operating system:
+
+1. BOOTABLE - Can create live ISO, install to disk
+2. OPINIONATED - Pre-configured for AI-assisted development
+3. INTEGRATED - All tools work together out of the box
+4. BEAUTIFUL - Consistent Tokyo Night aesthetic
+5. FUNCTIONAL - Every keybinding serves the development workflow
+
+The tagline was always "BY AI, FOR AI Development"
+Now we have an actual OS to prove it.
+
+================================================================================
+SESSION: 2026-01-10 - Phase 3 Prep: Nix + CI + Docs
+================================================================================
+
+Updated flake.nix, added CI, wrote getting started guide.
+
+FLAKE.NIX UPDATES:
+------------------
+
+Added all 16 missing tools to the Nix flake (was only 13, now 29):
+
+Human-Focused Tools (13):
+  - env        Project environment switching
+  - notify     Desktop notifications (libnotify)
+  - session    Terminal session management (tmux)
+  - secrets    Local secrets vault (age encryption)
+  - pair       Pair programming (tmux/tmate)
+  - handoff    Context summaries for handoffs
+  - review     Human code review workflow
+  - focus      Pomodoro timer
+  - metrics    Productivity statistics
+  - template   Project scaffolding
+  - container  Docker/Podman management
+  - remote     SSH and remote development (rsync)
+  - backup     Project backup (age encryption)
+
+Supervision Tools (3):
+  - observe    Watch mode TUI (Python/Textual)
+  - gates      Permission gates (Python)
+  - journal    Activity logging (sqlite)
+
+All tools now have proper dependencies:
+  - age for secrets/backup encryption
+  - libnotify for Linux notifications
+  - tmux/tmate for pair/session
+  - fzf for interactive menus
+  - openssh/rsync for remote
+  - docker/podman for container
+  - sqlite for journal
+
+GITHUB ACTIONS CI:
+------------------
+
+Created .github/workflows/ci.yml with three jobs:
+
+1. build:
+   - Checks flake validity (nix flake check)
+   - Builds all packages (nix build .#daedalos)
+   - Tests all tool --help commands work
+   - Uses cachix for binary caching
+
+2. shellcheck:
+   - Lints all bash scripts
+   - Catches common shell issues
+
+3. format:
+   - Checks Nix formatting (nixfmt)
+
+Cachix integration for faster CI builds.
+
+================================================================================

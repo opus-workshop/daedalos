@@ -1,0 +1,298 @@
+================================================================================
+                    DAEDALOS DEVELOPMENT LOG
+                    08 - CLAUDE CODE INTEGRATION
+================================================================================
+
+================================================================================
+SESSION: 2026-01-10 - Claude Code Skills & Hooks
+================================================================================
+
+Built specialized Claude Code skills and hooks for Daedalos integration.
+
+SKILLS CREATED:
+---------------
+
+.claude/skills/daedalos-loop.md
+  - When to use loops for iterate-until-done workflows
+  - Safety checkpoints before work
+  - Loop templates (tdd, bugfix, refactor, feature)
+  - Promise commands for verification
+  - Integration with undo and verify
+
+.claude/skills/daedalos-tdd.md
+  - RED-GREEN-REFACTOR cycle
+  - Write tests FIRST, then implement
+  - Phase-by-phase guidance
+  - Example workflow with email validation
+  - Anti-patterns to avoid
+
+.claude/skills/daedalos-verify.md
+  - Evidence before assertions
+  - Run verify before claiming success
+  - Correct response patterns (show evidence)
+  - Integration with loops and commits
+
+.claude/skills/daedalos-debug.md
+  - Systematic bug investigation
+  - Check error-db first
+  - Reproduce, isolate, hypothesize, test
+  - Integration with codex, project, undo
+
+.claude/skills/daedalos-agents.md
+  - Multi-agent orchestration
+  - Agent templates (explorer, implementer, reviewer, etc.)
+  - Workflow commands (feature, tdd, review, refactor)
+  - Coordination primitives (signals, locks, claims)
+
+.claude/skills/daedalos-supervision.md
+  - Supervision levels (autonomous -> manual)
+  - Gate actions (allow, notify, approve, deny)
+  - Checking gates before actions
+  - Using observe/journal for visibility
+
+HOOKS CREATED:
+--------------
+
+.claude/hooks/daedalos-gates.sh
+  - PreToolUse hook
+  - Checks gates before file edits and bash commands
+  - Blocks sensitive file modifications without approval
+  - Blocks git push/force-push based on supervision level
+
+.claude/hooks/daedalos-journal.sh
+  - PostToolUse hook
+  - Logs significant actions to Daedalos journal
+  - Records file edits, bash commands, agent spawns
+
+.claude/hooks/daedalos-undo.sh
+  - PostToolUse hook
+  - Records file changes for undo timeline
+  - Works with undo daemon for file-level rollback
+
+.claude/hooks/daedalos-session-start.sh
+  - SessionStart hook
+  - Creates automatic undo checkpoint at session start
+  - Logs session start to journal
+
+SETTINGS.JSON:
+--------------
+
+Configured hooks in .claude/settings.json:
+  - PreToolUse: gates check for Edit/Write/Bash
+  - PostToolUse: journal + undo for file operations
+  - SessionStart: automatic checkpoint creation
+
+ARCHITECTURE:
+-------------
+
+The hooks integrate Claude Code with Daedalos:
+
+  Claude Code               Daedalos
+  ----------                --------
+  PreToolUse  ---------------> gates (check permissions)
+  PostToolUse ---------------> journal (log activity)
+  PostToolUse ---------------> undo (track changes)
+  SessionStart --------------> undo (create checkpoint)
+
+This means:
+  - All Claude actions are logged to journal
+  - All file changes are tracked in undo timeline
+  - Supervision levels are enforced via gates
+  - Every session starts with a checkpoint
+
+================================================================================
+SESSION: 2026-01-10 - MCP Hub Polish
+================================================================================
+
+Comprehensive polish pass on the MCP Hub server management system. Added health
+monitoring, server management commands, and expanded the server registry.
+
+HEALTH MONITORING:
+------------------
+
+Daemon now includes continuous health monitoring:
+  - Periodic health checks every 30 seconds
+  - Detects unresponsive servers (3 failures = unhealthy)
+  - Automatic restart on failure (up to 3 attempts)
+  - Stderr log collection for debugging
+
+Server Process tracking now includes:
+  - health_failures: Count of consecutive health check failures
+  - restart_count: Number of automatic restarts
+  - last_health_check: Timestamp of last check
+  - stderr_log: Rolling buffer of last 100 stderr lines
+
+NEW COMMANDS:
+-------------
+
+Server Management:
+  mcp-hub warm <servers...>     Pre-start servers for fast response
+  mcp-hub restart <server>      Restart a running server
+  mcp-hub logs <server> [-n N]  View server stderr logs
+  mcp-hub reload                Reload config without restart
+
+Authentication:
+  mcp-hub auth <server>         Show auth requirements
+  mcp-hub auth <server> --token Set auth token in config
+
+PROJECT-LEVEL CONFIG:
+---------------------
+
+MCP Hub now searches for .daedalos/mcp.yaml in the current project:
+  - Walks up from cwd to find project root
+  - Project config overrides system config
+  - Allows per-project server settings
+
+EXPANDED SERVER REGISTRY:
+-------------------------
+
+Added 8 new built-in servers (14 total):
+  - postgres:            PostgreSQL database operations
+  - puppeteer:           Browser automation and scraping
+  - slack:               Slack workspace operations
+  - google-drive:        Google Drive file operations
+  - google-maps:         Location and directions
+  - time:                Timezone operations
+  - sequential-thinking: Step-by-step reasoning
+  - git:                 Git repository operations
+
+Categories: core, data, browser, communication, storage, location, utility,
+            reasoning, development, search, network, integrations
+
+================================================================================
+SESSION: 2026-01-10 - LSP Pool Polish
+================================================================================
+
+Comprehensive polish pass on the LSP Pool health monitoring.
+
+WHAT WAS DONE:
+--------------
+
+1. LSP POOL HEALTH MONITORING
+
+   Added health check infrastructure to servers.py:
+   - ServerState fields: last_health_check, health_failures, restart_count, stderr_log
+   - check_health(): Send LSP alive request with timeout
+   - restart_server(): Restart unhealthy servers
+   - get_server_logs(): Retrieve stderr logs for debugging
+   - _collect_stderr(): Background stderr collection
+
+   Added health check loop to daemon.py:
+   - _health_check_loop(): 30s interval health checks
+   - _check_all_servers(): Check each server, collect stderr
+   - _handle_unhealthy(): Auto-restart up to 3 times
+
+2. NEW CLI COMMANDS
+
+   bin/lsp-pool additions:
+   - logs <lang:project>      Show server stderr logs
+   - restart <lang:project>   Restart a server
+   - languages                List supported languages
+   - detect <file>            Detect language for file
+
+3. DAEDALOS-MCP LSP POOL TOOLS
+
+   8 new MCP tools for Claude integration:
+   - lsp_pool_status    - Daemon status
+   - lsp_pool_warm      - Pre-warm server
+   - lsp_pool_cool      - Stop servers
+   - lsp_pool_list      - List running servers
+   - lsp_pool_query     - Send LSP query (hover, definition, references, completion)
+   - lsp_pool_languages - List supported languages
+   - lsp_pool_logs      - Get server logs
+   - lsp_pool_restart   - Restart a server
+
+SUPPORTED LANGUAGES (21 total):
+-------------------------------
+
+typescript, python, rust, go, c, cpp, java, kotlin, swift,
+lua, ruby, elixir, zig, ocaml, haskell, bash, yaml, json,
+html, css, dockerfile, nix
+
+================================================================================
+SESSION: 2026-01-10 - Unified Daedalos Command
+================================================================================
+
+Created a unified `daedalos` meta-command that wraps all tools.
+
+WHAT WAS BUILT:
+---------------
+
+daedalos-tools/daedalos/bin/daedalos - Single entry point for all tools
+
+Features:
+  - Beautiful ASCII art banner
+  - Categorized tool listing (Core, Safety, Intelligence, Infrastructure, Utility)
+  - Tool dispatch (daedalos loop ... -> loop ...)
+  - Meta-commands: help, tools, status, doctor, version
+  - Installation verification (doctor command)
+  - JSON output for tools listing
+
+Meta-commands:
+  daedalos help      Show comprehensive help with philosophy
+  daedalos tools     List all tools with installation status
+  daedalos status    Show daemon status (loop, mcp-hub, lsp-pool, undo)
+  daedalos doctor    Verify installation, check dependencies
+  daedalos version   Show version info
+
+Tool dispatch:
+  daedalos loop start "task" --promise "cmd"
+  daedalos verify --quick
+  daedalos agent spawn -n explorer
+
+================================================================================
+SESSION: 2026-01-11 - Kitty Terminal Integration
+================================================================================
+
+First session in kitty terminal! Set up Daedalos-specific configuration.
+
+FILES CREATED:
+--------------
+
+~/.config/kitty/daedalos.conf (~150 lines)
+  - Daedalos keybindings for all tools
+  - Tokyo Night color scheme (matches project aesthetic)
+  - Tab bar configuration
+  - Window settings optimized for development
+  - Remote control enabled for scripting
+
+~/.config/kitty/kittens/daedalos.py (~100 lines)
+  - Python kitten for tool launcher menu
+  - Quick access to all Daedalos tools
+  - Colorized menu output
+
+~/.config/kitty/tab_bar.py (~80 lines)
+  - Custom tab bar with agent status (experimental)
+  - Shows running/thinking/idle agent counts
+
+KEYBINDINGS:
+------------
+
+  ctrl+shift+l     Loop status
+  ctrl+shift+alt+l Observe TUI
+  ctrl+shift+a     Agent list
+  ctrl+shift+n     New agent (opens in new tab)
+  ctrl+shift+v     Verify (quick)
+  ctrl+shift+u     Undo timeline
+  ctrl+shift+p     Project info
+  ctrl+shift+s     Semantic search (codex)
+  ctrl+shift+j     Journal
+  ctrl+shift+g     Gates level
+  ctrl+shift+c     Context estimate
+  ctrl+shift+x     Scratch list
+  ctrl+shift+e     Error lookup
+  ctrl+shift+d     Daedalos status
+  ctrl+shift+?     Daedalos help
+  ctrl+shift+space Daedalos launcher menu
+
+TOKYO NIGHT COLORS:
+-------------------
+
+  Background:  #1a1b26 (dark blue-black)
+  Foreground:  #c0caf5 (soft blue-white)
+  Accent:      #7aa2f7 (blue)
+  Success:     #9ece6a (green)
+  Warning:     #e0af68 (orange)
+  Error:       #f7768e (pink-red)
+
+================================================================================

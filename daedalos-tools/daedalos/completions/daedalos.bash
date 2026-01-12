@@ -6,7 +6,7 @@ _daedalos() {
     _init_completion || return
 
     # All available tools and commands
-    local tools="loop verify undo sandbox project codex context error-db agent mcp-hub lsp-pool scratch"
+    local tools="loop verify undo sandbox project codex context error-db agent mcp-hub lsp-pool scratch spec resolve evolve"
     local human_tools="env notify session secrets pair handoff review focus metrics template container remote backup"
     local supervision="observe gates journal"
     local meta_cmds="status doctor tools version help"
@@ -76,6 +76,18 @@ _daedalos() {
             ;;
         journal)
             COMPREPLY=( $(compgen -W "what events summary log help" -- "$cur") )
+            return
+            ;;
+        spec)
+            COMPREPLY=( $(compgen -W "show query list context validate new help" -- "$cur") )
+            return
+            ;;
+        resolve)
+            COMPREPLY=( $(compgen -W "intent gather log help" -- "$cur") )
+            return
+            ;;
+        evolve)
+            COMPREPLY=( $(compgen -W "intent gaps path help" -- "$cur") )
             return
             ;;
         env)

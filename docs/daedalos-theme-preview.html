@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Daedalos Theme Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
+  <!-- Iosevka from CDN -->
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource/iosevka@5.0.4/index.min.css" rel="stylesheet">
+  <style>
+    :root {
+      /* Daedalos Theme - The Craftsman's Workshop */
+
+      /* Backgrounds - deep blue-black with warmth */
+      --bg-deep: #0f1114;
+      --bg-main: #151820;
+      --bg-surface: #1c2028;
+      --bg-elevated: #252a35;
+      --bg-selection: #2d3a4a;
+
+      /* Foregrounds - warm cream tones like aged parchment */
+      --fg-primary: #e8e0d4;
+      --fg-secondary: #a89f94;
+      --fg-muted: #6b6560;
+
+      /* Bronze/Amber - the craftsman's metal, warm lamplight */
+      --bronze: #d4a574;
+      --bronze-bright: #e8c49a;
+      --amber: #e5a84b;
+
+      /* Aegean Teal - Mediterranean depths */
+      --teal: #4a9a8c;
+      --teal-bright: #6bc4b4;
+      --teal-deep: #2d6b60;
+
+      /* Olive/Sage - Greek landscape */
+      --olive: #8a9a6b;
+      --sage: #a4b88a;
+
+      /* Oxidized Copper - aged metal patina */
+      --copper-green: #5a9a7a;
+      --copper-bright: #7abf9a;
+
+      /* Terracotta - warm earth, errors */
+      --terracotta: #c47a5a;
+      --terracotta-bright: #e89a7a;
+
+      /* Plum - subtle purple undertone */
+      --plum: #8a6a8a;
+      --plum-bright: #b48ab4;
+
+      /* Syntax colors mapped to base16 */
+      --syntax-comment: var(--fg-muted);
+      --syntax-string: var(--olive);
+      --syntax-keyword: var(--bronze);
+      --syntax-function: var(--teal-bright);
+      --syntax-type: var(--amber);
+      --syntax-number: var(--copper-bright);
+      --syntax-operator: var(--fg-secondary);
+      --syntax-variable: var(--fg-primary);
+      --syntax-constant: var(--terracotta-bright);
+      --syntax-tag: var(--bronze-bright);
+      --syntax-attribute: var(--plum-bright);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: var(--bg-deep);
+      color: var(--fg-primary);
+      font-family: 'Iosevka', monospace;
+      min-height: 100vh;
+      padding: 2rem;
+
+      /* Subtle noise texture */
+      background-image:
+        url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+      background-blend-mode: overlay;
+      background-size: 200px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    .header {
+      text-align: center;
+      margin-bottom: 3rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid var(--bg-elevated);
+    }
+
+    .logo {
+      font-family: 'Fraunces', serif;
+      font-size: 3.5rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      background: linear-gradient(135deg, var(--bronze-bright) 0%, var(--amber) 50%, var(--bronze) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.5rem;
+    }
+
+    .tagline {
+      font-size: 0.9rem;
+      color: var(--fg-muted);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    /* Color Palette Display */
+    .palette-section {
+      margin-bottom: 3rem;
+    }
+
+    .section-title {
+      font-family: 'Fraunces', serif;
+      font-size: 1.4rem;
+      color: var(--bronze);
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(to right, var(--bg-elevated), transparent);
+    }
+
+    .palette-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 1rem;
+    }
+
+    .color-swatch {
+      aspect-ratio: 1.2;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 0.75rem;
+      position: relative;
+      overflow: hidden;
+      box-shadow:
+        0 4px 12px rgba(0, 0, 0, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+
+    .color-swatch::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(to right, transparent, rgba(255,255,255,0.1), transparent);
+    }
+
+    .color-name {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 0.25rem;
+    }
+
+    .color-hex {
+      font-size: 0.65rem;
+      opacity: 0.7;
+    }
+
+    /* Terminal Preview */
+    .terminal {
+      background: var(--bg-main);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow:
+        0 25px 50px rgba(0, 0, 0, 0.5),
+        0 0 0 1px var(--bg-elevated);
+    }
+
+    .terminal-header {
+      background: var(--bg-surface);
+      padding: 0.75rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      border-bottom: 1px solid var(--bg-deep);
+    }
+
+    .terminal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .terminal-dot.red { background: var(--terracotta); }
+    .terminal-dot.yellow { background: var(--amber); }
+    .terminal-dot.green { background: var(--copper-green); }
+
+    .terminal-title {
+      margin-left: auto;
+      font-size: 0.75rem;
+      color: var(--fg-muted);
+    }
+
+    .terminal-body {
+      padding: 1.5rem;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    .terminal-line {
+      margin-bottom: 0.25rem;
+    }
+
+    .prompt {
+      color: var(--teal-bright);
+    }
+
+    .command {
+      color: var(--fg-primary);
+    }
+
+    .output {
+      color: var(--fg-secondary);
+    }
+
+    .success {
+      color: var(--copper-bright);
+    }
+
+    .warning {
+      color: var(--amber);
+    }
+
+    .error {
+      color: var(--terracotta-bright);
+    }
+
+    /* Code Preview */
+    .code-preview {
+      background: var(--bg-main);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-top: 2rem;
+      box-shadow:
+        0 25px 50px rgba(0, 0, 0, 0.5),
+        0 0 0 1px var(--bg-elevated);
+    }
+
+    .code-header {
+      background: var(--bg-surface);
+      padding: 0.75rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      border-bottom: 1px solid var(--bg-deep);
+    }
+
+    .file-tab {
+      font-size: 0.75rem;
+      color: var(--fg-secondary);
+      padding: 0.25rem 0.75rem;
+      background: var(--bg-main);
+      border-radius: 4px;
+    }
+
+    .file-tab.active {
+      color: var(--fg-primary);
+      background: var(--bg-elevated);
+    }
+
+    .code-body {
+      padding: 1.5rem;
+      font-size: 0.85rem;
+      line-height: 1.7;
+      overflow-x: auto;
+    }
+
+    .code-body pre {
+      font-family: 'Iosevka', monospace;
+    }
+
+    .line-number {
+      color: var(--fg-muted);
+      user-select: none;
+      margin-right: 1.5rem;
+      display: inline-block;
+      width: 2ch;
+      text-align: right;
+    }
+
+    /* Syntax highlighting classes */
+    .kw { color: var(--syntax-keyword); }
+    .fn { color: var(--syntax-function); }
+    .str { color: var(--syntax-string); }
+    .num { color: var(--syntax-number); }
+    .cmt { color: var(--syntax-comment); font-style: italic; }
+    .type { color: var(--syntax-type); }
+    .op { color: var(--syntax-operator); }
+    .const { color: var(--syntax-constant); }
+    .attr { color: var(--syntax-attribute); }
+    .tag { color: var(--syntax-tag); }
+
+    /* UI Components Preview */
+    .ui-preview {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    .ui-card {
+      background: var(--bg-surface);
+      border-radius: 12px;
+      padding: 1.5rem;
+      box-shadow:
+        0 4px 12px rgba(0, 0, 0, 0.2),
+        0 0 0 1px var(--bg-elevated);
+    }
+
+    .ui-card-title {
+      font-family: 'Fraunces', serif;
+      font-size: 1.1rem;
+      color: var(--fg-primary);
+      margin-bottom: 1rem;
+    }
+
+    .button {
+      display: inline-block;
+      padding: 0.5rem 1.25rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-right: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .button-primary {
+      background: linear-gradient(135deg, var(--bronze) 0%, var(--amber) 100%);
+      color: var(--bg-deep);
+    }
+
+    .button-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(212, 165, 116, 0.3);
+    }
+
+    .button-secondary {
+      background: var(--bg-elevated);
+      color: var(--fg-primary);
+      border: 1px solid var(--bg-selection);
+    }
+
+    .button-secondary:hover {
+      background: var(--bg-selection);
+    }
+
+    .button-teal {
+      background: linear-gradient(135deg, var(--teal-deep) 0%, var(--teal) 100%);
+      color: var(--fg-primary);
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 500;
+      margin-right: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .badge-success { background: var(--copper-green); color: var(--bg-deep); }
+    .badge-warning { background: var(--amber); color: var(--bg-deep); }
+    .badge-error { background: var(--terracotta); color: var(--fg-primary); }
+    .badge-info { background: var(--teal); color: var(--bg-deep); }
+
+    .input-field {
+      width: 100%;
+      padding: 0.6rem 1rem;
+      background: var(--bg-main);
+      border: 1px solid var(--bg-elevated);
+      border-radius: 6px;
+      color: var(--fg-primary);
+      font-family: 'Iosevka', monospace;
+      font-size: 0.85rem;
+      margin-bottom: 0.75rem;
+      transition: all 0.2s;
+    }
+
+    .input-field:focus {
+      outline: none;
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px rgba(74, 154, 140, 0.2);
+    }
+
+    .input-field::placeholder {
+      color: var(--fg-muted);
+    }
+
+    /* Labyrinth decorative element */
+    .labyrinth-border {
+      margin-top: 3rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--bg-elevated);
+      text-align: center;
+    }
+
+    .labyrinth-symbol {
+      font-size: 2rem;
+      color: var(--bronze);
+      opacity: 0.5;
+      letter-spacing: 1rem;
+    }
+
+    .credit {
+      margin-top: 1rem;
+      font-size: 0.75rem;
+      color: var(--fg-muted);
+    }
+
+    /* Base16 Color Mapping Reference */
+    .base16-grid {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+
+    .base16-color {
+      aspect-ratio: 1;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.6rem;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1 class="logo">DAEDALOS</h1>
+      <p class="tagline">Iterate Until Done</p>
+    </header>
+
+    <!-- Color Palette -->
+    <section class="palette-section">
+      <h2 class="section-title">Backgrounds</h2>
+      <div class="palette-grid">
+        <div class="color-swatch" style="background: var(--bg-deep);">
+          <span class="color-name" style="color: var(--fg-secondary);">Deep</span>
+          <span class="color-hex" style="color: var(--fg-muted);">#0f1114</span>
+        </div>
+        <div class="color-swatch" style="background: var(--bg-main);">
+          <span class="color-name" style="color: var(--fg-secondary);">Main</span>
+          <span class="color-hex" style="color: var(--fg-muted);">#151820</span>
+        </div>
+        <div class="color-swatch" style="background: var(--bg-surface);">
+          <span class="color-name" style="color: var(--fg-secondary);">Surface</span>
+          <span class="color-hex" style="color: var(--fg-muted);">#1c2028</span>
+        </div>
+        <div class="color-swatch" style="background: var(--bg-elevated);">
+          <span class="color-name" style="color: var(--fg-secondary);">Elevated</span>
+          <span class="color-hex" style="color: var(--fg-muted);">#252a35</span>
+        </div>
+        <div class="color-swatch" style="background: var(--bg-selection);">
+          <span class="color-name" style="color: var(--fg-primary);">Selection</span>
+          <span class="color-hex" style="color: var(--fg-secondary);">#2d3a4a</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="palette-section">
+      <h2 class="section-title">Foregrounds</h2>
+      <div class="palette-grid">
+        <div class="color-swatch" style="background: var(--fg-primary);">
+          <span class="color-name" style="color: var(--bg-deep);">Primary</span>
+          <span class="color-hex" style="color: var(--bg-surface);">#e8e0d4</span>
+        </div>
+        <div class="color-swatch" style="background: var(--fg-secondary);">
+          <span class="color-name" style="color: var(--bg-deep);">Secondary</span>
+          <span class="color-hex" style="color: var(--bg-surface);">#a89f94</span>
+        </div>
+        <div class="color-swatch" style="background: var(--fg-muted);">
+          <span class="color-name" style="color: var(--bg-deep);">Muted</span>
+          <span class="color-hex" style="color: var(--bg-surface);">#6b6560</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="palette-section">
+      <h2 class="section-title">Accent Colors</h2>
+      <div class="palette-grid">
+        <div class="color-swatch" style="background: var(--bronze);">
+          <span class="color-name" style="color: var(--bg-deep);">Bronze</span>
+          <span class="color-hex" style="color: var(--bg-surface);">#d4a574</span>
+        </div>
+        <div class="color-swatch" style="background: var(--amber);">
+          <span class="color-name" style="color: var(--bg-deep);">Amber</span>
+          <span class="color-hex" style="color: var(--bg-surface);">#e5a84b</span>
+        </div>
+        <div class="color-swatch" style="background: var(--teal);">
+          <span class="color-name" style="color: var(--bg-deep);">Teal</span>
+          <span class="color-hex" style="color: var(--bg-deep);">#4a9a8c</span>
+        </div>
+        <div class="color-swatch" style="background: var(--teal-bright);">
+          <span class="color-name" style="color: var(--bg-deep);">Teal Bright</span>
+          <span class="color-hex" style="color: var(--bg-deep);">#6bc4b4</span>
+        </div>
+        <div class="color-swatch" style="background: var(--olive);">
+          <span class="color-name" style="color: var(--bg-deep);">Olive</span>
+          <span class="color-hex" style="color: var(--bg-deep);">#8a9a6b</span>
+        </div>
+        <div class="color-swatch" style="background: var(--sage);">
+          <span class="color-name" style="color: var(--bg-deep);">Sage</span>
+          <span class="color-hex" style="color: var(--bg-deep);">#a4b88a</span>
+        </div>
+        <div class="color-swatch" style="background: var(--copper-green);">
+          <span class="color-name" style="color: var(--bg-deep);">Copper</span>
+          <span class="color-hex" style="color: var(--bg-deep);">#5a9a7a</span>
+        </div>
+        <div class="color-swatch" style="background: var(--terracotta);">
+          <span class="color-name" style="color: var(--fg-primary);">Terracotta</span>
+          <span class="color-hex" style="color: var(--fg-secondary);">#c47a5a</span>
+        </div>
+        <div class="color-swatch" style="background: var(--plum);">
+          <span class="color-name" style="color: var(--fg-primary);">Plum</span>
+          <span class="color-hex" style="color: var(--fg-secondary);">#8a6a8a</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Terminal Preview -->
+    <section class="palette-section">
+      <h2 class="section-title">Terminal</h2>
+      <div class="terminal">
+        <div class="terminal-header">
+          <div class="terminal-dot red"></div>
+          <div class="terminal-dot yellow"></div>
+          <div class="terminal-dot green"></div>
+          <span class="terminal-title">daedalos@workshop ~ kitty</span>
+        </div>
+        <div class="terminal-body">
+          <div class="terminal-line">
+            <span class="prompt">~/projects/api</span> <span class="command">loop start "fix auth tests" --promise "cargo test auth"</span>
+          </div>
+          <div class="terminal-line output">
+            <span style="color: var(--teal);">Loop started</span> · promise: cargo test auth
+          </div>
+          <div class="terminal-line output">
+            <span style="color: var(--fg-muted);">─────────────────────────────────────────────</span>
+          </div>
+          <div class="terminal-line">
+            <span style="color: var(--amber);">iteration 1</span> <span class="output">running promise...</span>
+          </div>
+          <div class="terminal-line error">
+            FAILED: test_token_refresh - expected 200, got 401
+          </div>
+          <div class="terminal-line">
+            <span style="color: var(--amber);">iteration 2</span> <span class="output">analyzing failure...</span>
+          </div>
+          <div class="terminal-line output">
+            <span style="color: var(--plum-bright);">fix:</span> added refresh token to auth header
+          </div>
+          <div class="terminal-line">
+            <span style="color: var(--amber);">iteration 3</span> <span class="output">running promise...</span>
+          </div>
+          <div class="terminal-line success">
+            PASSED: all 12 auth tests passing
+          </div>
+          <div class="terminal-line output">
+            <span style="color: var(--fg-muted);">─────────────────────────────────────────────</span>
+          </div>
+          <div class="terminal-line success">
+            Loop complete in 3 iterations (47s)
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Code Preview -->
+    <section class="palette-section">
+      <h2 class="section-title">Syntax Highlighting</h2>
+      <div class="code-preview">
+        <div class="code-header">
+          <span class="file-tab active">loop.rs</span>
+          <span class="file-tab">config.toml</span>
+        </div>
+        <div class="code-body">
+          <pre><span class="line-number"> 1</span><span class="cmt">/// The core iteration loop - runs until promise succeeds</span>
+<span class="line-number"> 2</span><span class="kw">pub async fn</span> <span class="fn">run_loop</span>(config: <span class="type">LoopConfig</span>) -> <span class="type">Result</span><<span class="type">LoopResult</span>> {
+<span class="line-number"> 3</span>    <span class="kw">let</span> max_iterations = config.max_iterations.<span class="fn">unwrap_or</span>(<span class="num">10</span>);
+<span class="line-number"> 4</span>    <span class="kw">let mut</span> iteration = <span class="num">0</span>;
+<span class="line-number"> 5</span>
+<span class="line-number"> 6</span>    <span class="kw">while</span> iteration < max_iterations {
+<span class="line-number"> 7</span>        iteration += <span class="num">1</span>;
+<span class="line-number"> 8</span>        <span class="fn">emit_event</span>(<span class="type">Event</span>::<span class="const">IterationStart</span> { iteration });
+<span class="line-number"> 9</span>
+<span class="line-number">10</span>        <span class="cmt">// Run the verification promise</span>
+<span class="line-number">11</span>        <span class="kw">let</span> result = <span class="fn">run_promise</span>(&config.promise).<span class="kw">await</span>?;
+<span class="line-number">12</span>
+<span class="line-number">13</span>        <span class="kw">if</span> result.success {
+<span class="line-number">14</span>            <span class="kw">return</span> <span class="type">Ok</span>(<span class="type">LoopResult</span> {
+<span class="line-number">15</span>                iterations: iteration,
+<span class="line-number">16</span>                status: <span class="type">Status</span>::<span class="const">Complete</span>,
+<span class="line-number">17</span>            });
+<span class="line-number">18</span>        }
+<span class="line-number">19</span>    }
+<span class="line-number">20</span>
+<span class="line-number">21</span>    <span class="type">Err</span>(<span class="type">LoopError</span>::<span class="const">MaxIterationsReached</span>)
+<span class="line-number">22</span>}</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- UI Components -->
+    <section class="palette-section">
+      <h2 class="section-title">UI Components</h2>
+      <div class="ui-preview">
+        <div class="ui-card">
+          <h3 class="ui-card-title">Buttons</h3>
+          <button class="button button-primary">Primary Action</button>
+          <button class="button button-secondary">Secondary</button>
+          <button class="button button-teal">Confirm</button>
+        </div>
+        <div class="ui-card">
+          <h3 class="ui-card-title">Status Badges</h3>
+          <span class="status-badge badge-success">Passing</span>
+          <span class="status-badge badge-warning">Warning</span>
+          <span class="status-badge badge-error">Failed</span>
+          <span class="status-badge badge-info">Running</span>
+        </div>
+        <div class="ui-card">
+          <h3 class="ui-card-title">Input Fields</h3>
+          <input type="text" class="input-field" placeholder="daedalos theme preview">
+          <input type="text" class="input-field" value="gruvbox" style="border-color: var(--teal);">
+        </div>
+      </div>
+    </section>
+
+    <!-- Base16 Mapping -->
+    <section class="palette-section">
+      <h2 class="section-title">Base16 Mapping</h2>
+      <div class="base16-grid">
+        <div class="base16-color" style="background: #0f1114; color: #a89f94;">00</div>
+        <div class="base16-color" style="background: #151820; color: #a89f94;">01</div>
+        <div class="base16-color" style="background: #1c2028; color: #a89f94;">02</div>
+        <div class="base16-color" style="background: #6b6560; color: #e8e0d4;">03</div>
+        <div class="base16-color" style="background: #a89f94; color: #0f1114;">04</div>
+        <div class="base16-color" style="background: #e8e0d4; color: #0f1114;">05</div>
+        <div class="base16-color" style="background: #d4a574; color: #0f1114;">06</div>
+        <div class="base16-color" style="background: #e8e0d4; color: #0f1114;">07</div>
+        <div class="base16-color" style="background: #c47a5a; color: #0f1114;">08</div>
+        <div class="base16-color" style="background: #e5a84b; color: #0f1114;">09</div>
+        <div class="base16-color" style="background: #d4a574; color: #0f1114;">0A</div>
+        <div class="base16-color" style="background: #8a9a6b; color: #0f1114;">0B</div>
+        <div class="base16-color" style="background: #6bc4b4; color: #0f1114;">0C</div>
+        <div class="base16-color" style="background: #4a9a8c; color: #0f1114;">0D</div>
+        <div class="base16-color" style="background: #8a6a8a; color: #e8e0d4;">0E</div>
+        <div class="base16-color" style="background: #5a9a7a; color: #0f1114;">0F</div>
+      </div>
+    </section>
+
+    <div class="labyrinth-border">
+      <div class="labyrinth-symbol">◇ ◆ ◇</div>
+      <p class="credit">Daedalos Theme v1 · The Craftsman's Workshop</p>
+    </div>
+  </div>
+</body>
+</html>

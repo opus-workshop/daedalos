@@ -3,6 +3,7 @@
 import os
 import sys
 import json
+import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -186,8 +187,15 @@ def notify_user(request: GateRequest) -> None:
     # Print to stderr so it's visible but doesn't interfere with stdout
     print(f"\033[33m[gates]\033[0m {msg}", file=sys.stderr)
 
-    # Could also send to system notification daemon, tmux, etc.
-    # For now, just print
+    # Also send desktop notification via the notify tool
+    try:
+        subprocess.run(
+            ["notify", "warn", f"[gates] {msg}"],
+            capture_output=True,
+            timeout=5
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass  # Silently fail if notify isn't available
 
 
 def prompt_for_approval(request: GateRequest) -> bool:

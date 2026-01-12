@@ -1,0 +1,357 @@
+name: architecture
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  A system, not just a collection of tools.
+
+  Daedalos architecture exists to answer: "How do all these pieces fit together?"
+  Individual tool specs explain WHAT each tool does. This spec explains HOW
+  they compose into a coherent system.
+
+  The deeper insight: good architecture makes the right thing easy and the
+  wrong thing hard. Every connection between components has been considered.
+  No tool is an island - each participates in the larger workflow.
+
+  The architecture embodies three principles:
+  1. LOOP AS PRIMITIVE - Everything builds on iteration until promise met
+  2. PRE-COMPUTATION - Don't discover at runtime what can be computed ahead
+  3. FEARLESS EXPERIMENTATION - Mistakes are cheap, rollback is instant
+
+  This isn't documentation after the fact - it's the blueprint that guided
+  every tool's design.
+
+layers:
+  foundation:
+    description: "OS-level infrastructure that Daedalos builds upon"
+    components:
+      nixos:
+        role: "Reproducible, declarative OS configuration"
+        why: "Eliminates 'works on my machine', enables rollback"
+      btrfs:
+        role: "Copy-on-write filesystem with snapshots"
+        why: "Instant checkpoints, cheap iteration storage"
+      systemd:
+        role: "Service management and socket activation"
+        why: "Daemon lifecycle, dependency ordering"
+      tmux:
+        role: "Terminal multiplexer for agent sessions"
+        why: "Agent isolation, session persistence, keybinding dispatch"
+
+  core:
+    description: "The fundamental primitives that define Daedalos"
+    components:
+      loop:
+        role: "THE primitive - iterate until promise met"
+        depends_on: [undo, verify, agent]
+        central_to: "Everything. All workflows are loops."
+      undo:
+        role: "File-level time travel"
+        depends_on: [btrfs]
+        enables: "Fearless experimentation"
+      verify:
+        role: "Universal verification interface"
+        depends_on: []
+        enables: "Promise fulfillment checking"
+      spec:
+        role: "Specification-driven development"
+        depends_on: []
+        enables: "Agents understand tool intent"
+
+  intelligence:
+    description: "Pre-computed knowledge that agents query"
+    components:
+      project:
+        role: "Codebase structure and metadata"
+        pre_computes: "File types, symbols, patterns"
+      codex:
+        role: "Semantic code search"
+        pre_computes: "Embeddings, chunk indexes"
+      error-db:
+        role: "Known error patterns and solutions"
+        pre_computes: "Error signatures, fixes"
+      context:
+        role: "Token budget management"
+        computes: "Estimated context usage"
+
+  orchestration:
+    description: "Multi-agent coordination"
+    components:
+      agent:
+        role: "Spawn, manage, coordinate agents"
+        provides: "Slots, templates, messaging, signals"
+      mcp-hub:
+        role: "MCP server management"
+        provides: "Tool pooling, hot-start, routing"
+      lsp-pool:
+        role: "Pre-warmed language servers"
+        provides: "Instant LSP, shared across agents"
+
+  supervision:
+    description: "Human oversight and control"
+    components:
+      observe:
+        role: "Real-time visibility"
+        shows: "Loops, agents, daemons, events"
+      gates:
+        role: "Permission checkpoints"
+        controls: "What agents can do autonomously"
+      journal:
+        role: "Activity history"
+        answers: "What happened?"
+
+  human_experience:
+    description: "Tools for human developers"
+    components:
+      env:
+        role: "Project environment switching"
+      notify:
+        role: "Desktop notifications"
+      session:
+        role: "Terminal state save/restore"
+      secrets:
+        role: "Encrypted credential storage"
+      pair:
+        role: "Shared terminal sessions"
+      handoff:
+        role: "Context summaries for shift changes"
+      review:
+        role: "Human code review workflow"
+      focus:
+        role: "Productivity timer"
+      metrics:
+        role: "Development statistics"
+      template:
+        role: "Project scaffolding"
+
+  infrastructure:
+    description: "System integration"
+    components:
+      container:
+        role: "Docker/Podman abstraction"
+      remote:
+        role: "SSH and remote development"
+      backup:
+        role: "Encrypted project backup"
+      sandbox:
+        role: "Isolated experiment environments"
+      scratch:
+        role: "Ephemeral workspaces"
+
+data_flows:
+  loop_iteration:
+    description: "Core workflow of Daedalos"
+    flow:
+      - step: "Loop starts with task and promise"
+        component: loop
+      - step: "Checkpoint created before iteration"
+        component: undo
+      - step: "Relevant specs injected into context"
+        component: spec
+      - step: "Codebase context provided"
+        component: [project, codex]
+      - step: "Agent performs work"
+        component: agent
+      - step: "Promise checked"
+        component: verify
+      - step: "If failed, iterate with error context"
+        component: [error-db, loop]
+      - step: "If passed, loop completes"
+        component: loop
+      - step: "Events logged"
+        component: journal
+
+  multi_agent_workflow:
+    description: "Coordinated agent pipeline"
+    flow:
+      - step: "Workflow starts (e.g., 'feature' workflow)"
+        component: agent
+      - step: "Explorer agent examines codebase"
+        component: [agent, codex, project]
+      - step: "Planner agent creates implementation plan"
+        component: [agent, spec]
+      - step: "Implementer agent executes plan in loop"
+        component: [agent, loop]
+      - step: "Reviewer agent checks work"
+        component: [agent, review]
+      - step: "Agents communicate via messages"
+        component: agent
+      - step: "Locks prevent conflicting edits"
+        component: agent
+      - step: "Completion signals coordinate handoff"
+        component: agent
+
+  supervision_flow:
+    description: "Human oversight of AI activity"
+    flow:
+      - step: "Gates check before sensitive actions"
+        component: gates
+      - step: "If approval needed, agent pauses"
+        component: gates
+      - step: "Observe shows pending approvals"
+        component: observe
+      - step: "Human approves or denies"
+        component: gates
+      - step: "All actions logged to journal"
+        component: journal
+      - step: "Narrative reconstruction available"
+        component: journal
+
+integration_points:
+  terminal:
+    kitty:
+      integration: "Keybindings, tab bar, kittens"
+      provides: "Keyboard shortcuts for all tools"
+    tmux:
+      integration: "Session management for agents"
+      provides: "Agent isolation, slot system"
+
+  editor:
+    neovim:
+      integration: "Planned - LSP, commands"
+    vscode:
+      integration: "Planned - extension"
+
+  mcp:
+    claude_code:
+      integration: "daedalos-mcp exposes all tools"
+      provides: "Native tool access, structured data"
+
+  shell:
+    completions:
+      integration: "Bash and Zsh completions"
+      provides: "Tab completion for all tools"
+    prompt:
+      integration: "Starship or custom PS1"
+      provides: "Project, loop, agent status"
+
+daemon_architecture:
+  philosophy: |
+    Daemons provide hot state and coordination, but are NOT required.
+    Every tool works standalone. Daemons add value but aren't dependencies.
+
+  daemons:
+    loopd:
+      status: "Planned"
+      purpose: "Background loop management, process supervision"
+      socket: "/run/daedalos/loopd.sock"
+    agentd:
+      status: "Planned"
+      purpose: "Agent lifecycle, message routing"
+      socket: "/run/daedalos/agentd.sock"
+    undod:
+      status: "Planned"
+      purpose: "File watching, automatic checkpointing"
+      socket: "/run/daedalos/undod.sock"
+    mcphub:
+      status: "Implemented"
+      purpose: "MCP server pooling and routing"
+      socket: "~/.local/share/daedalos/mcp-hub/mcp-hub.sock"
+    lspd:
+      status: "Implemented"
+      purpose: "LSP server pool management"
+      socket: "~/.local/share/daedalos/lsp-pool/lsp-pool.sock"
+
+storage_layout:
+  config:
+    path: "~/.config/daedalos/"
+    contains: "User preferences, tool settings"
+  data:
+    path: "~/.local/share/daedalos/"
+    contains: "Tool state, indexes, databases"
+  runtime:
+    path: "/run/daedalos/"
+    contains: "Daemon sockets, PID files"
+  project:
+    path: ".daedalos/"
+    contains: "Project-specific config"
+
+decisions:
+  - choice: "Loop as the core primitive, not individual tools"
+    why: |
+      Individual tools are useful, but ITERATION is what makes AI development work.
+      Building everything around the loop concept ensures:
+      - Consistent checkpointing
+      - Consistent promise verification
+      - Consistent rollback
+
+      Without loop as primitive, each tool would reinvent iteration.
+
+  - choice: "Pre-computation over runtime discovery"
+    why: |
+      Agents waste context discovering what could be pre-computed:
+      - Project structure (project info)
+      - Code semantics (codex embeddings)
+      - Error patterns (error-db)
+      - Symbol locations (lsp-pool)
+
+      Pre-computation is investment that pays dividends every query.
+
+  - choice: "Agent-agnostic design"
+    why: |
+      No lock-in. OpenCode today, Claude tomorrow, something new next year.
+
+      Tools provide primitives (loop, verify, checkpoint).
+      Agents plug in via standard interfaces.
+
+      This is why the agent component abstracts spawn/send/signal.
+
+  - choice: "Supervision as spectrum, not boolean"
+    why: |
+      Some users want full autonomy, others want approval for everything.
+      gates provides five levels: autonomous → supervised → collaborative → assisted → manual
+
+      Supervision isn't one-size-fits-all.
+
+  - choice: "Specs as first-class artifacts"
+    why: |
+      Agents need to understand tool intent, not just interface.
+      Specs capture WHY (intent), not just WHAT (interface).
+
+      This enables spec-aware code review, spec-driven generation,
+      and agents that understand the philosophy behind tools.
+
+anti_patterns:
+  - pattern: "Tools that only work with daemons running"
+    why_bad: |
+      Daemon dependencies create fragile systems.
+      "loop status" should work even if loopd is down.
+
+      Tools should degrade gracefully, not crash.
+
+  - pattern: "Tight coupling between unrelated tools"
+    why_bad: |
+      notify shouldn't depend on journal.
+      Each tool should work standalone.
+
+      Integration happens through conventions and optional coordination,
+      not hard dependencies.
+
+  - pattern: "Reinventing primitives in each tool"
+    why_bad: |
+      Every tool needs file watching? Use undo's watcher.
+      Every tool needs checkpointing? Use undo's checkpoint.
+
+      Composition over reimplementation.
+
+  - pattern: "GUI-first design"
+    why_bad: |
+      AI agents work with text, not pixels.
+      Observe TUI exists, but every feature is also CLI-accessible.
+
+      Text is the universal interface.
+
+metrics:
+  success_criteria:
+    - "New tool integrates with existing tools within one session"
+    - "Loop workflow works with any agent, not just OpenCode"
+    - "System usable with some daemons down"
+    - "Pre-computation reduces agent context usage measurably"
+    - "Supervision levels map cleanly to user trust preferences"
+
+  failure_indicators:
+    - "Tool X requires daemon Y to function at all"
+    - "Adding new agent requires changes to multiple tools"
+    - "Tools have overlapping functionality (duplication)"
+    - "Agents discover codebase structure repeatedly (no pre-computation)"
+    - "Users disable supervision entirely (levels don't fit needs)"

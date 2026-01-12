@@ -16,8 +16,8 @@
 WHAT IS DAEDALOS?
 -----------------
 Daedalos is a complete development environment designed by an AI architect
-for AI-assisted software development. It provides 28 tool directories exposing
-79 MCP tools, deep Claude Code integration via skills and hooks, multi-agent
+for AI-assisted software development. It provides 33 tool directories exposing
+90+ MCP tools, deep Claude Code integration via skills and hooks, multi-agent
 orchestration, and a supervision spectrum for managing AI autonomy.
 
 The name honors Daedalus, the Greek craftsman who built the Labyrinth and
@@ -78,7 +78,7 @@ Usage:
 The loop runs until the promise exits 0. No manual intervention needed.
 
 ================================================================================
-                              TOOL SUITE (79 MCP TOOLS)
+                              TOOL SUITE (90+ MCP TOOLS)
 ================================================================================
 
 AI-FOCUSED TOOLS
@@ -124,6 +124,18 @@ MCP-HUB       Central hub for MCP server management.
 
 LSP-POOL      Pre-warmed language servers for instant intelligence.
               Status, warm, query, restart
+
+SPEC          Rich specifications for all tools and components.
+              Show spec, query across specs, list all, validate
+              Contains: intent, constraints, interface, examples, anti-patterns
+
+EVOLVE        Understand code intent and suggest evolution paths.
+              Analyzes specs, commits, tests to understand what code
+              is trying to become. Identifies gaps and prioritizes improvements.
+
+RESOLVE       Resolve uncertainty through context gathering.
+              Gathers context from specs, patterns, conventions, decisions
+              to answer questions without interrupting humans.
 
 --------------------------------------------------------------------------------
 
@@ -420,7 +432,9 @@ Daedalos/
 ├── docs/
 │   ├── VISION.txt           # Complete philosophy and design
 │   ├── CLAUDE_CODE.txt      # Claude Code integration guide
-│   └── GETTING_STARTED.txt  # Quick start guide
+│   ├── GETTING_STARTED.txt  # Quick start guide
+│   └── specs/               # Architecture and system specs
+├── daedalos-rs/             # Rust rewrite (in progress)
 ├── daedalos-tools/
 │   ├── loop/                # THE CORE - iteration primitive
 │   ├── agent/               # Multi-agent orchestration
@@ -435,6 +449,9 @@ Daedalos/
 │   ├── mcp-hub/             # MCP server hub
 │   ├── lsp-pool/            # Language server pool
 │   ├── daedalos-mcp/        # MCP server for Claude
+│   ├── spec/                # Rich specifications
+│   ├── evolve/              # Code evolution analysis
+│   ├── resolve/             # Uncertainty resolution
 │   ├── gates/               # Permission gates
 │   ├── observe/             # Watch mode
 │   ├── journal/             # Activity logging
@@ -455,6 +472,7 @@ Daedalos/
 │   ├── skills/              # Daedalos skills for Claude
 │   ├── hooks/               # Automatic integrations
 │   └── settings.json        # Claude Code configuration
+├── research/                # Research notes and explorations
 ├── CLAUDE.md                # Development guide
 └── README.txt               # This file
 
@@ -466,21 +484,24 @@ Daedalos/
     All tool specs (SPEC.txt) and build prompts (prompt.txt) complete.
 
 [✓] PHASE 2: TOOL BUILDING
-    All 30+ tools implemented in daedalos-tools/:
+    All 33 tools implemented in daedalos-tools/:
     - AI tools: loop, verify, undo, project, codex, context, error-db,
-      scratch, agent, sandbox, mcp-hub, lsp-pool
+      scratch, agent, sandbox, mcp-hub, lsp-pool, spec, evolve, resolve
     - Human tools: env, notify, session, secrets, pair, handoff, review,
       focus, metrics, template, container, remote, backup
     - Supervision: observe, gates, journal
+    - Meta: daedalos unified CLI, daedalos-mcp server
 
 [✓] PHASE 3: CLAUDE CODE INTEGRATION
-    - MCP server (daedalos-mcp) with 79 tools
+    - MCP server (daedalos-mcp) with 90+ tools
     - 6 specialized skills for Claude workflows
     - 4 hooks for automatic tool integration
     - Inter-agent communication system
+    - Rich specifications (.spec.yaml) for all core tools
 
 [~] PHASE 4: SYSTEM INTEGRATION
     In progress:
+    - Rust rewrite (daedalos-rs) for performance-critical tools
     - Daemons (loopd, undod working; mcp-hub, lsp-pool pending)
     - Hyprland, Waybar, tmux, Zsh configs
     - Nix packaging
@@ -551,7 +572,7 @@ The specifications are living documents. Better specs yield better tools.
 
 MIT License
 
-Copyright (c) 2025 Opus Workshop
+Copyright (c) 2025-2026 Opus Workshop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

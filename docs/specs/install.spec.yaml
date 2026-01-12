@@ -1,0 +1,446 @@
+name: install
+version: 1.0
+created: 2025-01-11
+
+intent: |
+  Installation should be instant and reversible.
+
+  The Daedalos installation experience embodies the same philosophy as Daedalos
+  itself: fearless experimentation. Users should be able to try Daedalos with
+  zero commitment, uninstall cleanly if it's not for them, and trust that
+  installation won't pollute their system with artifacts that persist after
+  removal.
+
+  The deeper insight: installation is a form of iteration. First install might
+  be exploratory. Subsequent installs might add tools. Uninstall should feel
+  safe, not scary. "What if I want to come back?" should have an obvious answer.
+
+  Installation targets three personas:
+  1. EXPLORER - "Let me try this quickly" - wants instant setup, easy exit
+  2. ADOPTER - "I'm committing to this" - wants full integration, daemon autostart
+  3. MINIMALIST - "Just give me loop and undo" - wants selective installation
+
+  All three should be well-served. No assumptions about user commitment level.
+
+constraints:
+  - No sudo required for user installation
+  - Works offline after initial clone
+  - Reversible - uninstall leaves no residue (except opt-in data)
+  - Idempotent - running install twice is safe
+  - Works on NixOS, macOS, and mainstream Linux distributions
+  - No compilation required (shell scripts + Python)
+  - Dependencies are checked, not silently assumed
+  - Shell modifications are additive (don't overwrite existing config)
+  - Symlinks over copies (source repo remains authoritative)
+
+modes:
+  full:
+    description: "Install everything with integrations"
+    command: "./install.sh"
+    installs:
+      - All AI-focused tools (loop, verify, undo, codex, etc.)
+      - All human-focused tools (env, notify, session, etc.)
+      - Claude Code integration (CLAUDE.md, settings.json, MCP)
+      - Daemon autostart (launchd on macOS)
+      - Shell integrations (PATH, completions)
+      - Ollama/OpenCode configuration
+    best_for: "Users committing to Daedalos as their dev environment"
+
+  selective:
+    description: "Install individual tools"
+    command: "cd daedalos-tools/<tool> && ./install.sh"
+    installs:
+      - Single tool and its direct dependencies
+      - Tool-specific config in ~/.config/daedalos/<tool>/
+      - Tool-specific data in ~/.local/share/daedalos/<tool>/
+    best_for: "Users who want specific functionality"
+
+  mcp_only:
+    description: "Just expose tools to Claude Code via MCP"
+    command: "cd daedalos-tools/daedalos-mcp && ./install.sh"
+    installs:
+      - daedalos-mcp Python package
+      - Claude Code MCP configuration
+    best_for: "Claude Code users who want tool access without CLI"
+
+directory_layout:
+  binaries:
+    path: "~/.local/bin/"
+    contents: "Symlinks to tool executables"
+    why: "Standard user binary location, usually in PATH"
+    pattern: "symlink -> DAEDALOS_ROOT/daedalos-tools/<tool>/bin/<name>"
+
+  libraries:
+    path: "~/.local/lib/daedalos/<tool>/"
+    contents: "Shared shell libraries, schemas, supporting files"
+    why: "Some tools need multiple files, not just one executable"
+    pattern: "Copy from daedalos-tools/<tool>/lib/"
+
+  config:
+    path: "~/.config/daedalos/<tool>/"
+    contents: "User configuration per tool"
+    why: "XDG compliant, survives reinstall"
+    pattern: "Created on first run or by install"
+    survives_uninstall: "Optional - user prompted"
+
+  data:
+    path: "~/.local/share/daedalos/<tool>/"
+    contents: "Tool state, indexes, databases"
+    why: "XDG compliant, separate from config"
+    pattern: "Created by tool at runtime"
+    survives_uninstall: "Optional - user prompted"
+
+  runtime:
+    path: "/run/daedalos/"
+    contents: "Daemon sockets, PID files"
+    why: "Standard runtime location"
+    pattern: "Created by daemons"
+    note: "Falls back to ~/.local/share/daedalos/ on macOS"
+
+  launchd:
+    path: "~/Library/LaunchAgents/"
+    contents: "macOS daemon plist files"
+    why: "Standard macOS autostart location"
+    pattern: "com.daedalos.<daemon>.plist"
+    platform: "macOS only"
+
+  claude:
+    path: "~/.claude/"
+    contents: "Claude Code configuration"
+    files:
+      CLAUDE.md: "Tool documentation appended (not overwritten)"
+      settings.json: "Permissions and MCP registration"
+
+dependencies:
+  required:
+    python3:
+      why: "Many tools implemented in Python"
+      version: "3.8+"
+      check: "command -v python3"
+
+    git:
+      why: "Fallback storage, version control"
+      check: "command -v git"
+
+    jq:
+      why: "JSON manipulation in shell scripts"
+      check: "command -v jq"
+
+  recommended:
+    tmux:
+      why: "Agent isolation, session management"
+      check: "command -v tmux"
+      graceful_degradation: "agent tool limited without tmux"
+
+    ollama:
+      why: "Local LLM for codex embeddings"
+      check: "command -v ollama"
+      graceful_degradation: "codex falls back to TF-IDF"
+
+    fzf:
+      why: "Interactive selection"
+      check: "command -v fzf"
+      graceful_degradation: "Falls back to numbered lists"
+
+  optional:
+    claude:
+      why: "Claude Code CLI for MCP registration"
+      check: "command -v claude"
+      note: "Can configure MCP manually if not available"
+
+    btrfs:
+      why: "Instant snapshots for sandbox/undo"
+      check: "mount | grep btrfs"
+      graceful_degradation: "Uses git-based fallback"
+
+    sqlite3:
+      why: "Some tools use SQLite for storage"
+      check: "command -v sqlite3"
+      note: "Usually available, Python has built-in support"
+
+uninstallation:
+  command: "./uninstall.sh"
+
+  always_removed:
+    - "Tool symlinks from ~/.local/bin/"
+    - "launchd plists from ~/Library/LaunchAgents/"
+    - "MCP registration from Claude Code"
+    - "Daemons are stopped"
+
+  prompted_removal:
+    config:
+      path: "~/.config/daedalos/"
+      prompt: "Remove config (~/.config/daedalos/)? [y/N]"
+      default: "No - preserves settings for reinstall"
+
+    data:
+      path: "~/.local/share/daedalos/"
+      prompt: "Remove data (~/.local/share/daedalos/)? [y/N]"
+      default: "No - preserves indexes, history, state"
+
+  not_removed:
+    - "PATH additions in ~/.zshrc or ~/.bashrc (documented)"
+    - "Daedalos section in ~/.claude/CLAUDE.md (documented)"
+
+  why_selective: |
+    Users may want to reinstall later. Removing config/data means
+    losing settings and accumulated state. Better to leave and let
+    user explicitly clean up if they're truly done.
+
+updates:
+  full_update:
+    command: "git pull && ./install.sh"
+    effect: "Symlinks point to new versions"
+    why: "Simple - just update source, symlinks follow"
+
+  selective_update:
+    command: "cd daedalos-tools/<tool> && git pull && ./install.sh"
+    effect: "Single tool updated"
+
+  mcp_update:
+    command: "pip install --upgrade -e daedalos-tools/daedalos-mcp"
+    effect: "MCP server updated"
+
+  no_migration_needed: |
+    Because symlinks point to source and configs are separate,
+    updates rarely need migration. When they do, tools handle
+    their own migration at runtime.
+
+portability:
+  nixos:
+    status: "Full support"
+    notes:
+      - "Btrfs snapshots native"
+      - "System services via NixOS module (planned)"
+      - "User installation works out of box"
+    special: "Nix flake available for declarative install"
+
+  macos:
+    status: "Full support"
+    notes:
+      - "Uses launchd for daemon autostart"
+      - "No Btrfs - uses git-based fallback for undo/sandbox"
+      - "Homebrew not required but can install dependencies"
+    runtime_path: "~/.local/share/daedalos/ (no /run)"
+
+  debian_ubuntu:
+    status: "Full support"
+    notes:
+      - "apt install python3 git jq tmux"
+      - "Btrfs optional (ext4 works with fallback)"
+
+  fedora_rhel:
+    status: "Full support"
+    notes:
+      - "dnf install python3 git jq tmux"
+      - "Btrfs available"
+
+  arch:
+    status: "Full support"
+    notes:
+      - "pacman -S python git jq tmux"
+      - "Btrfs common on Arch installs"
+
+  other_linux:
+    status: "Should work"
+    notes:
+      - "Requires python3, git, jq"
+      - "Shell scripts are portable bash"
+
+decisions:
+  - choice: "Symlinks to source repo, not copies"
+    why: |
+      Copies create version skew. Symlinks mean:
+      - git pull updates everything
+      - Source repo is single source of truth
+      - Disk space efficient
+      - Easy to see what version you have (ls -la)
+
+      Trade-off: requires keeping source repo around.
+    alternatives:
+      - option: "Copy files to ~/.local/bin/"
+        rejected_because: "Version skew, manual update dance"
+      - option: "System package (deb, rpm)"
+        rejected_because: "More complex, slower iteration, sudo required"
+
+  - choice: "User installation by default, no sudo"
+    why: |
+      Sudo-free installation:
+      - Lower barrier to trying
+      - Works on systems where user lacks root
+      - Can't break system-wide state
+      - Easier to uninstall completely
+
+      System-wide install possible via Nix flake for those who want it.
+    alternatives:
+      - option: "System-wide /usr/local installation"
+        rejected_because: "Requires sudo, harder to uninstall"
+      - option: "Virtual environment isolation"
+        rejected_because: "Adds complexity, activation required"
+
+  - choice: "Append to shell config, don't replace"
+    why: |
+      Users have carefully crafted .zshrc/.bashrc. We should:
+      - Check before adding (grep for marker)
+      - Add a comment block making our additions clear
+      - Never overwrite anything
+
+      Worst case: duplicate PATH entries (harmless).
+    alternatives:
+      - option: "Source a separate file from shell config"
+        rejected_because: "Requires user to add source line anyway"
+      - option: "Modify PATH at runtime only"
+        rejected_because: "Breaks new shells, confusing"
+
+  - choice: "Individual tool install.sh scripts"
+    why: |
+      Selective installation requires per-tool installers.
+      Also useful for:
+      - Testing individual tools
+      - Contributing to single tool
+      - Minimal installations
+
+      Main install.sh orchestrates, individual scripts are standalone.
+    alternatives:
+      - option: "Single monolithic installer"
+        rejected_because: "No selective installation possible"
+      - option: "Makefile targets"
+        rejected_because: "Make not always available, shell is universal"
+
+  - choice: "Config/data survive uninstall by default"
+    why: |
+      Users reinstall. Losing config means reconfiguring.
+      Losing data means losing undo history, codex indexes, etc.
+
+      Explicit prompt ("Remove data?") gives user control without
+      being destructive by default.
+    alternatives:
+      - option: "Remove everything on uninstall"
+        rejected_because: "Punishes reinstall, loses accumulated state"
+      - option: "Never remove anything"
+        rejected_because: "Accumulates cruft if user truly wants clean removal"
+
+  - choice: "launchd on macOS, systemd on Linux"
+    why: |
+      Use native service managers:
+      - Reliable restart on crash
+      - Standard patterns for the platform
+      - Logs in expected locations
+
+      Users already understand their platform's service management.
+    alternatives:
+      - option: "tmux sessions for daemons everywhere"
+        rejected_because: "Not designed for daemon management, no auto-restart"
+      - option: "Custom daemon supervisor"
+        rejected_because: "Reinventing the wheel poorly"
+
+anti_patterns:
+  - pattern: "Silent dependency installation"
+    why_bad: |
+      Don't pip install or brew install without asking.
+      User might have version requirements or corporate policies.
+
+      Check for dependencies, report missing ones, let user install.
+      Provide copy-paste commands to help.
+
+  - pattern: "Overwriting user configuration"
+    why_bad: |
+      Never truncate or replace ~/.zshrc, ~/.bashrc, ~/.claude/CLAUDE.md.
+      Users have invested time in their configs.
+
+      Always: check if already configured, append with clear markers,
+      backup before modifying.
+
+  - pattern: "Compilation during install"
+    why_bad: |
+      Compilation requires toolchains, can fail in many ways, takes time.
+      Shell scripts and Python work everywhere without compilation.
+
+      If a tool needs compilation, it's not a good fit for Daedalos tools
+      unless there's a very good reason.
+
+  - pattern: "Network requests during install"
+    why_bad: |
+      Install should work offline after initial git clone.
+      Don't fetch models, indexes, or updates during install.
+
+      Exception: pip install -e uses local source, not network.
+
+  - pattern: "Modifying system paths (/usr, /etc)"
+    why_bad: |
+      User installation means user paths only.
+      System modification requires sudo, breaks portability,
+      harder to uninstall cleanly.
+
+  - pattern: "Hard-coded paths"
+    why_bad: |
+      Paths should respect:
+      - INSTALL_PREFIX / PREFIX environment variables
+      - XDG_CONFIG_HOME, XDG_DATA_HOME
+      - Platform differences (Linux vs macOS)
+
+      Hard-coded /home/user fails for different usernames,
+      hard-coded /run fails on macOS.
+
+  - pattern: "Silent failure"
+    why_bad: |
+      If something fails, say what and why.
+      Don't continue with partial installation.
+
+      set -euo pipefail at top of every install script.
+      Check return codes, provide helpful error messages.
+
+examples:
+  - scenario: "First-time user exploring"
+    context: "Heard about Daedalos, wants to try it"
+    actions:
+      - "git clone https://github.com/asher/Daedalos"
+      - "cd Daedalos && ./install.sh"
+    result: "Full installation, 2 minutes, ready to use"
+    why_it_matters: "Low friction to try"
+
+  - scenario: "Just wants loop for another project"
+    context: "Not adopting full Daedalos, but loop concept is useful"
+    actions:
+      - "cd daedalos-tools/loop && ./install.sh"
+    result: "Just loop installed, minimal footprint"
+    why_it_matters: "Supports partial adoption"
+
+  - scenario: "Claude Code user wanting native tools"
+    context: "Uses Claude Code, wants MCP access to Daedalos tools"
+    actions:
+      - "cd daedalos-tools/daedalos-mcp && ./install.sh"
+      - "Restart Claude Code"
+    result: "All tools available as MCP tools"
+    why_it_matters: "Integrates with existing workflow"
+
+  - scenario: "Didn't like it, wants clean removal"
+    context: "Tried Daedalos, not for them"
+    actions:
+      - "./uninstall.sh"
+      - "Answer 'y' to both prompts"
+    result: "System returns to pre-Daedalos state"
+    why_it_matters: "No lock-in, clean exit"
+
+  - scenario: "Updating after improvements"
+    context: "Using Daedalos, want latest version"
+    actions:
+      - "git pull"
+      - "./install.sh"
+    result: "All tools updated, configs preserved"
+    why_it_matters: "Simple update story"
+
+metrics:
+  success_criteria:
+    - "Full install completes in under 60 seconds"
+    - "Uninstall leaves zero Daedalos artifacts (when user confirms)"
+    - "Works on fresh macOS, Ubuntu, and NixOS installs"
+    - "Reinstall after uninstall is indistinguishable from fresh install"
+    - "Individual tool install doesn't require full Daedalos setup"
+
+  failure_indicators:
+    - "User needs sudo for standard installation"
+    - "Install fails on common distros"
+    - "Files remain after uninstall (without user consent)"
+    - "Updating breaks existing configuration"
+    - "Selective install pulls in unexpected dependencies"

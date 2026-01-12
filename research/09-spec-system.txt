@@ -1,0 +1,260 @@
+================================================================================
+                    DAEDALOS DEVELOPMENT LOG
+                    09 - SPEC-DRIVEN DEVELOPMENT SYSTEM
+================================================================================
+
+================================================================================
+SESSION: 2026-01-11 - Spec-Driven Development System
+================================================================================
+
+Built a rich specification system to improve AI agent effectiveness.
+
+THE INSIGHT:
+------------
+
+"Development quality improves highly correlated with the amount of spec built
+for the project." - User observation
+
+Traditional documentation fails AI agents because:
+- Describes WHAT but not WHY
+- Doesn't capture rejected alternatives (so agents re-propose them)
+- Lacks concrete examples of usage scenarios
+- Becomes stale and drifts from implementation
+- Monolithic - can't query specific sections
+
+WHAT WAS BUILT:
+---------------
+
+1. RICH SPEC FORMAT (component.spec.yaml)
+
+   Required sections:
+   - name: Component identifier
+   - intent: WHY this exists (not what it does)
+   - constraints: Hard requirements and boundaries
+   - interface: The contract (commands, API, etc.)
+
+   Optional sections:
+   - examples: Concrete usage scenarios (not just command examples)
+   - decisions: Choices made and alternatives rejected
+   - anti_patterns: What NOT to do (learned from experience)
+   - connects_to: How this relates to other components
+   - metrics: Success criteria and failure indicators
+
+2. SPEC TOOL (daedalos-tools/spec/)
+
+   Commands:
+   - spec show <component>           Display spec (or specific section)
+   - spec query <query>              Search across all specs
+   - spec list                       List all specs
+   - spec new <name>                 Create from template
+   - spec validate                   Check format and completeness
+   - spec diff <component>           Compare spec to implementation
+   - spec context <task>             Get relevant specs for a task
+   - spec inject                     Add spec context to CLAUDE.md
+   - spec index                      Manage spec index
+
+3. LOOP INTEGRATION
+
+   When loop starts a task, it now:
+   1. Parses task description for component names
+   2. Loads relevant specs via 'spec context'
+   3. Injects intent, interface, and anti_patterns into agent prompt
+
+   This makes loops spec-aware automatically!
+
+4. MCP SERVER TOOLS
+
+   Added 6 spec tools to daedalos-mcp:
+   - spec_show: Display component spec
+   - spec_query: Search across specs
+   - spec_list: List all specs
+   - spec_context: Get relevant specs for task
+   - spec_validate: Validate specs
+   - spec_new: Create new spec
+
+DESIGN DECISIONS:
+-----------------
+
+1. Single YAML file per component (not fragmented)
+   - Easy to find (component-name.spec.yaml)
+   - Atomic to update
+   - Self-contained context
+
+2. YAML over JSON or TOML
+   - Multi-line strings work naturally
+   - Readable and editable by humans
+   - Parseable for programmatic queries
+
+3. Required sections: name, intent, constraints, interface
+   - Minimum useful spec
+   - Intent is the most often missing piece
+   - Other sections are valuable but optional
+
+4. spec context returns focused excerpts
+   - Context windows are limited
+   - For "fix undo restore", agent needs intent + relevant interface + anti_patterns
+   - NOT: all examples, all decisions, full command list
+
+KEY ANTI-PATTERNS CAPTURED:
+---------------------------
+
+From undo.spec.yaml:
+- Don't require naming every checkpoint (friction kills adoption)
+- Don't show raw git output (leaks abstraction)
+- Don't prompt for confirmation (undo-the-undo is the safety)
+- Don't lose data silently (fail loudly instead)
+
+From spec.spec.yaml:
+- Don't write specs after implementation (miss the WHY)
+- Don't copy implementation details into spec (creates staleness)
+- Don't leave anti_patterns empty (every project has learned lessons)
+- Don't write vague intent like "provides undo functionality" (that's WHAT)
+
+PHILOSOPHY:
+-----------
+
+"Specs are not for humans to read linearly - they're for agents to query
+contextually."
+
+This is spec-driven development: invest in specification upfront, get
+compound returns as agents use it repeatedly.
+
+The spec tool embodies the Daedalos philosophy of pre-computation:
+instead of agents discovering intent at runtime, we pre-compute it
+and make it queryable.
+
+================================================================================
+SESSION: 2026-01-11 - Core Tool Specs Migration
+================================================================================
+
+Migrated core tools to the rich .spec.yaml format.
+
+SPECS CREATED:
+--------------
+
+1. loop.spec.yaml (~300 lines)
+
+   Intent: "Single-pass inference is a myth. Intelligent work is iterative."
+
+   Key sections:
+   - Philosophy of iteration (Ralph Wiggum Technique)
+   - Agent-agnostic design decisions
+   - Promise as exit code (simplest possible interface)
+   - Checkpoint at iteration START not end
+   - Template as YAML not code
+
+   Anti-patterns:
+   - Starting loops without verifiable promises
+   - Using loops for one-shot tasks
+   - Setting max_iterations too high
+   - Running multiple loops on overlapping files
+
+2. verify.spec.yaml (~280 lines)
+
+   Intent: "One command. All checks. No excuses."
+
+   Key sections:
+   - Universal interface (just run "verify")
+   - Auto-detection from project files
+   - Continue after failure (show ALL problems)
+   - Quick mode for rapid iteration
+
+   Anti-patterns:
+   - Skipping verify before claiming "it works"
+   - Using --skip-step liberally
+   - Different verification in CI vs local
+   - Ignoring failures "because it's just a warning"
+
+3. codex.spec.yaml (~260 lines)
+
+   Intent: "Find code by meaning, not just keywords."
+
+   Key sections:
+   - Semantic chunking (functions, classes)
+   - Ollama primary, TF-IDF fallback
+   - Grounding agents in reality (reduce hallucination)
+
+   Anti-patterns:
+   - Using codex for exact string search (use grep)
+   - Not re-indexing after major changes
+   - Over-relying on TF-IDF fallback
+
+================================================================================
+SESSION: 2026-01-11 - SPEC MIGRATION COMPLETE
+================================================================================
+
+ALL DAEDALOS TOOLS NOW HAVE RICH SPECIFICATIONS!
+
+Used 5 parallel subagents to complete the remaining specs while I created
+the daedalos-mcp server spec and supervision tool specs.
+
+TOTAL SPECS CREATED: 30 (plus 1 template)
+------------------------------------------
+
+AI-Focused Tools (10):
+  - loop.spec.yaml        "Single-pass inference is a myth"
+  - verify.spec.yaml      "One command. All checks. No excuses"
+  - undo.spec.yaml        "Users should experiment fearlessly"
+  - project.spec.yaml     "Agents waste massive context reading files"
+  - codex.spec.yaml       "Find code by meaning, not just keywords"
+  - context.spec.yaml     "Agents lose track of context window"
+  - error-db.spec.yaml    "Agents solve the same errors repeatedly"
+  - scratch.spec.yaml     "Fear of breaking things prevents bold experiments"
+  - agent.spec.yaml       "Single agents hit walls. Multiple agents break through"
+  - spec.spec.yaml        "Specs are not for humans to read linearly"
+
+Human-Focused Tools (13):
+  - env.spec.yaml         "Context switching should be invisible"
+  - notify.spec.yaml      "Attention is scarce. Interruption should be meaningful"
+  - session.spec.yaml     "Work doesn't end when the terminal closes"
+  - secrets.spec.yaml     "Secrets should be invisible until you need them"
+  - pair.spec.yaml        "Two minds on one problem, anywhere"
+  - handoff.spec.yaml     "Context shouldn't die with the shift change"
+  - review.spec.yaml      "AI work needs human judgment, not rubber stamps"
+  - focus.spec.yaml       "Attention is the scarcest resource"
+  - metrics.spec.yaml     "What gets measured gets improved"
+  - template.spec.yaml    "Good defaults save hours of configuration"
+  - container.spec.yaml   "Reproducibility without the complexity"
+  - remote.spec.yaml      "Local is an illusion. Remote should be too"
+  - backup.spec.yaml      "Data loss is not a learning experience"
+
+Supervision Tools (3):
+  - observe.spec.yaml     "See what's happening. Right now. All of it"
+  - gates.spec.yaml       "Trust is earned, not given"
+  - journal.spec.yaml     "What happened? is the most important debugging question"
+
+Infrastructure Tools (4):
+  - mcp-hub.spec.yaml     "MCP servers on demand"
+  - lsp-pool.spec.yaml    "Language intelligence, always warm"
+  - sandbox.spec.yaml     "Experiments need walls"
+  - daedalos-mcp.spec.yaml "Native tool access for Claude"
+
+System Specs (6):
+  - architecture.spec.yaml  - How all pieces fit together
+  - conventions.spec.yaml   - Coding standards and patterns
+  - nixos.spec.yaml         - NixOS packaging and integration
+  - kitty.spec.yaml         - Terminal integration
+  - claude-code.spec.yaml   - Claude Code configuration
+  - install.spec.yaml       - Installation process
+
+SPEC FORMAT VALUE:
+------------------
+
+Each spec captures knowledge that traditional docs miss:
+
+1. INTENT (WHY) - Philosophy behind the tool, not just functionality
+   Most important section. Guides all implementation decisions.
+
+2. DECISIONS + REJECTED ALTERNATIVES - Prevents re-proposing rejected ideas
+   Shows the reasoning, not just the conclusion.
+
+3. ANTI-PATTERNS - Learned from experience, what NOT to do
+   Saves future agents from repeating mistakes.
+
+4. CONNECTS_TO - How components relate to each other
+   Makes integration obvious. Shows the system, not just the tool.
+
+5. METRICS - Success criteria and failure indicators
+   Makes quality measurable and observable.
+
+================================================================================

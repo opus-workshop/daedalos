@@ -1,0 +1,79 @@
+================================================================================
+                    DAEDALOS DEVELOPMENT LOG
+                    10 - RESOLVE TOOL DESIGN
+================================================================================
+
+================================================================================
+SESSION: RESOLVE TOOL DESIGN
+Date: 2025-01-11
+================================================================================
+
+PROBLEM:
+--------
+AI agents (Claude Code specifically) stop and ask too many questions when
+uncertain. This externalizes work the agent should do itself and kills flow.
+
+ROOT INSIGHT:
+-------------
+There are TWO types of uncertainty:
+
+1. INTENT uncertainty - "What problem are we actually solving?"
+   -> Warrants asking (targeted questions) - prevents building wrong thing
+
+2. IMPLEMENTATION uncertainty - "How should we solve it?"
+   -> Should NEVER be asked - resolvable through context gathering
+
+KEY PRINCIPLE:
+--------------
+Uncertainty should be RESOLVED, not EXTERNALIZED.
+
+THE RESOLVE TOOL:
+-----------------
+A new Daedalos primitive that handles both phases:
+
+PHASE 1: INTENT LOOP
+- If intent unclear, ask targeted questions (not open-ended)
+- Use AskUserQuestion to batch independent unknowns
+- Loop until intent is clear enough for implementation
+- Each question must be binary/small-set, show understanding
+
+PHASE 2: CONFIDENCE (NO QUESTIONS)
+- List "questions I would ask"
+- Answer each through context gathering:
+  - spec query (prior decisions)
+  - codex search (existing patterns)
+  - project info (conventions)
+  - error-db (known solutions)
+  - web search (best practices)
+- Synthesize into decision
+- Log to DECISIONS.md for institutional memory
+
+CONFIDENCE LEVELS:
+- High: Proceed silently
+- Medium: Proceed, state assumption
+- Low: Genuine ambiguity, ask (should be rare)
+
+INTEGRATION:
+------------
+- Orchestrates existing tools (spec, codex, project, error-db, web)
+- Creates .claude/DECISIONS.md for project memory
+- Invoked at task start, not just when uncertain
+
+SPEC WRITTEN:
+-------------
+daedalos-tools/resolve/resolve.spec.yaml
+
+NEXT STEPS:
+-----------
+1. Implement resolve tool
+2. Integrate with daedalos-mcp
+3. Test with real development workflows
+4. Measure reduction in implementation questions
+
+META:
+-----
+This session itself demonstrated the problem. User asked about "hooks and loops"
+but meant "systemic agent confidence." Intent resolution surfaced the root
+problem before we solved the wrong thing.
+
+================================================================================
