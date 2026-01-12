@@ -1,0 +1,175 @@
+name: oracle
+version: 0.1.0
+category: primitive
+
+aliases:
+  - ora
+  - ask
+
+intent:
+  core: Unified interface to language models for users and tools
+  why: |
+    LLM access should be a commodity within Daedalos. Every tool that needs AI
+    capabilities shouldn't reimplement provider logic, authentication, or session
+    management. Oracle provides a single invocation point that abstracts over
+    backends (Claude, opencode, Ollama) while staying invisible to both users
+    and tool authors.
+  philosophy: |
+    "The curl of LLMs."
+    Do one thing well. Don't implement agents or orchestration - delegate to
+    backends that already solve those problems. Be the thinnest possible layer
+    between intent and invocation.
+
+trigger:
+  when:
+    - "You want to talk to an LLM without TUI chrome"
+    - "Building a tool that needs LLM capabilities"
+    - "Piping data to an AI for analysis"
+    - "Quick one-shot questions from the command line"
+  patterns:
+    - "ask 'question'"
+    - "ora"
+    - "git diff | ask 'review'"
+    - "cat file | ask -j 'extract data'"
+
+interface:
+  commands:
+    default:
+      description: "Interactive REPL or one-shot query"
+      usage: "ask [prompt]"
+      behavior: "REPL if no prompt, one-shot if prompt given"
+    continue:
+      description: "Continue last conversation"
+      usage: "ask -c [prompt]"
+    session:
+      description: "Use named session"
+      usage: "ask -s NAME [prompt]"
+  flags:
+    -c, --continue: "Continue last conversation"
+    -s, --session: "Use/resume named session"
+    -b, --backend: "Override backend (claude, opencode, ollama)"
+    -j, --json: "Output as JSON for tool consumption"
+    -q, --quiet: "Suppress non-essential output"
+  invocation_names:
+    oracle: "REPL mode, verbose output"
+    ora: "REPL mode, standard output"
+    ask: "One-shot if prompt given, REPL otherwise"
+
+backends:
+  description: "Declarative config for backend CLIs"
+  config_path: "~/.config/oracle/config.toml"
+  builtin:
+    - name: claude
+      command: "claude -p '{prompt}'"
+      continue: "-c"
+      session: "--resume {id}"
+    - name: opencode
+      command: "opencode -p '{prompt}'"
+    - name: ollama
+      command: "ollama run {model} '{prompt}'"
+  selection_priority:
+    - "-b flag"
+    - "ORACLE_BACKEND env var"
+    - "config file default"
+    - "falls back to claude"
+
+sessions:
+  storage: "~/.local/share/oracle/sessions/"
+  project_mode:
+    description: "When in a git repo, store session in project"
+    path: ".oracle/session.json"
+    behavior: "Auto-detected, can be gitignored or committed"
+  lifecycle:
+    - "First ask creates session"
+    - "-c continues last session"
+    - "-s name uses/creates named session"
+    - "Auto-prune after 30 days"
+
+connects_to:
+  - component: evolve
+    relationship: used_by
+    data: "evolve invokes ask for intent analysis"
+  - component: resolve
+    relationship: used_by
+    data: "resolve invokes ask for synthesis"
+  - component: loop
+    relationship: used_by
+    data: "loop uses ask for agent sessions"
+  - component: claude
+    relationship: wraps
+    data: "Primary backend via claude -p"
+  - component: opencode
+    relationship: wraps
+    data: "Alternative backend"
+  - component: ollama
+    relationship: wraps
+    data: "Local model backend"
+
+contract:
+  description: "For Daedalos tool authors using oracle as a primitive"
+  rules:
+    - "Prompt as argument or stdin, response on stdout"
+    - "-j for JSON output (parseable)"
+    - "-s name for tool-managed sessions"
+    - "Exit code 0 = success"
+    - "One-shot by default when prompt provided"
+  examples:
+    - tool: evolve
+      usage: "ask -j 'What is the intent of this code?' < file.py"
+    - tool: resolve
+      usage: "git log -10 | ask 'What patterns do you see?'"
+    - tool: loop
+      usage: "ask -s 'loop-$id' 'Continue: $task'"
+
+success_criteria:
+  - "Works without configuration for claude backend"
+  - "Switching backends requires only config change"
+  - "Other tools can invoke ask without knowing backend details"
+  - "Sessions persist correctly across invocations"
+  - "Piped input works seamlessly"
+  - "JSON output is valid and parseable"
+
+anti_patterns:
+  - description: "Implementing LLM protocols directly in oracle"
+    consequence: "Duplicates work done by backends, becomes maintenance burden"
+    alternative: "Wrap existing CLIs that already handle auth/providers"
+  - description: "Adding tool/agent logic to oracle"
+    consequence: "Scope creep, oracle should delegate not implement"
+    alternative: "Use backends that provide agent capabilities (claude -p already has tools)"
+  - description: "Storing prompts/responses in sessions"
+    consequence: "Duplicates backend session storage, sync issues"
+    alternative: "Store only backend session IDs, let backends manage history"
+
+examples:
+  - description: "Quick question"
+    command: "ask 'what does git rebase do?'"
+    explanation: "One-shot query, uses default backend, no session"
+  - description: "Review a diff"
+    command: "git diff | ask 'review this for issues'"
+    explanation: "Pipes diff to stdin, gets review on stdout"
+  - description: "Continue a conversation"
+    command: "ask -c 'what about edge cases?'"
+    explanation: "Continues last session via backend's continue mechanism"
+  - description: "Tool usage with JSON"
+    command: "ask -j 'extract function names' < code.py | jq '.functions'"
+    explanation: "JSON output for parsing by other tools"
+  - description: "Local model"
+    command: "ask -b ollama 'explain this error'"
+    explanation: "Uses ollama backend instead of default claude"
+  - description: "Named session for a project"
+    command: "ask -s myproject 'what did we discuss about auth?'"
+    explanation: "Resumes the 'myproject' session"
+
+implementation:
+  language: rust
+  location: "daedalos-tools/crates/oracle/"
+  structure:
+    - "main.rs: Entry point, argv[0] detection for aliases"
+    - "cli.rs: Argument parsing with clap"
+    - "config.rs: TOML config loading with defaults"
+    - "backend.rs: Backend abstraction and invocation"
+    - "session.rs: Session management and storage"
+    - "repl.rs: Interactive loop"
+  install:
+    - "Build binary: cargo build --release"
+    - "Create symlinks: ora -> oracle, ask -> oracle"
