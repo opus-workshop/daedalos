@@ -1,0 +1,197 @@
+Oracle Design
+=============
+
+A foundational Daedalos primitive for LLM invocation.
+
+Overview
+--------
+
+Oracle provides a unified interface to language models that is:
+
+- User-facing: A distraction-free conversational REPL
+- Tool-facing: A scriptable primitive other Daedalos tools can shell out to
+- Backend-agnostic: Abstracts over Claude Code, opencode, Ollama, and future providers
+
+Names: Installed as `oracle`, with symlinks `ora` and `ask` for convenience.
+
+Philosophy: Do one thing well. Oracle doesn't implement agents, tools, or complex
+orchestration—it delegates to backends that already solve those problems. It's
+the "curl for LLMs" in the Daedalos ecosystem.
+
+Position in Daedalos: Other tools (evolve, resolve, loop) can invoke `ask` to
+get LLM capabilities without reimplementing provider logic. This makes LLM
+access a commodity within the toolkit.
+
+
+Interface
+---------
+
+Basic usage:
+
+    # REPL mode (interactive conversation)
+    oracle
+    ora
+    ask
+
+    # One-shot mode (single prompt, exits)
+    ask "what does this function do?"
+    ask "summarize" < file.txt
+
+    # Piped input
+    git diff | ask "review this change"
+    cat error.log | ora "explain this error"
+
+    # Continue last conversation
+    ask -c "and what about the edge cases?"
+
+Flags:
+
+    -c, --continue      Continue last conversation
+    -s, --session NAME  Use/resume named session
+    -b, --backend NAME  Override backend (claude, opencode, ollama)
+    -j, --json          Output as JSON (for tool consumption)
+    -q, --quiet         Suppress non-essential output
+
+Behavior by invocation name:
+
+    oracle    REPL mode, verbose
+    ora       REPL mode, standard
+    ask       One-shot if prompt given, REPL otherwise
+
+
+Backends
+--------
+
+Oracle delegates to backend CLIs. Each backend is a simple adapter:
+
+    # ~/.config/oracle/config.toml
+
+    default = "claude"
+
+    [backends.claude]
+    command = "claude"
+    args = ["-p", "{prompt}"]
+    continue_flag = "-c"
+    session_flag = "--resume"
+
+    [backends.opencode]
+    command = "opencode"
+    args = ["-p", "{prompt}"]
+
+    [backends.ollama]
+    command = "ollama"
+    args = ["run", "llama3", "{prompt}"]
+
+Backend selection priority:
+
+    1. -b flag
+    2. ORACLE_BACKEND env var
+    3. Config file default
+    4. Falls back to claude
+
+The config is declarative—adding a new backend is just adding a TOML block.
+Oracle ships with sensible defaults for claude/opencode/ollama, so config
+is optional.
+
+
+Session Management
+------------------
+
+Sessions are automatic and invisible by default.
+
+    ~/.local/share/oracle/
+    ├── sessions/
+    │   ├── last                    # symlink to most recent
+    │   ├── default/                # default session
+    │   │   └── session.json
+    │   ├── my-project/             # named session
+    │   │   └── session.json
+    │   └── abc123/                 # auto-generated session IDs
+    │       └── session.json
+    └── config.toml                 # optional overrides
+
+Session lifecycle:
+
+- First `ask` in a directory creates a session
+- `-c` continues the last session (reads last symlink)
+- `-s name` uses/creates a named session
+- Sessions store the backend's session ID (e.g., Claude's --resume ID)
+- Old sessions auto-prune after 30 days (configurable)
+
+Project mode (default when in a git repo):
+
+- Session stored in .oracle/session.json within the project
+- Travels with the code, can be gitignored or committed
+
+
+As a Daedalos Primitive
+-----------------------
+
+Other Daedalos tools invoke oracle for LLM capabilities:
+
+    # In evolve's implementation
+    intent=$(ask -j "Given this code, what is its intent?" < "$file")
+
+    # In resolve's implementation
+    synthesis=$(git log --oneline -10 | ask "What patterns do you see?")
+
+    # In loop's orchestration
+    ask -s "loop-$task_id" "Continue working on: $task"
+
+Contract for tool authors:
+
+- One-shot is default when prompt provided (no session state)
+- -j for JSON output (parseable)
+- -s name for tool-managed sessions
+- Stdin for context, stdout for response
+- Exit code 0 = success
+
+Why this matters:
+
+- Tools don't implement LLM provider logic
+- Backend changes are transparent to tools
+- Users can swap models without breaking tools
+- Testable: mock ask with a script that returns canned responses
+
+
+Implementation
+--------------
+
+Language: Rust (fits Daedalos ecosystem, in daedalos-tools/crates/)
+
+Structure:
+    daedalos-tools/crates/oracle/
+    ├── Cargo.toml
+    └── src/
+        ├── main.rs         # Entry point, argv[0] detection
+        ├── cli.rs          # Argument parsing
+        ├── config.rs       # TOML config loading
+        ├── backend.rs      # Backend abstraction
+        ├── session.rs      # Session management
+        └── repl.rs         # Interactive loop
+
+Install creates symlinks:
+    oracle -> target binary
+    ora -> oracle
+    ask -> oracle
+
+
+Decisions
+---------
+
+1. Wrap existing CLIs rather than implement LLM protocols directly
+   - Get auth, providers, agent capabilities for free
+   - Stay focused on UX layer
+
+2. TOML config with built-in defaults
+   - Config is optional, works out of box
+   - Extensible without code changes
+
+3. Project-aware sessions by default
+   - Detects git root, stores session there
+   - Sessions travel with code
+
+4. Three names (oracle/ora/ask) via symlinks
+   - Mythological full name
+   - Quick alias
+   - Intuitive verb
